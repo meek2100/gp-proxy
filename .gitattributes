@@ -1,0 +1,26 @@
+# File: .gitattributes
+# Set default behavior, in case people don't have core.autocrlf set.
+* text=auto
+
+# --- Strict LF (Linux) Line Endings ---
+# Essential for files that run inside the container
+*.sh      text eol=lf
+*.py      text eol=lf
+Dockerfile text eol=lf
+
+# --- Config Files ---
+# Consistency for linters (Prettier/Ruff/Yamllint)
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.json    text eol=lf
+*.toml    text eol=lf
+*.md      text eol=lf
+*.html    text eol=lf
+*.css     text eol=lf
+*.js      text eol=lf
+
+# --- Binary Files ---
+# Prevent git from trying to modify binaries
+*.ico     binary
+*.png     binary
+*.jpg     binary

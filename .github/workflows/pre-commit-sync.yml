@@ -1,0 +1,53 @@
+# File: .github/workflows/pre-commit-sync.yml
+name: Dependabot Pre-Commit Sync
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    # 1. Listen for PRs targeting your default branch
+    branches: ["main"]
+    # 2. Trigger on ANY dependency file change
+    paths:
+      - "pyproject.toml"
+      - "Dockerfile"
+      - "apps/gp-client-proxy/Cargo.toml"
+      - ".pre-commit-config.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    # 3. Guard: Only run this if the PR comes FROM Dependabot
+    if: startsWith(github.head_ref, 'dependabot/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Dependabot's Branch
+        uses: actions/checkout@v6
+        with:
+          # Checkout the PR source branch (head) so we can push back to it
+          ref: ${{ github.event.pull_request.head.ref }}
+          # Use a PAT if you have protected branch rules, otherwise generic token is fine
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Run pre-commit autoupdate
+        run: pre-commit autoupdate
+
+      # 4. Commit changes DIRECTLY to the Dependabot PR
+      # This keeps the history clean and allows the original PR to pass checks.
+      - name: Commit and Push Changes
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "chore(deps): synchronize pre-commit hooks"
+          file_pattern: ".pre-commit-config.yaml"
+          branch: ${{ github.head_ref }}

@@ -1,0 +1,1132 @@
+<!doctype html>
+<!-- File: index.html -->
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <title>GP Proxy Client</title>
+        <link rel="icon" id="app-favicon" href="assets/gp-proxy/favicon.ico" />
+        <style>
+            /* --- DESIGN SYSTEM --- */
+            :root {
+                /* Light Theme */
+                --bg-body: #f8fafc;
+                --bg-card: #ffffff;
+                --text-primary: #0f172a;
+                --text-secondary: #64748b;
+                --border-color: #e2e8f0;
+                --input-bg: #ffffff;
+                --accent-blue: #2563eb;
+                --accent-hover: #1d4ed8;
+                --accent-red: #ef4444;
+                --accent-red-hover: #dc2626;
+                --accent-green: #10b981;
+                --accent-orange: #f59e0b;
+                --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+                --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+                --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                --radius-md: 12px;
+                --radius-full: 9999px;
+            }
+
+            /* Dark Theme */
+            [data-theme="dark"] {
+                --bg-body: #0f172a;
+                --bg-card: #1e293b;
+                --text-primary: #f8fafc;
+                --text-secondary: #94a3b8;
+                --border-color: #334155;
+                --input-bg: #0f172a;
+                --accent-blue: #3b82f6;
+                --accent-hover: #60a5fa;
+                --accent-orange: #fbbf24;
+                --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+                --shadow-lg: 0 20px 25px -5px rgb(0 0 0 / 0.5), 0 8px 10px -6px rgb(0 0 0 / 0.5);
+            }
+
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                font-family: var(--font-family);
+                background-color: var(--bg-body);
+                color: var(--text-primary);
+                transition:
+                    background-color 0.3s ease,
+                    color 0.3s ease;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+
+            .app-container {
+                width: 100%;
+                padding: 16px;
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .card {
+                background: var(--bg-card);
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                box-shadow: var(--shadow-lg);
+                width: 100%;
+                max-width: 480px;
+                /* Default mobile-friendly width */
+                padding: 40px 32px;
+                position: relative;
+                text-align: center;
+                transition: all 0.3s ease;
+            }
+
+            /* --- DESKTOP EXPANSION for Info Panel --- */
+            /* When connection info is visible, expand card on desktop */
+            .card.expanded {
+                max-width: 900px;
+            }
+
+            /* Large Screens */
+            @media (min-width: 2500px) {
+                .card {
+                    max-width: 600px;
+                    padding: 60px 48px;
+                    transform: scale(1.1);
+                }
+
+                .card.expanded {
+                    max-width: 1200px;
+                }
+
+                body {
+                    font-size: 18px;
+                }
+            }
+
+            /* Mobile */
+            @media (max-width: 480px) {
+                .app-container {
+                    padding: 0;
+                    height: 100%;
+                    align-items: flex-start;
+                }
+
+                .card {
+                    border: none;
+                    box-shadow: none;
+                    border-radius: 0;
+                    padding: 24px;
+                    min-height: 100vh;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                }
+            }
+
+            /* --- HEADER LAYOUT --- */
+            .card-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 32px;
+                text-align: left;
+            }
+
+            .header-text {
+                margin-right: 16px;
+            }
+
+            .control-group {
+                display: flex;
+                gap: 8px;
+                flex-shrink: 0;
+            }
+
+            .icon-btn {
+                background: transparent;
+                border: none;
+                color: var(--text-secondary);
+                cursor: pointer;
+                padding: 8px;
+                border-radius: var(--radius-full);
+                transition: all 0.2s;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .icon-btn:hover {
+                background-color: var(--bg-body);
+                color: var(--text-primary);
+            }
+
+            .icon-btn svg {
+                width: 20px;
+                height: 20px;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+                font-weight: 700;
+                margin: 0 0 4px 0;
+            }
+
+            .subtitle {
+                font-size: 0.875rem;
+                color: var(--text-secondary);
+                margin: 0;
+            }
+
+            /* Badges */
+            .badge {
+                display: inline-flex;
+                align-items: center;
+                padding: 6px 16px;
+                border-radius: var(--radius-full);
+                font-size: 0.75rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                margin-bottom: 32px;
+                border: 1px solid transparent;
+            }
+
+            .badge.idle {
+                background: var(--bg-body);
+                color: var(--text-secondary);
+                border-color: var(--border-color);
+            }
+
+            .badge.connecting {
+                background: rgba(59, 130, 246, 0.1);
+                color: var(--accent-blue);
+                border-color: rgba(59, 130, 246, 0.2);
+            }
+
+            .badge.connected {
+                background: rgba(16, 185, 129, 0.1);
+                color: var(--accent-green);
+                border-color: rgba(16, 185, 129, 0.2);
+            }
+
+            .badge.auth,
+            .badge.input {
+                background: rgba(245, 158, 11, 0.1);
+                color: var(--accent-orange);
+                border-color: rgba(245, 158, 11, 0.2);
+            }
+
+            .badge.error {
+                background: rgba(239, 68, 68, 0.1);
+                color: var(--accent-red);
+                border-color: rgba(239, 68, 68, 0.2);
+            }
+
+            .status-dot {
+                display: inline-block;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                margin-right: 6px;
+            }
+
+            /* Buttons & Inputs */
+            .btn {
+                width: 100%;
+                padding: 14px;
+                border-radius: var(--radius-md);
+                border: none;
+                font-size: 0.95rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                text-decoration: none;
+                box-sizing: border-box;
+                margin-top: 16px;
+            }
+
+            .btn:active {
+                transform: scale(0.98);
+            }
+
+            .btn-primary {
+                background-color: var(--accent-blue);
+                color: white;
+                box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
+            }
+
+            .btn-primary:hover:not(:disabled) {
+                background-color: var(--accent-hover);
+            }
+
+            .btn-secondary {
+                background-color: transparent;
+                border: 1px solid var(--border-color);
+                color: var(--text-primary);
+                margin-bottom: 16px;
+            }
+
+            .btn-secondary:hover {
+                border-color: var(--text-secondary);
+                background-color: var(--bg-body);
+            }
+
+            .btn-danger {
+                background-color: transparent;
+                border: 1px solid rgba(239, 68, 68, 0.3);
+                color: var(--accent-red);
+            }
+
+            .btn-danger:hover {
+                background-color: rgba(239, 68, 68, 0.05);
+                border-color: var(--accent-red);
+            }
+
+            .btn-disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+                pointer-events: none;
+                background-color: var(--bg-body);
+                border-color: var(--border-color);
+                color: var(--text-secondary);
+                box-shadow: none;
+            }
+
+            input,
+            select {
+                width: 100%;
+                padding: 14px;
+                border-radius: var(--radius-md);
+                border: 1px solid var(--border-color);
+                background-color: var(--input-bg);
+                color: var(--text-primary);
+                font-size: 1rem;
+                margin-bottom: 16px;
+                box-sizing: border-box;
+                outline: none;
+                transition: border-color 0.2s;
+            }
+
+            input:focus,
+            select:focus {
+                border-color: var(--accent-blue);
+            }
+
+            .auth-actions {
+                display: flex;
+                gap: 12px;
+                align-items: center;
+                width: 100%;
+                margin-bottom: 16px;
+            }
+
+            .auth-actions .btn {
+                margin: 0;
+            }
+
+            .restart-btn {
+                background: transparent;
+                border: 1px solid var(--border-color);
+                color: var(--text-secondary);
+                width: 48px;
+                height: 48px;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: var(--radius-md);
+                cursor: pointer;
+                transition: all 0.2s;
+                flex-shrink: 0;
+            }
+
+            .restart-btn:hover {
+                background-color: var(--bg-body);
+                color: var(--accent-blue);
+                border-color: var(--accent-blue);
+            }
+
+            /* --- CONNECTION DETAILS BOX --- */
+            .conn-container {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+                text-align: left;
+                margin-bottom: 24px;
+            }
+
+            /* Desktop: Side by Side */
+            @media (min-width: 640px) {
+                .conn-container {
+                    flex-direction: row;
+                    align-items: stretch;
+                }
+
+                .conn-section {
+                    flex: 1;
+                }
+
+                /* Hide tab buttons on desktop */
+                .conn-tabs {
+                    display: none !important;
+                }
+
+                /* Show all contents on desktop */
+                .conn-content {
+                    display: block !important;
+                }
+            }
+
+            .conn-section {
+                background: var(--bg-body);
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                overflow: hidden;
+            }
+
+            /* Mobile Tabs */
+            .conn-tabs {
+                display: flex;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .conn-tab-btn {
+                flex: 1;
+                background: none;
+                border: none;
+                padding: 12px;
+                font-size: 0.9rem;
+                font-weight: 600;
+                color: var(--text-secondary);
+                cursor: pointer;
+                border-bottom: 2px solid transparent;
+            }
+
+            .conn-tab-btn.active {
+                color: var(--accent-blue);
+                border-bottom-color: var(--accent-blue);
+            }
+
+            .conn-content {
+                padding: 20px;
+            }
+
+            .conn-header {
+                font-size: 1rem;
+                font-weight: 700;
+                margin-bottom: 16px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .conn-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 12px;
+                font-size: 0.9rem;
+            }
+
+            .conn-row:last-child {
+                margin-bottom: 0;
+            }
+
+            .conn-label {
+                color: var(--text-secondary);
+            }
+
+            .conn-val {
+                font-family: monospace;
+                font-weight: 600;
+                background: rgba(0, 0, 0, 0.05);
+                padding: 2px 6px;
+                border-radius: 4px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            [data-theme="dark"] .conn-val {
+                background: rgba(255, 255, 255, 0.1);
+            }
+
+            .copy-icon {
+                opacity: 0.4;
+                width: 14px;
+                height: 14px;
+            }
+
+            .conn-val:hover .copy-icon {
+                opacity: 1;
+            }
+
+            .helper-text {
+                font-size: 0.75rem;
+                color: var(--text-secondary);
+                margin-top: 16px;
+                line-height: 1.4;
+                border-top: 1px solid var(--border-color);
+                padding-top: 12px;
+            }
+
+            /* Utilities */
+            .hidden {
+                display: none !important;
+            }
+
+            .spinner {
+                width: 24px;
+                height: 24px;
+                border: 3px solid var(--border-color);
+                border-top-color: var(--accent-blue);
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+                margin: 0 auto 24px auto;
+            }
+
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            /* Debug Console */
+            #debug-section {
+                margin-top: 32px;
+                padding-top: 16px;
+                border-top: 1px solid var(--border-color);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            .debug-toggle {
+                font-size: 0.75rem;
+                color: var(--text-secondary);
+                background: none;
+                border: none;
+                cursor: pointer;
+                text-decoration: underline;
+            }
+
+            #debug-log {
+                background: #0f172a;
+                color: #10b981;
+                font-family: "Menlo", monospace;
+                font-size: 0.75rem;
+                padding: 16px;
+                border-radius: var(--radius-md);
+                text-align: left;
+                overflow-x: auto;
+                white-space: pre-wrap;
+                max-height: 200px;
+                margin-top: 12px;
+            }
+
+            .legal-footer {
+                margin-top: 24px;
+                font-size: 0.7rem;
+                color: var(--text-secondary);
+                max-width: 480px;
+                text-align: center;
+                line-height: 1.4;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="app-container">
+            <div class="card" id="main-card">
+                <div class="card-header">
+                    <div style="margin-right: 24px; flex-shrink: 0">
+                        <img
+                            id="app-logo"
+                            src="assets/gp-proxy/logo-dark.png"
+                            alt="GP Proxy Logo"
+                            width="80"
+                            height="80"
+                            style="border-radius: 12px"
+                        />
+                    </div>
+                    <div class="header-text">
+                        <h1>GP Proxy Client</h1>
+                        <p class="subtitle">Unofficial OpenConnect Gateway</p>
+                    </div>
+                    <div class="control-group">
+                        <button class="icon-btn" id="theme-toggle" title="Toggle Theme" onclick="toggleTheme()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="5"></circle>
+                                <line x1="12" y1="1" x2="12" y2="3"></line>
+                                <line x1="12" y1="21" x2="12" y2="23"></line>
+                                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                                <line x1="1" y1="12" x2="3" y2="12"></line>
+                                <line x1="21" y1="12" x2="23" y2="12"></line>
+                                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                            </svg>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            title="Force Reset"
+                            onclick="confirmReset()"
+                            style="color: var(--accent-red)"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                                <line x1="12" y1="2" x2="12" y2="12"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="status-badge" class="badge idle">
+                    <span class="status-dot" style="background: currentColor"></span>
+                    <span id="badge-text">System Ready</span>
+                </div>
+
+                <div id="view-idle" class="hidden">
+                    <p style="margin-bottom: 32px">Ready to establish secure tunnel.</p>
+                    <button onclick="triggerConnect()" class="btn btn-primary">Connect to VPN</button>
+                </div>
+
+                <div id="view-connecting" class="hidden">
+                    <div class="spinner"></div>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 8px">Connecting...</h3>
+                    <p id="connecting-subtext">Initializing protocol</p>
+                </div>
+
+                <div id="view-auth" class="hidden">
+                    <h3 style="font-size: 1.1rem; margin-bottom: 16px">Authentication Required</h3>
+                    <div class="auth-actions">
+                        <a
+                            id="sso-link"
+                            href="#"
+                            target="_blank"
+                            class="btn btn-secondary"
+                            style="flex-grow: 1"
+                            onclick="handleSSOClick(this)"
+                        >
+                            Open SSO Login
+                        </a>
+                        <button
+                            id="btn-restart-auth"
+                            class="restart-btn hidden"
+                            title="Generate New Link"
+                            onclick="restartAuth()"
+                            aria-label="Generate new SSO link"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                width="20"
+                                height="20"
+                            >
+                                <path d="M23 4v6h-6"></path>
+                                <path d="M1 20v-6h6"></path>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <form onsubmit="handleFormSubmit(event)">
+                        <input
+                            type="text"
+                            name="callback_url"
+                            placeholder="Paste callback URL here..."
+                            required
+                            autocomplete="off"
+                        />
+                        <button type="submit" class="btn btn-primary">Verify Credentials</button>
+                    </form>
+                </div>
+
+                <div id="view-input" class="hidden">
+                    <h3 style="font-size: 1.1rem; margin-bottom: 16px">Input Required</h3>
+                    <p id="input-prompt" style="margin-bottom: 24px">Please provide response.</p>
+                    <form onsubmit="handleFormSubmit(event)">
+                        <div id="dynamic-input-container"></div>
+                        <button type="submit" class="btn btn-primary">Submit</button>
+                    </form>
+                </div>
+
+                <div id="view-connected" class="hidden">
+                    <div style="margin-bottom: 32px">
+                        <svg
+                            style="color: var(--accent-green); width: 64px; height: 64px"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg>
+                    </div>
+                    <h2 style="font-size: 1.25rem; margin-bottom: 24px">Tunnel Active</h2>
+
+                    <div class="conn-container">
+                        <div id="sec-socks" class="conn-section hidden" style="flex: 1">
+                            <div class="conn-tabs">
+                                <button class="conn-tab-btn active" onclick="switchTab('socks')">SOCKS5 Proxy</button>
+                                <button class="conn-tab-btn" onclick="switchTab('gateway')">Transparent Gateway</button>
+                            </div>
+
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    </svg>
+                                    SOCKS5 Proxy
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Server IP</span>
+                                    <span class="conn-val" onclick="copyToClip(this)">
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Port</span>
+                                    <span class="conn-val" onclick="copyToClip(this)">
+                                        1080
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Auth</span>
+                                    <span class="conn-val" style="font-size: 0.8rem">None (Network Allowed)</span>
+                                </div>
+                                <div class="helper-text">
+                                    Configure your browser or app to use this SOCKS5 proxy to tunnel traffic through the
+                                    VPN.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-gateway" class="conn-section hidden" style="flex: 1">
+                            <div class="conn-tabs">
+                                <button class="conn-tab-btn" onclick="switchTab('socks')">SOCKS5 Proxy</button>
+                                <button class="conn-tab-btn active" onclick="switchTab('gateway')">
+                                    Transparent Gateway
+                                </button>
+                            </div>
+
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M4 11a9 9 0 0 1 9 9"></path>
+                                        <path d="M4 4a16 16 0 0 1 16 16"></path>
+                                        <circle cx="5" cy="19" r="1"></circle>
+                                    </svg>
+                                    Gateway
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Gateway IP</span>
+                                    <span class="conn-val" onclick="copyToClip(this)">
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Subnet Mask</span>
+                                    <span class="conn-val" onclick="copyToClip(this)">
+                                        255.255.255.0
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">DNS Server</span>
+                                    <span class="conn-val" onclick="copyToClip(this)">
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                                <div class="helper-text">
+                                    Set your device's <b>Default Gateway</b> and <b>DNS</b> to this IP to route all
+                                    traffic through VPN.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="triggerDisconnect()" class="btn btn-danger">Disconnect</button>
+                </div>
+
+                <div id="view-error" class="hidden">
+                    <h3 style="color: var(--accent-red); margin-bottom: 8px">Connection Failed</h3>
+                    <p id="error-message" style="margin-bottom: 32px">Unknown error.</p>
+                    <button onclick="triggerConnect()" class="btn btn-primary">Retry</button>
+                </div>
+
+                <div id="debug-section" class="hidden">
+                    <a href="/download_logs" class="debug-toggle">Download Logs</a>
+                    <button
+                        class="debug-toggle"
+                        onclick="document.getElementById('debug-log').classList.toggle('hidden')"
+                    >
+                        Toggle Console
+                    </button>
+                </div>
+                <div id="debug-log" class="hidden"></div>
+            </div>
+
+            <div class="legal-footer">
+                GP Proxy Client is an unofficial open-source tool.<br />
+                It is not affiliated with, endorsed by, or authorized by Palo Alto Networks.<br />
+                "GlobalProtect" is a trademark of Palo Alto Networks.
+            </div>
+        </div>
+
+        <script>
+            // --- THEME LOGIC ---
+            function initTheme() {
+                const stored = localStorage.getItem("theme");
+                const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+                let theme = "light";
+                if (stored) {
+                    theme = stored;
+                } else if (sysDark) {
+                    theme = "dark";
+                }
+                document.documentElement.setAttribute("data-theme", theme);
+                updateAssets(theme);
+            }
+
+            function toggleTheme() {
+                const current = document.documentElement.getAttribute("data-theme");
+                const next = current === "dark" ? "light" : "dark";
+                document.documentElement.setAttribute("data-theme", next);
+                localStorage.setItem("theme", next);
+                updateAssets(next);
+            }
+
+            function updateAssets(theme) {
+                const logo = document.getElementById("app-logo");
+                const favicon = document.getElementById("app-favicon");
+                if (theme === "dark") {
+                    logo.src = "assets/gp-proxy/logo-light.png";
+                    favicon.href = "assets/gp-proxy/favicon-light.ico";
+                } else {
+                    logo.src = "assets/gp-proxy/logo-dark.png";
+                    favicon.href = "assets/gp-proxy/favicon.ico";
+                }
+            }
+
+            // --- APP LOGIC ---
+            window.vpnState = null;
+            let pollInterval = null;
+            let lastAuthUrl = "";
+            let isRestarting = false;
+
+            // NEW: Tab Switching for Mobile
+            function switchTab(tab) {
+                // Only affects mobile view via CSS classes logic if needed,
+                // but we used inline styles for simplicity.
+                // We basically toggle the display of the CONTENT, but keep the container flex logic.
+                // Actually, CSS handles desktop. For mobile, we just toggle visibility.
+
+                // Helper to update active tab button state
+                document.querySelectorAll(".conn-tab-btn").forEach((b) => b.classList.remove("active"));
+
+                // Since buttons are duplicated in HTML for layout reasons, we activate all matching ones
+                // In a robust app we'd use cleaner DOM, but this works:
+                const btns = document.querySelectorAll("button");
+                btns.forEach((b) => {
+                    if (b.textContent.toLowerCase().includes(tab === "socks" ? "socks" : "gateway")) {
+                        b.classList.add("active");
+                    }
+                });
+
+                // Toggle visibility
+                document.getElementById("sec-socks").style.display = tab === "socks" ? "block" : "none";
+                document.getElementById("sec-gateway").style.display = tab === "gateway" ? "block" : "none";
+
+                // On desktop, we force both to block via !important CSS, so this JS only affects mobile.
+            }
+
+            // NEW: Auto-populate IPs
+            function updateIPs() {
+                const host = window.location.hostname;
+                document.querySelectorAll(".dyn-ip").forEach((el) => (el.innerText = host));
+            }
+
+            function copyToClip(el) {
+                const text = el.innerText.trim();
+                navigator.clipboard.writeText(text).then(() => {
+                    // Quick flash effect
+                    const originalBg = el.style.backgroundColor;
+                    el.style.backgroundColor = "var(--accent-green)";
+                    el.style.color = "white";
+                    setTimeout(() => {
+                        el.style.backgroundColor = originalBg;
+                        el.style.color = "";
+                    }, 200);
+                });
+            }
+
+            function setView(viewId) {
+                ["idle", "connecting", "auth", "input", "connected", "error"].forEach((id) => {
+                    document.getElementById(`view-${id}`).classList.add("hidden");
+                });
+                document.getElementById(`view-${viewId}`).classList.remove("hidden");
+
+                // Card Expansion Logic for Desktop
+                const card = document.getElementById("main-card");
+                if (viewId === "connected") {
+                    card.classList.add("expanded");
+                } else {
+                    card.classList.remove("expanded");
+                }
+            }
+
+            function setBadge(text, type) {
+                const badge = document.getElementById("status-badge");
+                const txt = document.getElementById("badge-text");
+                badge.className = `badge ${type}`;
+                txt.innerText = text;
+            }
+
+            function handleSSOClick(btn) {
+                btn.classList.add("btn-disabled");
+                btn.innerText = "Link Opened";
+                document.getElementById("btn-restart-auth").classList.remove("hidden");
+            }
+
+            async function restartAuth() {
+                isRestarting = true;
+                window.vpnState = null;
+                setBadge("Generating Link...", "connecting");
+                document.getElementById("btn-restart-auth").classList.add("hidden");
+                await fetch("/connect", { method: "POST" });
+                resetPoll(1000);
+            }
+
+            function resetSSOButtonState(newUrl) {
+                const btn = document.getElementById("sso-link");
+                btn.classList.remove("btn-disabled");
+                btn.innerText = "Open SSO Login";
+                btn.href = newUrl;
+                document.getElementById("btn-restart-auth").classList.add("hidden");
+            }
+
+            async function triggerConnect() {
+                setBadge("Starting...", "connecting");
+                setView("connecting");
+                await fetch("/connect", { method: "POST" });
+                resetPoll(1000);
+            }
+
+            async function triggerDisconnect() {
+                if (confirm("Disconnect VPN session?")) {
+                    setBadge("Disconnecting...", "idle");
+                    await fetch("/disconnect", { method: "POST" });
+                    resetPoll(1000);
+                }
+            }
+
+            async function confirmReset() {
+                if (confirm("Force reset process? This will kill the VPN.")) {
+                    setBadge("Resetting...", "idle");
+                    await fetch("/disconnect", { method: "POST" });
+                    window.vpnState = null;
+                    isRestarting = false;
+                }
+            }
+
+            async function handleFormSubmit(event) {
+                event.preventDefault();
+                const formData = new URLSearchParams(new FormData(event.target));
+                await fetch("/submit", { method: "POST", body: formData });
+                setView("connecting");
+                event.target.reset();
+                resetPoll(1000);
+            }
+
+            async function updateStatus() {
+                try {
+                    const res = await fetch("/status.json?t=" + Date.now());
+                    const data = await res.json();
+
+                    // INFO LOGIC: Show/Hide Sections based on Mode
+                    const showGateway = data.vpn_mode === "gateway" || data.vpn_mode === "standard";
+                    const showSocks = data.vpn_mode === "socks" || data.vpn_mode === "standard";
+
+                    const secSocks = document.getElementById("sec-socks");
+                    const secGateway = document.getElementById("sec-gateway");
+
+                    if (!showSocks) secSocks.classList.add("hidden");
+                    else secSocks.classList.remove("hidden");
+
+                    if (!showGateway) secGateway.classList.add("hidden");
+                    else secGateway.classList.remove("hidden");
+
+                    // Default Tab Logic (Mobile)
+                    // If we just loaded and standard mode, default to Socks (easier)
+                    // CSS @media handles desktop display: block !important overriding this
+                    if (window.innerWidth < 640 && showSocks && showGateway) {
+                        // Only force default if nothing is visibly selected (simple check)
+                        if (secSocks.style.display === "" && secGateway.style.display === "") {
+                            switchTab("socks");
+                        }
+                    }
+
+                    // DEBUG VISIBILITY
+                    const debugSec = document.getElementById("debug-section");
+                    if (data.debug_mode) {
+                        debugSec.classList.remove("hidden");
+                        debugSec.style.display = "flex";
+                        document.getElementById("debug-log").innerText = data.log || "Waiting for logs...";
+                    } else {
+                        debugSec.classList.add("hidden");
+                        debugSec.style.display = "none";
+                    }
+
+                    // STATE TRANSITION
+                    if (isRestarting) {
+                        if (data.state === "error") {
+                            isRestarting = false;
+                        } else if (data.state === "auth" && data.url && data.url !== lastAuthUrl) {
+                            isRestarting = false;
+                        } else {
+                            resetPoll(1000);
+                            return;
+                        }
+                    }
+
+                    if (window.vpnState !== data.state) {
+                        setView(data.state);
+                        setBadge(
+                            data.state.toUpperCase(),
+                            data.state === "auth" || data.state === "input" ? "auth" : data.state
+                        );
+                        window.vpnState = data.state;
+                    }
+
+                    // DATA BINDING
+                    if (data.url) {
+                        if (data.url !== lastAuthUrl) {
+                            lastAuthUrl = data.url;
+                            resetSSOButtonState(data.url);
+                        }
+                        const btn = document.getElementById("sso-link");
+                        if (!btn.classList.contains("btn-disabled")) {
+                            btn.href = data.url;
+                        }
+                    }
+
+                    if (data.error) document.getElementById("error-message").innerText = data.error;
+                    if (data.state === "input") {
+                        document.getElementById("input-prompt").innerText = data.prompt;
+                        const container = document.getElementById("dynamic-input-container");
+                        if (!container.innerHTML) {
+                            container.innerHTML = `<input type="${data.input_type === "password" ? "password" : "text"}" name="user_input" required>`;
+                        }
+                    }
+
+                    const fastStates = ["connecting", "auth", "input"];
+                    const newDelay = fastStates.includes(data.state) ? 1000 : 5000;
+                    resetPoll(newDelay);
+                } catch (e) {
+                    resetPoll(5000);
+                }
+            }
+
+            function resetPoll(delay) {
+                if (pollInterval) clearTimeout(pollInterval);
+                pollInterval = setTimeout(updateStatus, delay);
+            }
+
+            initTheme();
+            updateIPs();
+            updateStatus();
+
+            // Re-run switchTab on resize to fix any display:none issues when switching to desktop
+            window.addEventListener("resize", () => {
+                if (window.innerWidth >= 640) {
+                    document.getElementById("sec-socks").style.display = "";
+                    document.getElementById("sec-gateway").style.display = "";
+                } else {
+                    switchTab("socks"); // Default back to first tab on mobile resize
+                }
+            });
+        </script>
+    </body>
+</html>
