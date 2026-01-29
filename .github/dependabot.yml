@@ -1,0 +1,27 @@
+# File: .github/dependabot.yml
+version: 2
+updates:
+  # Maintain GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Maintain Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Maintain Python (pip) dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # NEW: Maintain Rust (Cargo) dependencies
+  - package-ecosystem: "cargo"
+    # Points to the folder containing Cargo.toml
+    directory: "/apps/gp-client-proxy"
+    schedule:
+      interval: "weekly"

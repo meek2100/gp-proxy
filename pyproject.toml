@@ -1,0 +1,51 @@
+# File: pyproject.toml
+[project]
+name = "gp-proxy"
+version = "0.1.0"
+description = "Unofficial OpenConnect wrapper for GlobalProtect VPNs"
+readme = "agents.md"
+requires-python = ">=3.14"
+dependencies = []                                                     # No runtime dependencies (server.py uses standard lib)
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit==4.5.1",
+    "ruff==0.14.14",
+    "mypy==1.19.1",
+    "pyright==1.1.408",
+    "codespell==2.4.1",
+    "yamllint==1.38.0",
+    "shellcheck-py==0.11.0.1",
+    "pytest==9.0.2",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+# --- Tool Configurations ---
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "I", "N", "UP", "B", "A", "C4", "T20"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true
+pretty = true
+show_error_codes = true
+disable_error_code = ["import-untyped"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportMissingImports = false
+reportMissingTypeStubs = false
+pythonVersion = "3.14"
+
+[tool.codespell]
+skip = "*.min.js,*.min.css,*.lock,package-lock.json"

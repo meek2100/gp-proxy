@@ -1,0 +1,9 @@
+# File: .yamllint.yaml
+extends: relaxed
+rules:
+  line-length:
+    max: 120 # Expanded to match Ruff/Prettier
+  braces: disable
+  colons:
+    max-spaces-before: 0
+    max-spaces-after: 1

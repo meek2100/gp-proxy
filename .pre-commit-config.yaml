@@ -1,0 +1,131 @@
+# File: .pre-commit-config.yaml
+exclude: ^(.*\.min\.(css|js))
+
+repos:
+  # 1. FAST SYNTAX CHECKS
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      # Exclude VS Code/Devcontainer files (JSONC)
+      - id: check-json
+        exclude: ^(\.vscode/|\.devcontainer/)
+      - id: check-added-large-files
+        args: ["--maxkb=1500"]
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main]
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # 2. FILE HEADERS
+  - repo: https://github.com/meek2100/pre-commit-context-header
+    rev: v0.1.0
+    hooks:
+      - id: context-headers
+        args: ["--fix"]
+
+  # 3. FORMATTERS
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.14
+    hooks:
+      - id: ruff-format
+
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: "v3.8.1"
+    hooks:
+      - id: prettier
+        types_or: [css, javascript, html, json, yaml, markdown]
+        args: ["--config", ".prettierrc.yaml"]
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        args: ["-w", "-i", "4", "-ci"]
+
+  # 4. LINTERS
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.14
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: ["--format=gcc"]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        args: ["--config-file", ".yamllint.yaml"]
+
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.14.0
+    hooks:
+      - id: hadolint
+        args: ["--ignore", "DL3008"]
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.10
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/IamTheFij/docker-pre-commit
+    rev: v3.0.1
+    hooks:
+      - id: docker-compose-check
+        files: ^docker-compose\.yml$
+
+  # 5. TYPE CHECKERS
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: "v1.19.1"
+    hooks:
+      - id: mypy
+        files: '\.py$'
+
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.408
+    hooks:
+      - id: pyright
+        files: '\.py$'
+  # --- RUST (System Hooks) ---
+  # Requires 'cargo' to be in your $PATH
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt
+        description: Formats Rust code using rustfmt
+        entry: cargo fmt --manifest-path apps/gp-client-proxy/Cargo.toml --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-check
+        name: cargo check
+        description: fast check to ensure code compiles
+        entry: cargo check --manifest-path apps/gp-client-proxy/Cargo.toml --all-targets --all-features
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: clippy
+        name: cargo clippy
+        description: Lint Rust code (equivalent to ruff for python)
+        entry: cargo clippy --manifest-path apps/gp-client-proxy/Cargo.toml --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
