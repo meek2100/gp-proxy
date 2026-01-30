@@ -65,7 +65,8 @@ state_manager = StateManager()
 class Beacon(threading.Thread):
     """
     Background thread that listens for UDP broadcast packets.
-    Used by the Desktop Client to auto-discover this container's IP address.
+    Used by the Desktop Client to auto-discover this container's IP address
+    on the local network without user intervention.
     """
 
     def __init__(self) -> None:
@@ -75,6 +76,9 @@ class Beacon(threading.Thread):
         self.sock.bind(("", UDP_BEACON_PORT))
 
     def run(self) -> None:
+        """
+        Main loop: Listen for 'GP_DISCOVER' packets and respond with JSON metadata.
+        """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
             try:
@@ -99,7 +103,7 @@ class Beacon(threading.Thread):
             ip = s.getsockname()[0]
             s.close()
             return str(ip)
-        except Exception:
+        except OSError:
             return "127.0.0.1"
 
 

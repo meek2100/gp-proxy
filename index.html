@@ -562,7 +562,7 @@
 
     <body>
         <div class="app-container">
-            <div class="card" id="main-card">
+            <main class="card" id="main-card">
                 <div class="card-header">
                     <div style="margin-right: 24px; flex-shrink: 0">
                         <img
@@ -620,24 +620,25 @@
                     </div>
                 </div>
 
-                <div id="status-badge" class="badge idle">
+                <div id="status-badge" class="badge idle" aria-live="polite">
                     <span class="status-dot" style="background: currentColor"></span>
                     <span id="badge-text">System Ready</span>
                 </div>
 
                 <div id="view-idle" class="hidden">
+                    <h2 class="hidden">Ready</h2>
                     <p style="margin-bottom: 32px">Ready to establish secure tunnel.</p>
                     <button onclick="triggerConnect()" class="btn btn-primary">Connect to VPN</button>
                 </div>
 
                 <div id="view-connecting" class="hidden">
                     <div class="spinner"></div>
-                    <h3 style="font-size: 1.1rem; margin-bottom: 8px">Connecting...</h3>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 8px" tabindex="-1">Connecting...</h3>
                     <p id="connecting-subtext">Initializing protocol</p>
                 </div>
 
                 <div id="view-auth" class="hidden">
-                    <h3 style="font-size: 1.1rem; margin-bottom: 16px">Authentication Required</h3>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 16px" tabindex="-1">Authentication Required</h3>
                     <div class="auth-actions">
                         <a
                             id="sso-link"
@@ -684,7 +685,7 @@
                 </div>
 
                 <div id="view-input" class="hidden">
-                    <h3 style="font-size: 1.1rem; margin-bottom: 16px">Input Required</h3>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 16px" tabindex="-1">Input Required</h3>
                     <form onsubmit="handleFormSubmit(event)">
                         <div id="dynamic-input-container"></div>
                         <button type="submit" class="btn btn-primary">Submit</button>
@@ -705,7 +706,7 @@
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
                         </svg>
                     </div>
-                    <h2 style="font-size: 1.25rem; margin-bottom: 24px">Tunnel Active</h2>
+                    <h2 style="font-size: 1.25rem; margin-bottom: 24px" tabindex="-1">Tunnel Active</h2>
 
                     <div class="conn-container">
                         <div id="sec-socks" class="conn-section hidden" style="flex: 1">
@@ -882,7 +883,7 @@
                 </div>
 
                 <div id="view-error" class="hidden">
-                    <h3 style="color: var(--accent-red); margin-bottom: 8px">Connection Failed</h3>
+                    <h3 style="color: var(--accent-red); margin-bottom: 8px" tabindex="-1">Connection Failed</h3>
                     <p id="error-message" style="margin-bottom: 32px">Unknown error.</p>
                     <button onclick="triggerConnect()" class="btn btn-primary">Retry</button>
                 </div>
@@ -897,7 +898,7 @@
                     </button>
                 </div>
                 <div id="debug-log" class="hidden"></div>
-            </div>
+            </main>
 
             <div class="legal-footer">
                 GP Proxy Client is an unofficial open-source tool.<br />
@@ -947,18 +948,10 @@
             let lastAuthUrl = "";
             let isRestarting = false;
 
-            // NEW: Tab Switching for Mobile
             function switchTab(tab) {
-                // Only affects mobile view via CSS classes logic if needed,
-                // but we used inline styles for simplicity.
-                // We basically toggle the display of the CONTENT, but keep the container flex logic.
-                // Actually, CSS handles desktop. For mobile, we just toggle visibility.
-
                 // Helper to update active tab button state
                 document.querySelectorAll(".conn-tab-btn").forEach((b) => b.classList.remove("active"));
 
-                // Since buttons are duplicated in HTML for layout reasons, we activate all matching ones
-                // In a robust app we'd use cleaner DOM, but this works:
                 const btns = document.querySelectorAll("button");
                 btns.forEach((b) => {
                     if (b.textContent.toLowerCase().includes(tab === "socks" ? "socks" : "gateway")) {
@@ -966,14 +959,10 @@
                     }
                 });
 
-                // Toggle visibility
                 document.getElementById("sec-socks").style.display = tab === "socks" ? "block" : "none";
                 document.getElementById("sec-gateway").style.display = tab === "gateway" ? "block" : "none";
-
-                // On desktop, we force both to block via !important CSS, so this JS only affects mobile.
             }
 
-            // NEW: Auto-populate IPs
             function updateIPs() {
                 const host = window.location.hostname;
                 document.querySelectorAll(".dyn-ip").forEach((el) => (el.innerText = host));
@@ -984,7 +973,6 @@
                 try {
                     if (navigator.clipboard && navigator.clipboard.writeText) {
                         await navigator.clipboard.writeText(text);
-                        // Quick flash effect
                         const originalBg = el.style.backgroundColor;
                         el.style.backgroundColor = "var(--accent-green)";
                         el.style.color = "white";
@@ -1004,9 +992,15 @@
                 ["idle", "connecting", "auth", "input", "connected", "error"].forEach((id) => {
                     document.getElementById(`view-${id}`).classList.add("hidden");
                 });
-                document.getElementById(`view-${viewId}`).classList.remove("hidden");
+                const activeView = document.getElementById(`view-${viewId}`);
+                activeView.classList.remove("hidden");
 
-                // Card Expansion Logic for Desktop
+                // Accessibility: Move focus to the heading of the new view
+                const heading = activeView.querySelector("h3, h2");
+                if (heading) {
+                    heading.focus();
+                }
+
                 const card = document.getElementById("main-card");
                 if (viewId === "connected") {
                     card.classList.add("expanded");
@@ -1083,7 +1077,6 @@
                     const res = await fetch("/status.json?t=" + Date.now());
                     const data = await res.json();
 
-                    // INFO LOGIC: Show/Hide Sections based on Mode
                     const showGateway = data.vpn_mode === "gateway" || data.vpn_mode === "standard";
                     const showSocks = data.vpn_mode === "socks" || data.vpn_mode === "standard";
 
@@ -1096,17 +1089,12 @@
                     if (!showGateway) secGateway.classList.add("hidden");
                     else secGateway.classList.remove("hidden");
 
-                    // Default Tab Logic (Mobile)
-                    // If we just loaded and standard mode, default to Socks (easier)
-                    // CSS @media handles desktop display: block !important overriding this
                     if (window.innerWidth < 640 && showSocks && showGateway) {
-                        // Only force default if nothing is visibly selected (simple check)
                         if (secSocks.style.display === "" && secGateway.style.display === "") {
                             switchTab("socks");
                         }
                     }
 
-                    // DEBUG VISIBILITY
                     const debugSec = document.getElementById("debug-section");
                     if (data.debug_mode) {
                         debugSec.classList.remove("hidden");
@@ -1117,7 +1105,6 @@
                         debugSec.style.display = "none";
                     }
 
-                    // STATE TRANSITION
                     if (isRestarting) {
                         if (data.state === "error") {
                             isRestarting = false;
@@ -1138,7 +1125,6 @@
                         window.vpnState = data.state;
                     }
 
-                    // DATA BINDING
                     if (data.url) {
                         if (data.url !== lastAuthUrl) {
                             lastAuthUrl = data.url;
@@ -1152,11 +1138,9 @@
 
                     if (data.error) document.getElementById("error-message").innerText = data.error;
                     if (data.state === "input") {
-                        // document.getElementById("input-prompt").innerText = data.prompt; // Removed in favor of labels
                         const container = document.getElementById("dynamic-input-container");
                         container.innerHTML = "";
 
-                        // Create Accessibility Label
                         const label = document.createElement("label");
                         label.textContent = data.prompt;
                         label.htmlFor = "vpn_user_input";
@@ -1165,7 +1149,6 @@
                         label.style.fontWeight = "600";
                         container.appendChild(label);
 
-                        // FIX: Handle Dropdown (select) inputs
                         if (data.input_type === "select" && Array.isArray(data.options)) {
                             const select = document.createElement("select");
                             select.id = "vpn_user_input";
@@ -1179,7 +1162,6 @@
                             });
                             container.appendChild(select);
                         } else {
-                            // Default to input field
                             const input = document.createElement("input");
                             input.id = "vpn_user_input";
                             input.type = data.input_type === "password" ? "password" : "text";
@@ -1206,13 +1188,12 @@
             updateIPs();
             updateStatus();
 
-            // Re-run switchTab on resize to fix any display:none issues when switching to desktop
             window.addEventListener("resize", () => {
                 if (window.innerWidth >= 640) {
                     document.getElementById("sec-socks").style.display = "";
                     document.getElementById("sec-gateway").style.display = "";
                 } else {
-                    switchTab("socks"); // Default back to first tab on mobile resize
+                    switchTab("socks");
                 }
             });
         </script>

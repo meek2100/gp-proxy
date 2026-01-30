@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-// FIX: Only import Command on non-Windows platforms
 #[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
@@ -28,7 +27,6 @@ const PROTOCOL_SCHEME: &str = "globalprotect";
 const APP_NAME: &str = "GP Client Proxy";
 const CONFIG_FILE_NAME: &str = "proxy_url.txt";
 
-// FIX: Only define BINARY_NAME on non-Windows platforms to avoid "unused const" warnings
 #[cfg(not(target_os = "windows"))]
 const BINARY_NAME: &str = "gp-client-proxy";
 
@@ -226,8 +224,6 @@ fn poll_for_success(base_url: &str) {
 
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
     // Add timeout to prevent freezing if server is down but host is reachable
-    // Note: ureq syntax can vary; keeping it simple for stability.
-    // If ureq 3.x is strict, this might need an Agent.
     let resp: ServerStatus = ureq::get(&format!("{}/status.json", base_url))
         .call()?
         .body_mut()
@@ -412,7 +408,6 @@ fn install_handler() -> Result<()> {
     use winreg::enums::*;
     use winreg::RegKey;
     let exe_path = env::current_exe()?;
-    // FIX: Safely convert path to string, erroring instead of panicking on invalid UTF-8
     let exe_path_str = exe_path
         .to_str()
         .context("Executable path contains invalid UTF-8")?;
@@ -523,13 +518,19 @@ fn install_handler() -> Result<()> {
     );
 
     fs::write(contents.join("Info.plist"), plist)?;
-    Command::new(
+    let status = Command::new(
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
     )
     .arg("-f")
     .arg(&app_path)
-    .status()
-    .ok();
+    .status()?;
+
+    if !status.success() {
+        eprintln!(
+            "Error: lsregister failed with exit code: {:?}",
+            status.code()
+        );
+    }
     Ok(())
 }
 
@@ -542,12 +543,18 @@ fn uninstall_handler() -> Result<()> {
     if app_path.exists() {
         fs::remove_dir_all(&app_path)?;
     }
-    Command::new(
+    let status = Command::new(
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
     )
     .arg("-f")
     .arg(&app_path)
-    .status()
-    .ok();
+    .status()?;
+
+    if !status.success() {
+        eprintln!(
+            "Warning: lsregister cleanup failed with exit code: {:?}",
+            status.code()
+        );
+    }
     Ok(())
 }
