@@ -59,6 +59,8 @@ jobs:
         run: pre-commit install-hooks
 
       - name: Run pre-commit
+        env:
+          SKIP: no-commit-to-branch
         run: pre-commit run --all-files --show-diff-on-failure
 
   build-and-push:
