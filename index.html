@@ -928,18 +928,25 @@
                 document.querySelectorAll(".dyn-ip").forEach((el) => (el.innerText = host));
             }
 
-            function copyToClip(el) {
+            async function copyToClip(el) {
                 const text = el.innerText.trim();
-                navigator.clipboard.writeText(text).then(() => {
-                    // Quick flash effect
-                    const originalBg = el.style.backgroundColor;
-                    el.style.backgroundColor = "var(--accent-green)";
-                    el.style.color = "white";
-                    setTimeout(() => {
-                        el.style.backgroundColor = originalBg;
-                        el.style.color = "";
-                    }, 200);
-                });
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(text);
+                        // Quick flash effect
+                        const originalBg = el.style.backgroundColor;
+                        el.style.backgroundColor = "var(--accent-green)";
+                        el.style.color = "white";
+                        setTimeout(() => {
+                            el.style.backgroundColor = originalBg;
+                            el.style.color = "";
+                        }, 200);
+                    } else {
+                        console.warn("Clipboard API unavailable");
+                    }
+                } catch (err) {
+                    console.warn("Clipboard copy failed", err);
+                }
             }
 
             function setView(viewId) {
@@ -1096,8 +1103,29 @@
                     if (data.state === "input") {
                         document.getElementById("input-prompt").innerText = data.prompt;
                         const container = document.getElementById("dynamic-input-container");
-                        if (!container.innerHTML) {
-                            container.innerHTML = `<input type="${data.input_type === "password" ? "password" : "text"}" name="user_input" required>`;
+
+                        // FIX: Clear container to allow updates/refreshes
+                        container.innerHTML = "";
+
+                        // FIX: Handle Dropdown (select) inputs
+                        if (data.input_type === "select" && Array.isArray(data.options)) {
+                            const select = document.createElement("select");
+                            select.name = "user_input";
+                            select.required = true;
+                            data.options.forEach((opt) => {
+                                const option = document.createElement("option");
+                                option.value = opt;
+                                option.textContent = opt;
+                                select.appendChild(option);
+                            });
+                            container.appendChild(select);
+                        } else {
+                            // Default to input field
+                            const input = document.createElement("input");
+                            input.type = data.input_type === "password" ? "password" : "text";
+                            input.name = "user_input";
+                            input.required = true;
+                            container.appendChild(input);
                         }
                     }
 

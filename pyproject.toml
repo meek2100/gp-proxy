@@ -3,7 +3,7 @@
 name = "gp-proxy"
 version = "0.1.0"
 description = "Unofficial OpenConnect wrapper for GlobalProtect VPNs"
-readme = "agents.md"
+readme = "README.md"
 requires-python = ">=3.14"
 dependencies = []                                                     # No runtime dependencies (server.py uses standard lib)
 

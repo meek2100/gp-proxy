@@ -42,6 +42,13 @@ struct ServerStatus {
     error: Option<String>,
 }
 
+#[derive(Deserialize, Debug)]
+struct DiscoveryResponse {
+    ip: String,
+    #[allow(dead_code)]
+    port: u16,
+}
+
 fn main() -> Result<()> {
     env_logger::init();
     let args: Vec<String> = env::args().collect();
@@ -155,15 +162,26 @@ fn run_dashboard() -> Result<()> {
                     if s.state == "connected" {
                         // DISCONNECT ACTION
                         println!("Disconnecting...");
-                        let _ = ureq::post(&format!("{}/disconnect", config_url)).send_empty();
-                        thread::sleep(Duration::from_secs(1));
+                        if let Err(e) =
+                            ureq::post(&format!("{}/disconnect", config_url)).send_empty()
+                        {
+                            println!("Error disconnecting: {}", e);
+                            thread::sleep(Duration::from_secs(2));
+                        } else {
+                            thread::sleep(Duration::from_secs(1));
+                        }
                     } else {
                         // CONNECT ACTION
                         println!("Initiating Connection...");
-                        let _ = ureq::post(&format!("{}/connect", config_url)).send_empty();
-                        println!("Launching Browser for Auth...");
-                        let _ = webbrowser::open(&config_url);
-                        poll_for_success(&config_url);
+                        if let Err(e) = ureq::post(&format!("{}/connect", config_url)).send_empty()
+                        {
+                            println!("Error initiating connection: {}", e);
+                            thread::sleep(Duration::from_secs(2));
+                        } else {
+                            println!("Launching Browser for Auth...");
+                            let _ = webbrowser::open(&config_url);
+                            poll_for_success(&config_url);
+                        }
                     }
                 }
             }
@@ -268,7 +286,6 @@ fn run_setup_wizard() -> Result<()> {
     io::stdin().read_line(&mut input)?;
     let input = input.trim();
 
-    // FIX: Collapsed else-if block
     let final_url = if input.is_empty() {
         if found_url.is_empty() {
             println!("Error: IP required.");
@@ -342,15 +359,11 @@ fn try_discover() -> Result<String> {
 
     let mut buf = [0; 1024];
     let (amt, _src) = socket.recv_from(&mut buf)?;
-    let response = String::from_utf8_lossy(&buf[..amt]);
 
-    if let Some(start) = response.find("\"ip\": \"") {
-        let rest = &response[start + 7..];
-        if let Some(end) = rest.find("\"") {
-            return Ok(rest[..end].to_string());
-        }
-    }
-    anyhow::bail!("Invalid response");
+    let response: DiscoveryResponse =
+        serde_json::from_slice(&buf[..amt]).context("Invalid discovery response")?;
+
+    Ok(response.ip)
 }
 
 // --- CONFIG ---
@@ -397,7 +410,11 @@ fn install_handler() -> Result<()> {
     use winreg::enums::*;
     use winreg::RegKey;
     let exe_path = env::current_exe()?;
-    let exe_path_str = exe_path.to_str().unwrap();
+    // FIX: Safely convert path to string, erroring instead of panicking on invalid UTF-8
+    let exe_path_str = exe_path
+        .to_str()
+        .context("Executable path contains invalid UTF-8")?;
+
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = std::path::Path::new("Software")
         .join("Classes")
