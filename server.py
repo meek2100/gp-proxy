@@ -355,7 +355,7 @@ def init_runtime_dir() -> None:
                 elif not stat.S_ISFIFO(fifo_path.stat().st_mode):
                     logger.error(f"{fifo_path} exists but is not a FIFO.")
         except Exception as e:
-            logger.error(f"Failed to initialize runtime dir: {e}")
+            logger.exception(f"Failed to initialize runtime dir: {e}")
 
 
 def write_fifo_nonblocking(fifo_path: Path, data: str) -> bool:
@@ -370,7 +370,7 @@ def write_fifo_nonblocking(fifo_path: Path, data: str) -> bool:
         if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.ENXIO):
             logger.warning(f"No reader connected to {fifo_path}")
             return False
-        logger.error(f"FIFO write error: {e}")
+        logger.exception(f"FIFO write error: {e}")
         return False
     finally:
         if fd is not None:
