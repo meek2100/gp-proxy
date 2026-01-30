@@ -408,7 +408,9 @@ while true; do
 
             # Custom Arguments (handle word splitting for flags)
             if [ -n \"$GP_ARGS\" ]; then
-                for arg in $GP_ARGS; do
+                # Fix: Use read -ra for safe argument parsing
+                IFS=' ' read -ra CUSTOM_ARGS <<< \"$GP_ARGS\"
+                for arg in \"\${CUSTOM_ARGS[@]}\"; do
                     args+=(\"\$arg\")
                 done
             fi

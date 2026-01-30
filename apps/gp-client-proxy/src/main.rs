@@ -72,6 +72,14 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+// --- HELPER: Configured HTTP Agent ---
+fn get_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
 // =============================================================================
 // DASHBOARD LOGIC
 // =============================================================================
@@ -159,8 +167,10 @@ fn run_dashboard() -> Result<()> {
                     if s.state == "connected" {
                         // DISCONNECT ACTION
                         println!("Disconnecting...");
-                        if let Err(e) =
-                            ureq::post(&format!("{}/disconnect", config_url)).send_empty()
+                        // Use get_agent() for timeout protection
+                        if let Err(e) = get_agent()
+                            .post(&format!("{}/disconnect", config_url))
+                            .send_empty()
                         {
                             println!("Error disconnecting: {}", e);
                             thread::sleep(Duration::from_secs(2));
@@ -170,7 +180,9 @@ fn run_dashboard() -> Result<()> {
                     } else {
                         // CONNECT ACTION
                         println!("Initiating Connection...");
-                        if let Err(e) = ureq::post(&format!("{}/connect", config_url)).send_empty()
+                        if let Err(e) = get_agent()
+                            .post(&format!("{}/connect", config_url))
+                            .send_empty()
                         {
                             println!("Error initiating connection: {}", e);
                             thread::sleep(Duration::from_secs(2));
@@ -223,8 +235,9 @@ fn poll_for_success(base_url: &str) {
 }
 
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
-    // Add timeout to prevent freezing if server is down but host is reachable
-    let resp: ServerStatus = ureq::get(&format!("{}/status.json", base_url))
+    // Use configured agent with timeout
+    let resp: ServerStatus = get_agent()
+        .get(&format!("{}/status.json", base_url))
         .call()?
         .body_mut()
         .read_json()?;
@@ -328,7 +341,9 @@ fn handle_link(url: &str) -> Result<()> {
     let proxy_base = load_config()?;
     let target_endpoint = format!("{}/submit", proxy_base.trim_end_matches('/'));
 
-    let resp = ureq::post(&target_endpoint)
+    // Use get_agent() for timeout protection
+    let resp = get_agent()
+        .post(&target_endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .send_form([("callback_url", url)])?;
 
@@ -525,11 +540,9 @@ fn install_handler() -> Result<()> {
     .arg(&app_path)
     .status()?;
 
+    // Fix: Propagate error instead of silent fail
     if !status.success() {
-        eprintln!(
-            "Error: lsregister failed with exit code: {:?}",
-            status.code()
-        );
+        anyhow::bail!("lsregister failed with exit code: {:?}", status.code());
     }
     Ok(())
 }
@@ -540,21 +553,24 @@ fn uninstall_handler() -> Result<()> {
     let app_path = dirs
         .home_dir()
         .join(format!("Applications/{}.app", APP_NAME));
-    if app_path.exists() {
-        fs::remove_dir_all(&app_path)?;
-    }
-    let status = Command::new(
-        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-    )
-    .arg("-f")
-    .arg(&app_path)
-    .status()?;
 
-    if !status.success() {
-        eprintln!(
-            "Warning: lsregister cleanup failed with exit code: {:?}",
-            status.code()
-        );
+    if app_path.exists() {
+        // Fix: Explicitly unregister BEFORE deletion
+        let status = Command::new(
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+        )
+        .arg("-u")
+        .arg(&app_path)
+        .status();
+
+        if let Err(e) = status {
+            eprintln!("Warning: Failed to unregister app: {}", e);
+        }
+
+        fs::remove_dir_all(&app_path)?;
+        println!("App removed successfully.");
+    } else {
+        println!("App not found, nothing to remove.");
     }
     Ok(())
 }

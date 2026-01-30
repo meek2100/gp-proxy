@@ -104,6 +104,7 @@ class Beacon(threading.Thread):
             s.close()
             return str(ip)
         except OSError:
+            # Fallback for environments without standard networking (e.g., testing)
             return "127.0.0.1"
 
 
@@ -321,7 +322,7 @@ def get_vpn_state() -> VPNState:
                 analysis = analyze_log_lines(clean_lines, log_content)
 
         except Exception as e:
-            logger.error(f"Log parse error: {e}")
+            logger.exception(f"Log parse error: {e}")
 
     if state_manager.update_and_check_transition(analysis["state"]):
         logger.info(f"State Transition: -> {analysis['state']}")
@@ -484,7 +485,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 self.send_error(400, "Empty input")
         except Exception as e:
-            logger.error(f"Input error: {e}")
+            logger.exception(f"Input error: {e}")
             self.send_error(500, str(e))
 
     def do_POST(self) -> None:

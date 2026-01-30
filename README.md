@@ -182,10 +182,10 @@ This is the cross-platform Rust binary (`gp-client-proxy`) that runs on the user
 
 1. **Manager Dashboard (Interactive):**
 
-- When run by the user, it launches a CLI dashboard.
-- It auto-discovers the Container Agent on the local network via UDP broadcast.
-- It displays real-time connection status and IP configuration details.
-- It allows the user to trigger "Connect" (launching the browser) or "Disconnect".
+- Launches a CLI dashboard when run by the user.
+- Auto-discovers the Container Agent on the local network via UDP broadcast.
+- Displays real-time connection status and IP configuration details.
+- Allows the user to trigger "Connect" (launching the browser) or "Disconnect".
 
 2. **Protocol Handler (Background):**
 
