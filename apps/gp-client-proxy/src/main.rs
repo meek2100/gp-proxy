@@ -46,6 +46,24 @@ struct DiscoveryResponse {
     port: u16,
 }
 
+/// Program entry point that dispatches between the protocol handler, uninstaller, and interactive dashboard.
+///
+/// On startup it initializes logging and then selects one of three modes based on command-line arguments:
+/// - If the first argument begins with the `globalprotect://` scheme, the link handler is invoked and the process exits.
+/// - If the first argument equals `--uninstall`, the uninstall flow is executed and the program exits.
+/// - Otherwise, the interactive dashboard/launcher is started.
+///
+/// # Returns
+///
+/// `Ok(())` on successful completion of the selected mode; an `Err` if an operation fails.
+///
+/// # Examples
+///
+/// ```
+/// // Calling the application entry point; in real use this is invoked by the runtime.
+/// // This example demonstrates invocation only and does not assert side effects.
+/// let _ = crate::main();
+/// ```
 fn main() -> Result<()> {
     env_logger::init();
     let args: Vec<String> = env::args().collect();
@@ -73,6 +91,19 @@ fn main() -> Result<()> {
 }
 
 // --- HELPER: Configured HTTP Agent ---
+/// Create a preconfigured HTTP agent with a 10-second global timeout.
+///
+/// This returns a `ureq::Agent` configured with a global request timeout of 10 seconds,
+/// suitable for performing HTTP requests with a consistent timeout policy.
+///
+/// # Examples
+///
+/// ```
+/// let agent = get_agent();
+/// let resp = agent.get("http://example.invalid/").call();
+/// // `resp` will be an error if the request fails or times out.
+/// assert!(resp.is_err());
+/// ```
 fn get_agent() -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
@@ -84,6 +115,23 @@ fn get_agent() -> ureq::Agent {
 // DASHBOARD LOGIC
 // =============================================================================
 
+/// Displays the interactive dashboard and launcher for the GP Client Proxy.
+///
+/// On first run (no saved configuration) this will start the setup wizard instead of entering the dashboard.
+/// In the dashboard the user can view server and connection status and choose to open the web dashboard,
+/// connect or disconnect the VPN, re-run setup/discovery, uninstall, or exit.
+///
+/// # Returns
+///
+/// `Ok(())` when the dashboard loop exits normally (for example, when the user selects Exit or after uninstall),
+/// `Err` if an I/O or operational error occurs while running the dashboard.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Starts the interactive dashboard; this will block until the user exits or the process performs an uninstall.
+/// let _ = run_dashboard();
+/// ```
 fn run_dashboard() -> Result<()> {
     // 1. First Run Check
     if load_config().is_err() {
@@ -207,6 +255,20 @@ fn run_dashboard() -> Result<()> {
     }
 }
 
+/// Polls the proxy server's status endpoint until the VPN becomes connected, reports an error, or times out.
+///
+/// Repeatedly fetches the server status at `base_url` and prints progress to stdout. Stops when the server reports `connected`, when the server reports `error` (printing the error), or after 60 seconds (printing a timeout message). Prompts the user to press Enter when an error or timeout occurs.
+///
+/// # Parameters
+///
+/// - `base_url`: Base HTTP URL of the proxy server (for example `"http://127.0.0.1:8001"`).
+///
+/// # Examples
+///
+/// ```
+/// // This will poll the status endpoint at the provided base URL until success, error, or timeout.
+/// poll_for_success("http://127.0.0.1:8001");
+/// ```
 fn poll_for_success(base_url: &str) {
     println!("\nWaiting for connection (Press Ctrl+C to cancel)...");
     let start = Instant::now();
@@ -234,6 +296,20 @@ fn poll_for_success(base_url: &str) {
     wait_for_enter();
 }
 
+/// Fetches the proxy server's status from its `/status.json` endpoint.
+///
+/// `base_url` is the base URL of the GP Proxy server (for example `http://192.168.1.10:8001`).
+///
+/// # Returns
+///
+/// The parsed `ServerStatus` returned by the server.
+///
+/// # Examples
+///
+/// ```no_run
+/// let status = fetch_status("http://127.0.0.1:8001").unwrap();
+/// println!("state = {:?}", status.state);
+/// ```
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
     // Use configured agent with timeout
     let resp: ServerStatus = get_agent()
@@ -258,6 +334,29 @@ fn print_header() {
 // SETUP LOGIC
 // =============================================================================
 
+/// Runs the interactive setup wizard for the GP Client Proxy.
+///
+/// The wizard attempts to discover a local GP Proxy server on the network, prompts the user to
+/// accept a discovered URL or enter one manually, saves the chosen proxy URL to the local
+/// configuration, tries to register the OS URL handler for the `globalprotect://` scheme, and
+/// launches the web dashboard while polling the server for a connection status.
+///
+/// # Errors
+///
+/// Returns an error if I/O, network discovery, configuration save, or other underlying operations
+/// fail.
+///
+/// # Examples
+///
+/// ```no_run
+/// use anyhow::Result;
+///
+/// fn main() -> Result<()> {
+///     // Launch the interactive setup wizard (may prompt the user).
+///     run_setup_wizard()?;
+///     Ok(())
+/// }
+/// ```
 fn run_setup_wizard() -> Result<()> {
     clear_screen();
     print_header();
@@ -337,6 +436,26 @@ fn run_setup_wizard() -> Result<()> {
 // LINK HANDLER LOGIC (Background Mode)
 // =============================================================================
 
+/// Submits a callback URL to the configured GP Client Proxy server's /submit endpoint.
+///
+/// Reads the proxy base URL from the saved configuration and posts a form with
+/// `callback_url` set to the provided `url`. Returns success only if the server
+/// responds with HTTP 200.
+///
+/// # Errors
+///
+/// Returns an error if the configuration cannot be loaded, the HTTP request
+/// fails, or the server responds with a non-200 status.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # fn example() -> Result<()> {
+/// handle_link("globalprotect://example/callback")?;
+/// # Ok(())
+/// # }
+/// ```
 fn handle_link(url: &str) -> Result<()> {
     let proxy_base = load_config()?;
     let target_endpoint = format!("{}/submit", proxy_base.trim_end_matches('/'));
@@ -353,6 +472,14 @@ fn handle_link(url: &str) -> Result<()> {
     Ok(())
 }
 
+/// Prints a prompt and waits for the user to press Enter.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Displays a prompt and blocks until the user presses Enter.
+/// wait_for_enter();
+/// ```
 fn wait_for_enter() {
     print!("Press Enter to continue...");
     io::stdout().flush().unwrap();
@@ -360,6 +487,16 @@ fn wait_for_enter() {
 }
 
 // --- DISCOVERY ---
+/// Discovers a GP Proxy server on the local network using a UDP broadcast.
+///
+/// Sends a discovery broadcast and parses the first valid JSON reply into a `DiscoveryResponse`.
+///
+/// # Examples
+///
+/// ```no_run
+/// let resp = try_discover().expect("discovery failed");
+/// println!("Found proxy at {}:{}", resp.ip, resp.port);
+/// ```
 fn try_discover() -> Result<DiscoveryResponse> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;
@@ -418,6 +555,22 @@ fn uninstall_process() -> Result<()> {
 
 // --- OS SPECIFIC INSTALLERS ---
 
+/// Registers the application as the `globalprotect:` URL protocol handler in the current user's registry.
+///
+/// On success the registry key `HKCU\Software\Classes\globalprotect` is created/updated so that
+/// opening `globalprotect://...` invokes the current executable with the URL as the first argument.
+///
+/// # Errors
+///
+/// Returns an error if the current executable path cannot be determined or if any registry operation fails.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(target_os = "windows")] {
+/// let _ = gp_client_proxy::install_handler();
+/// # }
+/// ```
 #[cfg(target_os = "windows")]
 fn install_handler() -> Result<()> {
     use winreg::enums::*;
@@ -503,6 +656,21 @@ fn uninstall_handler() -> Result<()> {
     Ok(())
 }
 
+/// Installs a macOS app bundle for the application and registers it as a URL handler for the `globalprotect` scheme.
+///
+/// Creates an application bundle at `~/Applications/GP Client Proxy.app`, copies the current executable and bundled icon into the bundle, writes an `Info.plist` declaring the `globalprotect` URL type, and registers the bundle with LaunchServices so the system recognizes the URL scheme handler.
+///
+/// # Errors
+///
+/// Returns an error if the current executable or home directory cannot be determined, file operations fail, or LaunchServices registration (`lsregister`) exits with a non-zero status.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(target_os = "macos")] {
+/// let _ = gp_client_proxy::install_handler();
+/// # }
+/// ```
 #[cfg(target_os = "macos")]
 fn install_handler() -> Result<()> {
     let exe_path = env::current_exe()?;
@@ -547,6 +715,18 @@ fn install_handler() -> Result<()> {
     Ok(())
 }
 
+/// Unregisters and removes the installed macOS app bundle at `~/Applications/GP Client Proxy.app`.
+///
+/// Attempts to unregister the app with LaunchServices before deleting the app bundle. If the
+/// app bundle is not present, the function prints a message and returns `Ok(())`. Any filesystem
+/// or process errors encountered during removal are returned as an error.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// // On macOS, remove the installed app bundle (may require appropriate permissions).
+/// uninstall_handler().expect("failed to uninstall app");
+/// ```
 #[cfg(target_os = "macos")]
 fn uninstall_handler() -> Result<()> {
     let dirs = directories::UserDirs::new().context("No home dir")?;
