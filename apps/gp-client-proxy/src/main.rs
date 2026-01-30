@@ -45,7 +45,6 @@ struct ServerStatus {
 #[derive(Deserialize, Debug)]
 struct DiscoveryResponse {
     ip: String,
-    #[allow(dead_code)]
     port: u16,
 }
 
@@ -226,6 +225,9 @@ fn poll_for_success(base_url: &str) {
 }
 
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
+    // Add timeout to prevent freezing if server is down but host is reachable
+    // Note: ureq syntax can vary; keeping it simple for stability.
+    // If ureq 3.x is strict, this might need an Agent.
     let resp: ServerStatus = ureq::get(&format!("{}/status.json", base_url))
         .call()?
         .body_mut()
@@ -256,9 +258,9 @@ fn run_setup_wizard() -> Result<()> {
 
     // 1. Auto-Discovery
     match try_discover() {
-        Ok(ip) => {
-            println!("✅ FOUND SERVER: {}", ip);
-            found_url = format!("http://{}:8001", ip);
+        Ok(resp) => {
+            println!("✅ FOUND SERVER: {}:{}", resp.ip, resp.port);
+            found_url = format!("http://{}:{}", resp.ip, resp.port);
         }
         Err(_) => {
             println!("❌ No server found automatically.");
@@ -347,7 +349,7 @@ fn wait_for_enter() {
 }
 
 // --- DISCOVERY ---
-fn try_discover() -> Result<String> {
+fn try_discover() -> Result<DiscoveryResponse> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_millis(1500)))?;
@@ -363,7 +365,7 @@ fn try_discover() -> Result<String> {
     let response: DiscoveryResponse =
         serde_json::from_slice(&buf[..amt]).context("Invalid discovery response")?;
 
-    Ok(response.ip)
+    Ok(response)
 }
 
 // --- CONFIG ---

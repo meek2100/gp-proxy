@@ -30,9 +30,44 @@ SERVICE_LOG = Path("/tmp/gp-logs/gp-service.log")
 
 O_NONBLOCK: int = getattr(os, "O_NONBLOCK", 0)
 
+# --- Pre-compiled Regex (Optimization) ---
+ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+GATEWAY_REGEX = re.compile(r"(?:>|\s)*([A-Za-z0-9\-\.]+\s+\([A-Za-z0-9\-\.]+\))")
+URL_PATTERN = re.compile(r'(https?://[^\s"<>]+)')
 
-# --- UDP BEACON (New Feature) ---
+
+# --- State Management (Thread Safety) ---
+class StateManager:
+    """
+    Thread-safe manager for the VPN state.
+    Prevents race conditions between the log analyzer thread and HTTP request threads.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last_state: str | None = None
+
+    def update_and_check_transition(self, new_state: str) -> bool:
+        """
+        Updates the state and returns True if the state has changed.
+        """
+        with self._lock:
+            if self._last_state != new_state:
+                self._last_state = new_state
+                return True
+            return False
+
+
+state_manager = StateManager()
+
+
+# --- UDP BEACON ---
 class Beacon(threading.Thread):
+    """
+    Background thread that listens for UDP broadcast packets.
+    Used by the Desktop Client to auto-discover this container's IP address.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self.daemon = True
@@ -53,9 +88,14 @@ class Beacon(threading.Thread):
                 logger.error(f"Beacon error: {e}")
 
     def get_best_ip(self) -> str:
+        """
+        Determines the primary IP address of the container.
+        Uses a link-local connection attempt to avoid needing WAN access (e.g., 8.8.8.8).
+        """
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
+            # Connect to a non-routable address to force the OS to select the default interface IP
+            s.connect(("10.255.255.255", 1))
             ip = s.getsockname()[0]
             s.close()
             return str(ip)
@@ -73,8 +113,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger()
-
-last_known_state: str | None = None
 
 
 class VPNState(TypedDict):
@@ -107,8 +145,7 @@ def strip_ansi(text: str) -> str:
     Aggressively remove ANSI escape sequences to reveal pure text.
     Handles colors, cursor movements, and line clearing.
     """
-    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-    return ansi_escape.sub("", text)
+    return ANSI_ESCAPE.sub("", text)
 
 
 def _check_connected(clean_lines: list[str]) -> LogAnalysis | None:
@@ -149,10 +186,9 @@ def _check_input_request(clean_lines: list[str]) -> LogAnalysis | None:
     for line in reversed(clean_lines):
         if "Which gateway do you want to connect to" in line:
             input_options: list[str] = []
-            gateway_regex = re.compile(r"(?:>|\s)*([A-Za-z0-9\-\.]+\s+\([A-Za-z0-9\-\.]+\))")
             seen: set[str] = set()
             for scan_line in clean_lines:
-                m = gateway_regex.search(scan_line)
+                m = GATEWAY_REGEX.search(scan_line)
                 if m:
                     opt = m.group(1).strip()
                     if opt not in seen and "Which gateway" not in opt:
@@ -220,8 +256,7 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
         if analysis_acc["state"] != "input":
             analysis_acc["state"] = "auth"
 
-        url_pattern = re.compile(r'(https?://[^\s"<>]+)')
-        found_urls = url_pattern.findall(full_log_content)
+        found_urls = URL_PATTERN.findall(full_log_content)
         if found_urls:
             local_urls = [u for u in found_urls if str(PORT) not in u and "127.0.0.1" not in u]
             analysis_acc["sso_url"] = local_urls[-1] if local_urls else found_urls[-1]
@@ -236,7 +271,6 @@ def get_vpn_state() -> VPNState:
     Returns:
         VPNState: A dictionary containing the current status, prompts, and debug logs.
     """
-    global last_known_state
     is_debug = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
     vpn_mode = os.getenv("VPN_MODE", "standard")
 
@@ -285,9 +319,8 @@ def get_vpn_state() -> VPNState:
         except Exception as e:
             logger.error(f"Log parse error: {e}")
 
-    if analysis["state"] != last_known_state:
-        logger.info(f"State Transition: {last_known_state} -> {analysis['state']}")
-        last_known_state = analysis["state"]
+    if state_manager.update_and_check_transition(analysis["state"]):
+        logger.info(f"State Transition: -> {analysis['state']}")
 
     return {
         "state": analysis["state"],
@@ -393,6 +426,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # --- ACTION HANDLERS (Reduce Complexity) ---
 
     def _handle_connect(self) -> None:
+        """Process a connection request by resetting client processes and triggering start."""
         logger.info("User requested Connection")
         pkill = shutil.which("pkill")
         if pkill:
@@ -413,6 +447,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(501, "Not implemented for this platform")
 
     def _handle_disconnect(self) -> None:
+        """Process a disconnect request by killing client processes."""
         logger.info("User requested Disconnect")
         pkill = shutil.which("pkill")
         if pkill:
@@ -424,6 +459,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(b"OK")
 
     def _handle_submit(self) -> None:
+        """Process input submission (Auth tokens or Gateway selections)."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             data = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))

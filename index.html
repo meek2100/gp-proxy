@@ -443,20 +443,36 @@
                 color: var(--text-secondary);
             }
 
-            .conn-val {
+            /* ACCESSIBILITY: Interactive Values */
+            .conn-val-btn {
                 font-family: monospace;
                 font-weight: 600;
                 background: rgba(0, 0, 0, 0.05);
-                padding: 2px 6px;
+                border: none;
+                padding: 4px 8px;
                 border-radius: 4px;
                 cursor: pointer;
                 display: flex;
                 align-items: center;
                 gap: 6px;
+                color: var(--text-primary);
+                font-size: 0.9rem;
+                transition: background-color 0.2s;
             }
 
-            [data-theme="dark"] .conn-val {
+            [data-theme="dark"] .conn-val-btn {
                 background: rgba(255, 255, 255, 0.1);
+            }
+
+            .conn-val-btn:hover,
+            .conn-val-btn:focus {
+                background-color: rgba(0, 0, 0, 0.1);
+                outline: none;
+            }
+
+            [data-theme="dark"] .conn-val-btn:hover,
+            [data-theme="dark"] .conn-val-btn:focus {
+                background-color: rgba(255, 255, 255, 0.2);
             }
 
             .copy-icon {
@@ -465,7 +481,8 @@
                 height: 14px;
             }
 
-            .conn-val:hover .copy-icon {
+            .conn-val-btn:hover .copy-icon,
+            .conn-val-btn:focus .copy-icon {
                 opacity: 1;
             }
 
@@ -562,7 +579,13 @@
                         <p class="subtitle">Unofficial OpenConnect Gateway</p>
                     </div>
                     <div class="control-group">
-                        <button class="icon-btn" id="theme-toggle" title="Toggle Theme" onclick="toggleTheme()">
+                        <button
+                            class="icon-btn"
+                            id="theme-toggle"
+                            title="Toggle Theme"
+                            aria-label="Toggle Dark Mode"
+                            onclick="toggleTheme()"
+                        >
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="5"></circle>
                                 <line x1="12" y1="1" x2="12" y2="3"></line>
@@ -578,6 +601,7 @@
                         <button
                             class="icon-btn"
                             title="Force Reset"
+                            aria-label="Force Reset Connection"
                             onclick="confirmReset()"
                             style="color: var(--accent-red)"
                         >
@@ -653,6 +677,7 @@
                             placeholder="Paste callback URL here..."
                             required
                             autocomplete="off"
+                            aria-label="Callback URL"
                         />
                         <button type="submit" class="btn btn-primary">Verify Credentials</button>
                     </form>
@@ -660,7 +685,6 @@
 
                 <div id="view-input" class="hidden">
                     <h3 style="font-size: 1.1rem; margin-bottom: 16px">Input Required</h3>
-                    <p id="input-prompt" style="margin-bottom: 24px">Please provide response.</p>
                     <form onsubmit="handleFormSubmit(event)">
                         <div id="dynamic-input-container"></div>
                         <button type="submit" class="btn btn-primary">Submit</button>
@@ -706,7 +730,12 @@
                                 </div>
                                 <div class="conn-row">
                                     <span class="conn-label">Server IP</span>
-                                    <span class="conn-val" onclick="copyToClip(this)">
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Server IP"
+                                    >
                                         <span class="dyn-ip">...</span>
                                         <svg
                                             class="copy-icon"
@@ -718,11 +747,16 @@
                                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                         </svg>
-                                    </span>
+                                    </button>
                                 </div>
                                 <div class="conn-row">
                                     <span class="conn-label">Port</span>
-                                    <span class="conn-val" onclick="copyToClip(this)">
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Port"
+                                    >
                                         1080
                                         <svg
                                             class="copy-icon"
@@ -734,11 +768,13 @@
                                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                         </svg>
-                                    </span>
+                                    </button>
                                 </div>
                                 <div class="conn-row">
                                     <span class="conn-label">Auth</span>
-                                    <span class="conn-val" style="font-size: 0.8rem">None (Network Allowed)</span>
+                                    <span class="conn-val-btn" style="cursor: default; font-size: 0.8rem"
+                                        >None (Network Allowed)</span
+                                    >
                                 </div>
                                 <div class="helper-text">
                                     Configure your browser or app to use this SOCKS5 proxy to tunnel traffic through the
@@ -773,7 +809,12 @@
                                 </div>
                                 <div class="conn-row">
                                     <span class="conn-label">Gateway IP</span>
-                                    <span class="conn-val" onclick="copyToClip(this)">
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Gateway IP"
+                                    >
                                         <span class="dyn-ip">...</span>
                                         <svg
                                             class="copy-icon"
@@ -785,11 +826,16 @@
                                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                         </svg>
-                                    </span>
+                                    </button>
                                 </div>
                                 <div class="conn-row">
                                     <span class="conn-label">Subnet Mask</span>
-                                    <span class="conn-val" onclick="copyToClip(this)">
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Subnet Mask"
+                                    >
                                         255.255.255.0
                                         <svg
                                             class="copy-icon"
@@ -801,11 +847,16 @@
                                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                         </svg>
-                                    </span>
+                                    </button>
                                 </div>
                                 <div class="conn-row">
                                     <span class="conn-label">DNS Server</span>
-                                    <span class="conn-val" onclick="copyToClip(this)">
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy DNS Server"
+                                    >
                                         <span class="dyn-ip">...</span>
                                         <svg
                                             class="copy-icon"
@@ -817,7 +868,7 @@
                                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                                         </svg>
-                                    </span>
+                                    </button>
                                 </div>
                                 <div class="helper-text">
                                     Set your device's <b>Default Gateway</b> and <b>DNS</b> to this IP to route all
@@ -1101,15 +1152,23 @@
 
                     if (data.error) document.getElementById("error-message").innerText = data.error;
                     if (data.state === "input") {
-                        document.getElementById("input-prompt").innerText = data.prompt;
+                        // document.getElementById("input-prompt").innerText = data.prompt; // Removed in favor of labels
                         const container = document.getElementById("dynamic-input-container");
-
-                        // FIX: Clear container to allow updates/refreshes
                         container.innerHTML = "";
+
+                        // Create Accessibility Label
+                        const label = document.createElement("label");
+                        label.textContent = data.prompt;
+                        label.htmlFor = "vpn_user_input";
+                        label.style.display = "block";
+                        label.style.marginBottom = "8px";
+                        label.style.fontWeight = "600";
+                        container.appendChild(label);
 
                         // FIX: Handle Dropdown (select) inputs
                         if (data.input_type === "select" && Array.isArray(data.options)) {
                             const select = document.createElement("select");
+                            select.id = "vpn_user_input";
                             select.name = "user_input";
                             select.required = true;
                             data.options.forEach((opt) => {
@@ -1122,6 +1181,7 @@
                         } else {
                             // Default to input field
                             const input = document.createElement("input");
+                            input.id = "vpn_user_input";
                             input.type = data.input_type === "password" ? "password" : "text";
                             input.name = "user_input";
                             input.required = true;
