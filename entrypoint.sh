@@ -412,10 +412,11 @@ while true; do
             [ -n \"$VPN_CLIENT_VERSION\" ] && args+=(--client-version \"$VPN_CLIENT_VERSION\")
 
             # Custom Arguments (handle word splitting for flags)
-            if [ -n \"$GP_ARGS\" ]; then
-                # Fix: Use read -ra for safe argument parsing
-                IFS=' ' read -ra CUSTOM_ARGS <<< \"$GP_ARGS\"
-                for arg in \"\${CUSTOM_ARGS[@]}\"; do
+            if [ -n \"\$GP_ARGS\" ]; then
+                # Option B: Use eval to parse quoted arguments correctly (e.g. --os \"Windows 10\")
+                # SECURITY NOTE: This uses eval on env var content. Ensure GP_ARGS is trusted.
+                eval \"set -- \$GP_ARGS\"
+                for arg in \"\$@\"; do
                     args+=(\"\$arg\")
                 done
             fi
