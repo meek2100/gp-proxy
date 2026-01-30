@@ -82,9 +82,11 @@ class Beacon(threading.Thread):
 
     def __init__(self) -> None:
         """
-        Initialize the Beacon thread by marking it as a daemon and opening an IPv4 UDP socket bound to all interfaces on UDP_BEACON_PORT.
+        Initialize the Beacon thread by marking it as a daemon and opening an IPv4 UDP socket bound to all interfaces
+        on UDP_BEACON_PORT.
 
-        The socket is created for datagram (UDP) communication and bound to ("", UDP_BEACON_PORT) so the Beacon can receive broadcast discovery packets.
+        The socket is created for datagram (UDP) communication and bound to ("", UDP_BEACON_PORT) so the Beacon can
+        receive broadcast discovery packets.
         """
         super().__init__()
         self.daemon = True
@@ -93,9 +95,11 @@ class Beacon(threading.Thread):
 
     def run(self) -> None:
         """
-        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the best IP, server port, and hostname.
+        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the best IP, server port,
+        and hostname.
 
-        This method runs indefinitely; on receiving a "GP_DISCOVER" message it sends a UDP response to the sender with the fields `ip`, `port`, and `hostname`.
+        This method runs indefinitely; on receiving a "GP_DISCOVER" message it sends a UDP response to the sender
+        with the fields `ip`, `port`, and `hostname`.
         """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
@@ -113,7 +117,8 @@ class Beacon(threading.Thread):
         """
         Selects the container's primary outbound IP address.
 
-        Attempts to determine the best local IPv4 address by creating a UDP socket and letting the OS assign the outbound interface. Falls back to "127.0.0.1" if network information cannot be obtained.
+        Attempts to determine the best local IPv4 address by creating a UDP socket and letting the OS assign the
+        outbound interface. Falls back to "127.0.0.1" if network information cannot be obtained.
 
         Returns:
             ip (str): The chosen IPv4 address as a string; "127.0.0.1" on failure.
@@ -182,7 +187,8 @@ def _check_connected(clean_lines: list[str]) -> LogAnalysis | None:
     Determine whether the provided cleaned log lines indicate a successful VPN connection.
 
     Returns:
-        LogAnalysis | None: A LogAnalysis mapping with state "connected" (and empty prompt/options/error/sso_url) if a successful connection is detected, `None` otherwise.
+        LogAnalysis | None: A LogAnalysis mapping with state "connected" (and empty prompt/options/error/sso_url)
+        if a successful connection is detected, `None` otherwise.
     """
     for line in reversed(clean_lines):
         if "Connected" in line and "to" in line:
@@ -223,7 +229,8 @@ def _check_input_request(clean_lines: list[str]) -> LogAnalysis | None:
         clean_lines (list[str]): Log lines already stripped of ANSI sequences, in chronological order.
 
     Returns:
-        LogAnalysis | None: `LogAnalysis` with state `"input"` and fields describing the prompt when an input request is found; `None` if no input prompt is detected.
+        LogAnalysis | None: `LogAnalysis` with state `"input"` and fields describing the prompt when an input
+        request is found; `None` if no input prompt is detected.
     """
     for line in reversed(clean_lines):
         if "Which gateway do you want to connect to" in line:
@@ -269,7 +276,8 @@ def _check_input_request(clean_lines: list[str]) -> LogAnalysis | None:
 
 def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnalysis:
     """
-    Determine the current VPN state and any required user interaction by inspecting cleaned log lines and the full log text.
+    Determine the current VPN state and any required user interaction by inspecting cleaned log lines and the full
+    log text.
 
     Parameters:
         clean_lines (list[str]): Log lines with ANSI sequences removed, in chronological order.
@@ -322,7 +330,9 @@ def get_vpn_state() -> VPNState:
     """
     Determine the current VPN service status by inspecting the runtime mode file and recent client log output.
 
-    Reads MODE_FILE (if present) to detect an explicit "idle" mode and otherwise parses the tail of CLIENT_LOG to extract connection state, prompts, options, errors, and SSO URLs. May update the global state_manager with the detected state (which can produce a log entry on transition).
+    Reads MODE_FILE (if present) to detect an explicit "idle" mode and otherwise parses the tail of CLIENT_LOG to
+    extract connection state, prompts, options, errors, and SSO URLs. May update the global state_manager with the
+    detected state (which can produce a log entry on transition).
 
     Returns:
         VPNState: A dictionary containing:
@@ -475,7 +485,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         Routes:
         - /status.json: Returns the current VPN status as JSON with no-cache headers.
-        - /download_logs: Sends a combined service and client log attachment; allowed only when log level is DEBUG or TRACE.
+        - /download_logs: Sends a combined service and client log attachment; allowed only when log level is DEBUG
+          or TRACE.
         - /: Serves the index.html page by rewriting the path to /index.html.
         - All other paths: Delegates to the superclass to serve static files or default handling.
         """
@@ -521,7 +532,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Handle an HTTP request to initiate a VPN connection.
 
-        Attempts to stop existing gpclient/gpservice processes, signals the service to start by writing "START\n" to the control FIFO, and sends an HTTP response to the requester: 200 with body "OK" when the FIFO write succeeds, 503 if no FIFO reader is present, or 501 on Windows where this operation is not implemented.
+        Attempts to stop existing gpclient/gpservice processes, signals the service to start by writing "START\n"
+        to the control FIFO, and sends an HTTP response to the requester: 200 with body "OK" when the FIFO write
+        succeeds, 503 if no FIFO reader is present, or 501 on Windows where this operation is not implemented.
         """
         logger.info("User requested Connection")
         pkill = shutil.which("pkill")
@@ -546,7 +559,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Handle an HTTP disconnect request and terminate any running VPN client processes.
 
-        Attempts to invoke `pkill` for `gpclient` and `gpservice` if available, then responds with HTTP 200 and body "OK".
+        Attempts to invoke `pkill` for `gpclient` and `gpservice` if available, then responds with HTTP 200 and
+        body "OK".
         """
         logger.info("User requested Disconnect")
         pkill = shutil.which("pkill")
@@ -560,9 +574,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _handle_submit(self) -> None:
         """
-        Handle form-encoded submissions containing either a callback URL or user-provided input and forward them to the service input FIFO.
+        Handle form-encoded submissions containing either a callback URL or user-provided input and forward them to
+        the service input FIFO.
 
-        Reads the request body as application/x-www-form-urlencoded, extracts the first non-empty value from the `callback_url` or `user_input` fields, and, on non-Windows platforms, attempts a non-blocking write of the trimmed input (with a trailing newline) to FIFO_STDIN. Responds with:
+        Reads the request body as application/x-www-form-urlencoded, extracts the first non-empty value from the
+        `callback_url` or `user_input` fields, and, on non-Windows platforms, attempts a non-blocking write of the
+        trimmed input (with a trailing newline) to FIFO_STDIN. Responds with:
         - 200 and "OK" when the write succeeds.
         - 503 when the FIFO write fails due to no reader (service not ready).
         - 501 on Windows (endpoint not implemented for this platform).
