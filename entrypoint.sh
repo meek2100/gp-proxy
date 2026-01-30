@@ -140,11 +140,12 @@ export VPN_DISABLE_IPV6
 # 2. RUNTIME SETUP
 # ==============================================================================
 
+RUNTIME_DIR="/tmp/gp-runtime"
 CLIENT_LOG="/tmp/gp-logs/gp-client.log"
 SERVICE_LOG="/tmp/gp-logs/gp-service.log"
-MODE_FILE="/tmp/gp-mode"
-PIPE_STDIN="/tmp/gp-stdin"
-PIPE_CONTROL="/tmp/gp-control"
+MODE_FILE="$RUNTIME_DIR/gp-mode"
+PIPE_STDIN="$RUNTIME_DIR/gp-stdin"
+PIPE_CONTROL="$RUNTIME_DIR/gp-control"
 
 # Disable ANSI colors in Rust binaries
 export RUST_LOG_STYLE=never
@@ -336,11 +337,15 @@ if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
 fi
 
 # --- 5. INIT ENVIRONMENT ---
-rm -f "$PIPE_STDIN" "$PIPE_CONTROL" "$MODE_FILE"
+rm -rf "$RUNTIME_DIR"
+mkdir -p "$RUNTIME_DIR" /tmp/gp-logs
+chmod 700 "$RUNTIME_DIR"
+
 mkfifo "$PIPE_STDIN" "$PIPE_CONTROL"
-mkdir -p /tmp/gp-logs
 touch "$CLIENT_LOG" "$SERVICE_LOG"
-chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$PIPE_STDIN" "$PIPE_CONTROL"
+
+chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$RUNTIME_DIR"
+
 echo "idle" >"$MODE_FILE"
 chmod 644 "$MODE_FILE"
 

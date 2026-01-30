@@ -24,7 +24,7 @@ UDP_BEACON_PORT = 32800
 RUNTIME_DIR = Path("/tmp/gp-runtime")
 FIFO_STDIN = RUNTIME_DIR / "gp-stdin"
 FIFO_CONTROL = RUNTIME_DIR / "gp-control"
-MODE_FILE = Path("/tmp/gp-mode")
+MODE_FILE = RUNTIME_DIR / "gp-mode"
 CLIENT_LOG = Path("/tmp/gp-logs/gp-client.log")
 SERVICE_LOG = Path("/tmp/gp-logs/gp-service.log")
 
