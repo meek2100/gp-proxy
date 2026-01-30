@@ -1,4 +1,5 @@
 # File: server.py
+import errno
 import http.server
 import json
 import logging
@@ -7,6 +8,7 @@ import re
 import shutil
 import socket
 import socketserver
+import stat
 import subprocess
 import sys
 import threading
@@ -18,24 +20,65 @@ from typing import Any, TypedDict
 
 # --- Configuration ---
 PORT = 8001
-UDP_BEACON_PORT = 32800  # New Discovery Port
-FIFO_STDIN = Path("/tmp/gp-stdin")
-FIFO_CONTROL = Path("/tmp/gp-control")
+UDP_BEACON_PORT = 32800
+RUNTIME_DIR = Path("/tmp/gp-runtime")
+FIFO_STDIN = RUNTIME_DIR / "gp-stdin"
+FIFO_CONTROL = RUNTIME_DIR / "gp-control"
+MODE_FILE = RUNTIME_DIR / "gp-mode"
 CLIENT_LOG = Path("/tmp/gp-logs/gp-client.log")
-MODE_FILE = Path("/tmp/gp-mode")
 SERVICE_LOG = Path("/tmp/gp-logs/gp-service.log")
 
+O_NONBLOCK: int = getattr(os, "O_NONBLOCK", 0)
 
-# --- UDP BEACON (New Feature) ---
+# --- Pre-compiled Regex (Optimization) ---
+ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+GATEWAY_REGEX = re.compile(r"(?:>|\s)*([A-Za-z0-9\-\.]+\s+\([A-Za-z0-9\-\.]+\))")
+URL_PATTERN = re.compile(r'(https?://[^\s"<>]+)')
+
+
+# --- State Management (Thread Safety) ---
+class StateManager:
+    """
+    Thread-safe manager for the VPN state.
+    Prevents race conditions between the log analyzer thread and HTTP request threads.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last_state: str | None = None
+
+    def update_and_check_transition(self, new_state: str) -> bool:
+        """
+        Updates the state and returns True if the state has changed.
+        """
+        with self._lock:
+            if self._last_state != new_state:
+                self._last_state = new_state
+                return True
+            return False
+
+
+state_manager = StateManager()
+
+
+# --- UDP BEACON ---
 class Beacon(threading.Thread):
-    def __init__(self) -> None:  # Added -> None
+    """
+    Background thread that listens for UDP broadcast packets.
+    Used by the Desktop Client to auto-discover this container's IP address
+    on the local network without user intervention.
+    """
+
+    def __init__(self) -> None:
         super().__init__()
         self.daemon = True
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("", UDP_BEACON_PORT))
-        # Use a localized logger or print if logger isn't ready, but here it's fine
 
-    def run(self) -> None:  # Added -> None
+    def run(self) -> None:
+        """
+        Main loop: Listen for 'GP_DISCOVER' packets and respond with JSON metadata.
+        """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
             try:
@@ -48,32 +91,33 @@ class Beacon(threading.Thread):
             except Exception as e:
                 logger.error(f"Beacon error: {e}")
 
-    def get_best_ip(self) -> str:  # Added -> str
+    def get_best_ip(self) -> str:
+        """
+        Determines the primary IP address of the container.
+        Uses a link-local connection attempt to avoid needing WAN access (e.g., 8.8.8.8).
+        """
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
+            # Connect to a non-routable address to force the OS to select the default interface IP
+            s.connect(("10.255.255.255", 1))
             ip = s.getsockname()[0]
             s.close()
-            return str(ip)  # Explicit cast to match return type
-        except Exception:
+            return str(ip)
+        except OSError:
+            # Fallback for environments without standard networking (e.g., testing)
             return "127.0.0.1"
 
 
 # --- Logging Setup ---
-# OPTIMIZATION: Removed StreamHandler to prevent duplicate logs in Docker
-# The entrypoint.sh 'tail -F' process already streams this file to stdout.
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "DEBUG").upper(),
     format="[%(asctime)s] [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%SZ",
     handlers=[
         logging.FileHandler(SERVICE_LOG),
-        # logging.StreamHandler(sys.stderr),  <-- REMOVED
     ],
 )
 logger = logging.getLogger()
-
-last_known_state: str | None = None
 
 
 class VPNState(TypedDict):
@@ -85,7 +129,7 @@ class VPNState(TypedDict):
     input_type: str
     options: list[str]
     error: str
-    log: str
+    log: str | None
     debug_mode: bool
     vpn_mode: str
 
@@ -106,8 +150,7 @@ def strip_ansi(text: str) -> str:
     Aggressively remove ANSI escape sequences to reveal pure text.
     Handles colors, cursor movements, and line clearing.
     """
-    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-    return ansi_escape.sub("", text)
+    return ANSI_ESCAPE.sub("", text)
 
 
 def _check_connected(clean_lines: list[str]) -> LogAnalysis | None:
@@ -146,13 +189,11 @@ def _check_error(clean_lines: list[str]) -> LogAnalysis | None:
 def _check_input_request(clean_lines: list[str]) -> LogAnalysis | None:
     """Helper: Check if the VPN client is asking for user input."""
     for line in reversed(clean_lines):
-        # Gateway Selection
         if "Which gateway do you want to connect to" in line:
             input_options: list[str] = []
-            gateway_regex = re.compile(r"(?:>|\s)*([A-Za-z0-9\-\.]+\s+\([A-Za-z0-9\-\.]+\))")
             seen: set[str] = set()
             for scan_line in clean_lines:
-                m = gateway_regex.search(scan_line)
+                m = GATEWAY_REGEX.search(scan_line)
                 if m:
                     opt = m.group(1).strip()
                     if opt not in seen and "Which gateway" not in opt:
@@ -167,7 +208,6 @@ def _check_input_request(clean_lines: list[str]) -> LogAnalysis | None:
                 "sso_url": "",
             }
 
-        # Password Prompt
         if "password:" in line.lower():
             return {
                 "state": "input",
@@ -178,7 +218,6 @@ def _check_input_request(clean_lines: list[str]) -> LogAnalysis | None:
                 "sso_url": "",
             }
 
-        # Username Prompt
         if "username:" in line.lower():
             return {
                 "state": "input",
@@ -201,12 +240,10 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
     if res:
         return res
 
-    # 2. Check Errors
     res = _check_error(clean_lines)
     if res:
         return res
 
-    # 3. Check Input
     analysis_acc: LogAnalysis = {
         "state": "idle",
         "prompt": "",
@@ -220,13 +257,11 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
     if input_res:
         analysis_acc = input_res
 
-    # 4. Check SSO / Authentication
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
         if analysis_acc["state"] != "input":
             analysis_acc["state"] = "auth"
 
-        url_pattern = re.compile(r'(https?://[^\s"<>]+)')
-        found_urls = url_pattern.findall(full_log_content)
+        found_urls = URL_PATTERN.findall(full_log_content)
         if found_urls:
             local_urls = [u for u in found_urls if str(PORT) not in u and "127.0.0.1" not in u]
             analysis_acc["sso_url"] = local_urls[-1] if local_urls else found_urls[-1]
@@ -241,19 +276,13 @@ def get_vpn_state() -> VPNState:
     Returns:
         VPNState: A dictionary containing the current status, prompts, and debug logs.
     """
-    global last_known_state
     is_debug = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
     vpn_mode = os.getenv("VPN_MODE", "standard")
 
-    # 1. Check Mode File
     if MODE_FILE.exists():
         try:
             content = MODE_FILE.read_text().strip()
-            if content == "active":
-                pass
-            elif content == "idle":
-                # FIX 3: Returned a valid VPNState object, not a string "127.0.0.1"
-                # The "127.0.0.1" string was a copy-paste error from get_best_ip()
+            if content == "idle":
                 return {
                     "state": "idle",
                     "url": "",
@@ -261,12 +290,11 @@ def get_vpn_state() -> VPNState:
                     "input_type": "text",
                     "options": [],
                     "error": "",
-                    "log": "Ready.",
+                    "log": "Ready." if is_debug else None,
                     "debug_mode": is_debug,
                     "vpn_mode": vpn_mode,
                 }
         except Exception:
-            # FIX 3 (continued): Return valid object on error too
             pass
 
     log_content = ""
@@ -279,30 +307,25 @@ def get_vpn_state() -> VPNState:
         "sso_url": "",
     }
 
-    # 2. Parse Logs (Optimized with Seek)
     if CLIENT_LOG.exists():
         try:
             file_size = CLIENT_LOG.stat().st_size
             with open(CLIENT_LOG, errors="replace") as f:
-                # Optimization: Only read the last 64KB
                 if file_size > 65536:
                     f.seek(file_size - 65536)
-                    f.readline()  # Discard partial line
+                    f.readline()
 
                 lines = list(deque(f, maxlen=300))
                 log_content = "".join(lines)
                 clean_lines = [strip_ansi(line).strip() for line in lines[-100:]]
 
-                # Delegate to simplified analyzer
                 analysis = analyze_log_lines(clean_lines, log_content)
 
         except Exception as e:
-            logger.error(f"Log parse error: {e}")
+            logger.exception(f"Log parse error: {e}")
 
-    # State Transition Logging
-    if analysis["state"] != last_known_state:
-        logger.info(f"State Transition: {last_known_state} -> {analysis['state']}")
-        last_known_state = analysis["state"]
+    if state_manager.update_and_check_transition(analysis["state"]):
+        logger.info(f"State Transition: -> {analysis['state']}")
 
     return {
         "state": analysis["state"],
@@ -311,10 +334,47 @@ def get_vpn_state() -> VPNState:
         "input_type": analysis["prompt_type"],
         "options": analysis["options"],
         "error": analysis["error"],
-        "log": log_content,
+        "log": log_content if is_debug else None,
         "debug_mode": is_debug,
         "vpn_mode": vpn_mode,
     }
+
+
+def init_runtime_dir() -> None:
+    """Initialize secure runtime directory for FIFOs."""
+    if sys.platform != "win32":
+        try:
+            # Create directory with 0o700 permissions
+            RUNTIME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+            # Setup FIFOs
+            for fifo_path in [FIFO_STDIN, FIFO_CONTROL]:
+                if not fifo_path.exists():
+                    os.mkfifo(fifo_path)
+                    os.chmod(fifo_path, 0o600)  # Restricted permissions
+                elif not stat.S_ISFIFO(fifo_path.stat().st_mode):
+                    logger.error(f"{fifo_path} exists but is not a FIFO.")
+        except Exception as e:
+            logger.exception(f"Failed to initialize runtime dir: {e}")
+
+
+def write_fifo_nonblocking(fifo_path: Path, data: str) -> bool:
+    """Attempt a non-blocking write to a FIFO."""
+    fd = None
+    try:
+        # Open in non-blocking mode using the safe constant
+        fd = os.open(fifo_path, os.O_WRONLY | O_NONBLOCK)
+        os.write(fd, data.encode("utf-8"))
+        return True
+    except OSError as e:
+        if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.ENXIO):
+            logger.warning(f"No reader connected to {fifo_path}")
+            return False
+        logger.exception(f"FIFO write error: {e}")
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -323,11 +383,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     Handles API endpoints for status, connections, and log downloads.
     """
 
-    # FIX: Reverted arg name to 'format' to match BaseHTTPRequestHandler signature (Pyright)
-    # FIX: Added noqa: A002 to suppress Ruff shadowing warning
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """Redirect default HTTP logs to the unified logger."""
-        # OPTIMIZATION: Log status polling at DEBUG level to prevent log flooding
         if "status.json" in args[0]:
             logger.debug("%s - - %s", self.client_address[0], format % args)
         else:
@@ -344,7 +401,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if self.path == "/download_logs":
-            # Security Check: Only allow download if debug is enabled
             if os.getenv("LOG_LEVEL", "INFO").upper() not in ["DEBUG", "TRACE"]:
                 self.send_error(403, "Debug mode required to download logs.")
                 return
@@ -372,71 +428,83 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.path = "/index.html"
         return super().do_GET()
 
-    def do_POST(self) -> None:
-        """Handle POST requests for connection control."""
-        if self.path == "/connect":
-            logger.info("User requested Connection")
-            # Force clean slate: kill both client and service
-            subprocess.run(["sudo", "pkill", "gpclient"], stderr=subprocess.DEVNULL)
-            subprocess.run(["sudo", "pkill", "gpservice"], stderr=subprocess.DEVNULL)
-            time.sleep(0.5)
-            try:
-                # Platform-safe dynamic check for Windows dev
-                if sys.platform != "win32":
-                    if not FIFO_CONTROL.exists():
-                        os.mkfifo(FIFO_CONTROL)
-                        os.chmod(FIFO_CONTROL, 0o666)
+    # --- ACTION HANDLERS (Reduce Complexity) ---
 
-                with open(FIFO_CONTROL, "w") as f:
-                    f.write("START\n")
+    def _handle_connect(self) -> None:
+        """Process a connection request by resetting client processes and triggering start."""
+        logger.info("User requested Connection")
+        pkill = shutil.which("pkill")
+        if pkill:
+            subprocess.run([pkill, "gpclient"], stderr=subprocess.DEVNULL)
+            subprocess.run([pkill, "gpservice"], stderr=subprocess.DEVNULL)
+
+        time.sleep(0.5)
+
+        if sys.platform != "win32":
+            success = write_fifo_nonblocking(FIFO_CONTROL, "START\n")
+            if success:
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"OK")
-            except Exception:
-                self.send_error(500, "Failed to start")
-            return
+            else:
+                self.send_error(503, "Service not ready (FIFO reader absent)")
+        else:
+            self.send_error(501, "Not implemented for this platform")
 
-        if self.path == "/disconnect":
-            logger.info("User requested Disconnect")
-            # Kill everything to return to standby
-            subprocess.run(["sudo", "pkill", "gpclient"], stderr=subprocess.DEVNULL)
-            subprocess.run(["sudo", "pkill", "gpservice"], stderr=subprocess.DEVNULL)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
-            return
+    def _handle_disconnect(self) -> None:
+        """Process a disconnect request by killing client processes."""
+        logger.info("User requested Disconnect")
+        pkill = shutil.which("pkill")
+        if pkill:
+            subprocess.run([pkill, "gpclient"], stderr=subprocess.DEVNULL)
+            subprocess.run([pkill, "gpservice"], stderr=subprocess.DEVNULL)
 
-        if self.path == "/submit":
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                data = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
-                user_input = data.get("callback_url", [""])[0] or data.get("user_input", [""])[0]
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
 
-                if user_input:
-                    logger.info(f"User submitted input (Length: {len(user_input)})")
-                    with open(FIFO_STDIN, "w") as fifo:
-                        fifo.write(user_input.strip() + "\n")
-                        fifo.flush()
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b"OK")
+    def _handle_submit(self) -> None:
+        """Process input submission (Auth tokens or Gateway selections)."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            data = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+            user_input = data.get("callback_url", [""])[0] or data.get("user_input", [""])[0]
+
+            if user_input:
+                logger.info(f"User submitted input (Length: {len(user_input)})")
+                if sys.platform != "win32":
+                    success = write_fifo_nonblocking(FIFO_STDIN, user_input.strip() + "\n")
+                    if success:
+                        self.send_response(200)
+                        self.end_headers()
+                        self.wfile.write(b"OK")
+                    else:
+                        self.send_error(503, "Service not ready (FIFO reader absent)")
                 else:
-                    self.send_error(400, "Empty input")
-            except Exception as e:
-                logger.error(f"Input error: {e}")
-                self.send_error(500, str(e))
-            return
+                    self.send_error(501, "Not implemented for this platform")
+            else:
+                self.send_error(400, "Empty input")
+        except Exception as e:
+            logger.exception(f"Input error: {e}")
+            self.send_error(500, str(e))
+
+    def do_POST(self) -> None:
+        """Handle POST requests for connection control."""
+        if self.path == "/connect":
+            self._handle_connect()
+        elif self.path == "/disconnect":
+            self._handle_disconnect()
+        elif self.path == "/submit":
+            self._handle_submit()
+        else:
+            self.send_error(404, "Endpoint not found")
 
 
 if __name__ == "__main__":
     os.chdir("/var/www/html")
 
-    # FIX: Platform-safe check
-    if sys.platform != "win32":
-        if not FIFO_CONTROL.exists():
-            # Use getattr to avoid linter errors on Windows dev machines
-            os.mkfifo(FIFO_CONTROL)
-            os.chmod(FIFO_CONTROL, 0o666)
+    # Secure FIFO initialization
+    init_runtime_dir()
 
     # START BEACON
     beacon = Beacon()

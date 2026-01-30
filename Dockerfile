@@ -24,7 +24,7 @@ RUN git clone --branch v2.5.1 https://github.com/yuezk/GlobalProtect-openconnect
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # 3. Apply Patches
-RUN grep -rl "cannot be run as root" . | xargs sed -i 's/if.*root.*/if false {/'
+RUN grep -rl "cannot be run as root" . | xargs -r sed -i 's/if.*root.*/if false {/'
 RUN sed -i 's/let no_gui = false;/let no_gui = true;/' apps/gpservice/src/cli.rs
 
 # 4. Compilation
@@ -81,10 +81,6 @@ COPY assets/gp-proxy /var/www/html/assets/gp-proxy/
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
-ENV VPN_MODE=standard
-ENV LOG_LEVEL=INFO
 
 # 10. Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

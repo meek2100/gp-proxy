@@ -28,6 +28,7 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
 
 - **Web Server (`server.py`):**
     - Runs on Port 8001.
+    - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
     - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent.

@@ -18,7 +18,6 @@ htmlcov/
 # --- Rust (if building locally) ---
 target/
 **/*.rs.bk
-Cargo.lock
 
 # --- Docker ---
 # If you have local docker build contexts or logs

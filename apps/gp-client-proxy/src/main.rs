@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-// FIX: Only import Command on non-Windows platforms
 #[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
@@ -28,7 +27,6 @@ const PROTOCOL_SCHEME: &str = "globalprotect";
 const APP_NAME: &str = "GP Client Proxy";
 const CONFIG_FILE_NAME: &str = "proxy_url.txt";
 
-// FIX: Only define BINARY_NAME on non-Windows platforms to avoid "unused const" warnings
 #[cfg(not(target_os = "windows"))]
 const BINARY_NAME: &str = "gp-client-proxy";
 
@@ -40,6 +38,12 @@ struct ServerStatus {
     #[allow(dead_code)]
     url: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct DiscoveryResponse {
+    ip: String,
+    port: u16,
 }
 
 fn main() -> Result<()> {
@@ -66,6 +70,14 @@ fn main() -> Result<()> {
     // MODE 3: DASHBOARD / LAUNCHER (Interactive)
     run_dashboard()?;
     Ok(())
+}
+
+// --- HELPER: Configured HTTP Agent ---
+fn get_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build();
+    ureq::Agent::new_with_config(config)
 }
 
 // =============================================================================
@@ -155,15 +167,30 @@ fn run_dashboard() -> Result<()> {
                     if s.state == "connected" {
                         // DISCONNECT ACTION
                         println!("Disconnecting...");
-                        let _ = ureq::post(&format!("{}/disconnect", config_url)).send_empty();
-                        thread::sleep(Duration::from_secs(1));
+                        // Use get_agent() for timeout protection
+                        if let Err(e) = get_agent()
+                            .post(&format!("{}/disconnect", config_url))
+                            .send_empty()
+                        {
+                            println!("Error disconnecting: {}", e);
+                            thread::sleep(Duration::from_secs(2));
+                        } else {
+                            thread::sleep(Duration::from_secs(1));
+                        }
                     } else {
                         // CONNECT ACTION
                         println!("Initiating Connection...");
-                        let _ = ureq::post(&format!("{}/connect", config_url)).send_empty();
-                        println!("Launching Browser for Auth...");
-                        let _ = webbrowser::open(&config_url);
-                        poll_for_success(&config_url);
+                        if let Err(e) = get_agent()
+                            .post(&format!("{}/connect", config_url))
+                            .send_empty()
+                        {
+                            println!("Error initiating connection: {}", e);
+                            thread::sleep(Duration::from_secs(2));
+                        } else {
+                            println!("Launching Browser for Auth...");
+                            let _ = webbrowser::open(&config_url);
+                            poll_for_success(&config_url);
+                        }
                     }
                 }
             }
@@ -208,7 +235,9 @@ fn poll_for_success(base_url: &str) {
 }
 
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
-    let resp: ServerStatus = ureq::get(&format!("{}/status.json", base_url))
+    // Use configured agent with timeout
+    let resp: ServerStatus = get_agent()
+        .get(&format!("{}/status.json", base_url))
         .call()?
         .body_mut()
         .read_json()?;
@@ -238,9 +267,9 @@ fn run_setup_wizard() -> Result<()> {
 
     // 1. Auto-Discovery
     match try_discover() {
-        Ok(ip) => {
-            println!("✅ FOUND SERVER: {}", ip);
-            found_url = format!("http://{}:8001", ip);
+        Ok(resp) => {
+            println!("✅ FOUND SERVER: {}:{}", resp.ip, resp.port);
+            found_url = format!("http://{}:{}", resp.ip, resp.port);
         }
         Err(_) => {
             println!("❌ No server found automatically.");
@@ -268,7 +297,6 @@ fn run_setup_wizard() -> Result<()> {
     io::stdin().read_line(&mut input)?;
     let input = input.trim();
 
-    // FIX: Collapsed else-if block
     let final_url = if input.is_empty() {
         if found_url.is_empty() {
             println!("Error: IP required.");
@@ -313,7 +341,9 @@ fn handle_link(url: &str) -> Result<()> {
     let proxy_base = load_config()?;
     let target_endpoint = format!("{}/submit", proxy_base.trim_end_matches('/'));
 
-    let resp = ureq::post(&target_endpoint)
+    // Use get_agent() for timeout protection
+    let resp = get_agent()
+        .post(&target_endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .send_form([("callback_url", url)])?;
 
@@ -330,7 +360,7 @@ fn wait_for_enter() {
 }
 
 // --- DISCOVERY ---
-fn try_discover() -> Result<String> {
+fn try_discover() -> Result<DiscoveryResponse> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_millis(1500)))?;
@@ -342,15 +372,11 @@ fn try_discover() -> Result<String> {
 
     let mut buf = [0; 1024];
     let (amt, _src) = socket.recv_from(&mut buf)?;
-    let response = String::from_utf8_lossy(&buf[..amt]);
 
-    if let Some(start) = response.find("\"ip\": \"") {
-        let rest = &response[start + 7..];
-        if let Some(end) = rest.find("\"") {
-            return Ok(rest[..end].to_string());
-        }
-    }
-    anyhow::bail!("Invalid response");
+    let response: DiscoveryResponse =
+        serde_json::from_slice(&buf[..amt]).context("Invalid discovery response")?;
+
+    Ok(response)
 }
 
 // --- CONFIG ---
@@ -397,7 +423,10 @@ fn install_handler() -> Result<()> {
     use winreg::enums::*;
     use winreg::RegKey;
     let exe_path = env::current_exe()?;
-    let exe_path_str = exe_path.to_str().unwrap();
+    let exe_path_str = exe_path
+        .to_str()
+        .context("Executable path contains invalid UTF-8")?;
+
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = std::path::Path::new("Software")
         .join("Classes")
@@ -504,13 +533,17 @@ fn install_handler() -> Result<()> {
     );
 
     fs::write(contents.join("Info.plist"), plist)?;
-    Command::new(
+    let status = Command::new(
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
     )
     .arg("-f")
     .arg(&app_path)
-    .status()
-    .ok();
+    .status()?;
+
+    // Fix: Propagate error instead of silent fail
+    if !status.success() {
+        anyhow::bail!("lsregister failed with exit code: {:?}", status.code());
+    }
     Ok(())
 }
 
@@ -520,15 +553,24 @@ fn uninstall_handler() -> Result<()> {
     let app_path = dirs
         .home_dir()
         .join(format!("Applications/{}.app", APP_NAME));
+
     if app_path.exists() {
+        // Fix: Explicitly unregister BEFORE deletion
+        let status = Command::new(
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+        )
+        .arg("-u")
+        .arg(&app_path)
+        .status();
+
+        if let Err(e) = status {
+            eprintln!("Warning: Failed to unregister app: {}", e);
+        }
+
         fs::remove_dir_all(&app_path)?;
+        println!("App removed successfully.");
+    } else {
+        println!("App not found, nothing to remove.");
     }
-    Command::new(
-        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-    )
-    .arg("-f")
-    .arg(&app_path)
-    .status()
-    .ok();
     Ok(())
 }

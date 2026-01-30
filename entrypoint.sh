@@ -140,11 +140,12 @@ export VPN_DISABLE_IPV6
 # 2. RUNTIME SETUP
 # ==============================================================================
 
+RUNTIME_DIR="/tmp/gp-runtime"
 CLIENT_LOG="/tmp/gp-logs/gp-client.log"
 SERVICE_LOG="/tmp/gp-logs/gp-service.log"
-MODE_FILE="/tmp/gp-mode"
-PIPE_STDIN="/tmp/gp-stdin"
-PIPE_CONTROL="/tmp/gp-control"
+MODE_FILE="$RUNTIME_DIR/gp-mode"
+PIPE_STDIN="$RUNTIME_DIR/gp-stdin"
+PIPE_CONTROL="$RUNTIME_DIR/gp-control"
 
 # Disable ANSI colors in Rust binaries
 export RUST_LOG_STYLE=never
@@ -336,11 +337,15 @@ if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
 fi
 
 # --- 5. INIT ENVIRONMENT ---
-rm -f "$PIPE_STDIN" "$PIPE_CONTROL" "$MODE_FILE"
+rm -rf "$RUNTIME_DIR"
+mkdir -p "$RUNTIME_DIR" /tmp/gp-logs
+chmod 700 "$RUNTIME_DIR"
+
 mkfifo "$PIPE_STDIN" "$PIPE_CONTROL"
-mkdir -p /tmp/gp-logs
 touch "$CLIENT_LOG" "$SERVICE_LOG"
-chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$PIPE_STDIN" "$PIPE_CONTROL"
+
+chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$RUNTIME_DIR"
+
 echo "idle" >"$MODE_FILE"
 chmod 644 "$MODE_FILE"
 
@@ -386,33 +391,42 @@ while true; do
             > \"$CLIENT_LOG\"
             exec 3<> \"$PIPE_STDIN\"
 
-            # Build Arguments
-            CMD_ARGS=\"$GP_VERBOSITY --fix-openssl connect \\\"$VPN_PORTAL\\\" --browser remote\"
+            # Build Arguments Array
+            declare -a args
+            args=(sudo gpclient $GP_VERBOSITY --fix-openssl connect \"$VPN_PORTAL\" --browser remote)
 
-            # Gateway Logic (Prioritize explicit gateway, fallback to portal-as-gateway)
+            # Gateway Logic
             if [ -n \"$VPN_GATEWAY\" ]; then
-                CMD_ARGS=\"\$CMD_ARGS --gateway \\\"$VPN_GATEWAY\\\"\"
+                args+=(--gateway \"$VPN_GATEWAY\")
             else
-                # Use portal as gateway if no specific gateway provided
-                CMD_ARGS=\"\$CMD_ARGS --as-gateway\"
+                args+=(--as-gateway)
             fi
 
             # Optional Configuration
-            [ \"$VPN_HIP_REPORT\" == \"true\" ]   && CMD_ARGS=\"\$CMD_ARGS --hip\"
-            [ \"$VPN_NO_DTLS\" == \"true\" ]      && CMD_ARGS=\"\$CMD_ARGS --no-dtls\"
-            [ \"$VPN_DISABLE_IPV6\" == \"true\" ] && CMD_ARGS=\"\$CMD_ARGS --disable-ipv6\"
+            [ \"$VPN_HIP_REPORT\" == \"true\" ]   && args+=(--hip)
+            [ \"$VPN_NO_DTLS\" == \"true\" ]      && args+=(--no-dtls)
+            [ \"$VPN_DISABLE_IPV6\" == \"true\" ] && args+=(--disable-ipv6)
 
-            [ -n \"$VPN_OS\" ]             && CMD_ARGS=\"\$CMD_ARGS --os \\\"$VPN_OS\\\"\"
-            [ -n \"$VPN_OS_VERSION\" ]     && CMD_ARGS=\"\$CMD_ARGS --os-version \\\"$VPN_OS_VERSION\\\"\"
-            [ -n \"$VPN_CLIENT_VERSION\" ] && CMD_ARGS=\"\$CMD_ARGS --client-version \\\"$VPN_CLIENT_VERSION\\\"\"
+            [ -n \"$VPN_OS\" ]             && args+=(--os \"$VPN_OS\")
+            [ -n \"$VPN_OS_VERSION\" ]     && args+=(--os-version \"$VPN_OS_VERSION\")
+            [ -n \"$VPN_CLIENT_VERSION\" ] && args+=(--client-version \"$VPN_CLIENT_VERSION\")
 
-            # Custom Arguments (override previous)
-            CMD_ARGS=\"\$CMD_ARGS $GP_ARGS\"
+            # Custom Arguments (handle word splitting for flags)
+            if [ -n \"\$GP_ARGS\" ]; then
+                # Option B: Use eval to parse quoted arguments correctly (e.g. --os \"Windows 10\")
+                # SECURITY NOTE: This uses eval on env var content. Ensure GP_ARGS is trusted.
+                eval \"set -- \$GP_ARGS\"
+                for arg in \"\$@\"; do
+                    args+=(\"\$arg\")
+                done
+            fi
 
-            CMD=\"sudo gpclient \$CMD_ARGS\"
+            # Serialize array to safe string for 'script -c' using shell escaping
+            # This prevents injection from env vars into the script execution shell
+            SAFE_CMD=\$(printf \"%q \" \"\${args[@]}\")
 
-            echo \"[Entrypoint] Executing: \$CMD\" >> \"$SERVICE_LOG\"
-            script -q -c \"\$CMD\" /dev/null <&3 >> \"$CLIENT_LOG\" 2>&1
+            echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"$SERVICE_LOG\"
+            script -q -c \"\$SAFE_CMD\" /dev/null <&3 >> \"$CLIENT_LOG\" 2>&1
         "
 
         # 3. Cleanup after disconnect

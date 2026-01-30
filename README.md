@@ -60,11 +60,12 @@ Run the container:
 ```bash
 docker-compose up -d
 
+
 ```
 
 ### 2. Set Up the Desktop Client
 
-To handle SSO logins (which require a browser), download the **GP Client Proxy** binary for your OS from the [Releases Page](https://www.google.com/search?q=%23).
+To handle SSO logins (which require a browser), download the **GP Client Proxy** binary for your OS from the [Releases Page](https://github.com/meek2100/gp-proxy/releases).
 
 1. **Run the Application:**
 
@@ -109,6 +110,7 @@ DNS Server:    192.168.1.50
 4. Uninstall
 5. Exit
 
+
 ```
 
 ### Environment Variables (Docker)
@@ -137,12 +139,14 @@ DNS Server:    192.168.1.50
 cd apps/gp-client-proxy
 cargo build --release
 
+
 ```
 
 **Build Docker Image:**
 
 ```bash
 docker build -t global-protect-proxy .
+
 
 ```
 
@@ -160,13 +164,14 @@ The GP Proxy system consists of two primary "Agents" working in tandem: the **Co
 This agent runs inside the Docker container and is responsible for maintaining the actual VPN connection and routing traffic.
 
 - **Components:**
-    - `entrypoint.sh`: The supervisor. It manages network interfaces (`iptables`, `tun0`), starts the SOCKS proxy (`microsocks`), and monitors process health.
-    - `server.py`: A Python-based HTTP control server (Port 8001). It serves the Web UI and listens for commands.
-    - `gpclient`: The underlying OpenConnect wrapper that speaks the proprietary GP protocol.
+- `entrypoint.sh`: The supervisor. It manages network interfaces (`iptables`, `tun0`), starts the SOCKS proxy (`microsocks`), and monitors process health.
+- `server.py`: A Python-based HTTP control server (Port 8001). It serves the Web UI and listens for commands.
+- `gpclient`: The underlying OpenConnect wrapper that speaks the proprietary GP protocol.
+
 - **Responsibilities:**
-    - Maintains the tunnel interface.
-    - Performs Network Address Translation (NAT) for Gateway mode.
-    - Receives authentication tokens via the `/submit` endpoint.
+- Maintains the tunnel interface.
+- Performs Network Address Translation (NAT) for Gateway mode.
+- Receives authentication tokens via the `/submit` endpoint.
 
 ## 2. The Host Agent (GP Client Proxy)
 
@@ -174,24 +179,28 @@ This agent runs inside the Docker container and is responsible for maintaining t
 This is the cross-platform Rust binary (`gp-client-proxy`) that runs on the user's physical machine (Windows/Mac/Linux). It bridges the gap between the secure container and the user's desktop environment.
 
 - **Modes of Operation:**
-    1.  **Manager Dashboard (Interactive):**
-        - When run by the user, it launches a CLI dashboard.
-        - It auto-discovers the Container Agent on the local network via UDP broadcast.
-        - It displays real-time connection status and IP configuration details.
-        - It allows the user to trigger "Connect" (launching the browser) or "Disconnect".
-    2.  **Protocol Handler (Background):**
-        - Registered with the OS to handle `globalprotect://` links.
-        - When a user authenticates in the browser, the portal redirects to this custom protocol.
-        - The OS wakes up a background instance of the agent, which captures the token and instantly forwards it to the Container Agent's `/submit` endpoint via HTTP.
+
+1. **Manager Dashboard (Interactive):**
+
+- Launches a CLI dashboard when run by the user.
+- Auto-discovers the Container Agent on the local network via UDP broadcast.
+- Displays real-time connection status and IP configuration details.
+- Allows the user to trigger "Connect" (launching the browser) or "Disconnect".
+
+2. **Protocol Handler (Background):**
+
+- Registered with the OS to handle `globalprotect://` links.
+- When a user authenticates in the browser, the portal redirects to this custom protocol.
+- The OS wakes up a background instance of the agent, which captures the token and instantly forwards it to the Container Agent's `/submit` endpoint via HTTP.
 
 ## Communication Flow
 
-1.  **User** clicks "Connect" in the Host Agent (Dashboard).
-2.  **Host Agent** calls `POST /connect` on the Container.
-3.  **Container** generates a SAML Auth URL and returns it.
-4.  **Host Agent** opens the System Default Browser to this URL.
-5.  **User** logs in via Okta/Microsoft/etc.
-6.  **Browser** redirects to `globalprotect://callback/...`
-7.  **OS** launches **Host Agent** (Handler Mode).
-8.  **Host Agent** forwards the callback URL to the **Container**.
-9.  **Container** completes the handshake and establishes the VPN tunnel.
+1. **User** clicks "Connect" in the Host Agent (Dashboard).
+2. **Host Agent** calls `POST /connect` on the Container.
+3. **Container** generates a SAML Auth URL and returns it.
+4. **Host Agent** opens the System Default Browser to this URL.
+5. **User** logs in via Okta/Microsoft/etc.
+6. **Browser** redirects to `globalprotect://callback/...`
+7. **OS** launches **Host Agent** (Handler Mode).
+8. **Host Agent** forwards the callback URL to the **Container**.
+9. **Container** completes the handshake and establishes the VPN tunnel.
