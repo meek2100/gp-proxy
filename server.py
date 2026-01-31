@@ -283,7 +283,7 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
 
     Returns:
         analysis (LogAnalysis): Mapping with keys:
-                - state: One of "idle", "connected", "error", "input", or "auth".
+                - state: One of "idle", "connecting", "connected", "error", "input", or "auth".
                 - prompt: Text to present to the user (empty if none).
                 - prompt_type: Type of prompt ("text", "password", or "select").
                 - options: List of selectable options when prompt_type is "select".
@@ -341,7 +341,7 @@ def get_vpn_state() -> VPNState:
 
     Returns:
         VPNState: A dictionary containing:
-            - state: current state name (e.g., "idle", "input", "connected", "error", "auth").
+            - state: current state name (e.g., "idle", "connecting", "connected", "error", "auth", "input").
             - url: an SSO or callback URL if discovered, otherwise empty string.
             - prompt: user-facing prompt text when input is required, otherwise empty string.
             - input_type: type of expected input ("text", "password", or "select").
@@ -436,8 +436,9 @@ def init_runtime_dir() -> None:
                     if not stat.S_ISFIFO(fifo_path.stat().st_mode):
                         logger.error(f"{fifo_path} exists but is not a FIFO.")
 
-        except Exception as e:
-            logger.exception(f"Failed to initialize runtime dir: {e}")
+        except Exception:
+            # logger.exception automatically includes the exception info; adding it manually is redundant.
+            logger.exception("Failed to initialize runtime dir")
 
 
 def write_fifo_nonblocking(fifo_path: Path, data: str) -> bool:
@@ -611,8 +612,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self.send_error(501, "Not implemented for this platform")
             else:
                 self.send_error(400, "Empty input")
-        except Exception as e:
-            logger.exception(f"Input error: {e}")
+        except Exception:
+            # logger.exception automatically includes the exception info
+            logger.exception("Input error")
             self.send_error(500, "Internal server error")
 
     def do_POST(self) -> None:

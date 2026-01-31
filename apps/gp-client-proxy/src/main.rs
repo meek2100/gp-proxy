@@ -35,8 +35,8 @@ const BINARY_NAME: &str = "gp-client-proxy";
 struct ServerStatus {
     state: String,    // idle, connecting, auth, connected, error
     vpn_mode: String, // standard, gateway, socks
+    // 'url' field removed as it is unused in the Rust client (handled by JS dashboard)
     #[allow(dead_code)]
-    url: Option<String>,
     error: Option<String>,
 }
 
@@ -144,8 +144,15 @@ fn run_dashboard() -> Result<()> {
         clear_screen();
         print_header();
 
-        // Fetch Status
-        let config_url = load_config().unwrap_or_default();
+        // Fetch Status. Handle load failure gracefully.
+        let config_url = match load_config() {
+            Ok(url) => url,
+            Err(e) => {
+                eprintln!("Warning: Failed to reload config: {}", e);
+                String::new()
+            }
+        };
+
         let status = fetch_status(&config_url);
 
         // Display Status
@@ -546,8 +553,12 @@ fn remove_config() -> Result<()> {
 
 fn uninstall_process() -> Result<()> {
     println!("Removing...");
-    let _ = uninstall_handler();
-    let _ = remove_config();
+    if let Err(e) = uninstall_handler() {
+        eprintln!("Warning: Handler removal failed: {}", e);
+    }
+    if let Err(e) = remove_config() {
+        eprintln!("Warning: Config removal failed: {}", e);
+    }
     println!("Done.");
     wait_for_enter();
     Ok(())
