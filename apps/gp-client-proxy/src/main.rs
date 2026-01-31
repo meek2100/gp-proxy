@@ -100,7 +100,7 @@ fn main() -> Result<()> {
 ///
 /// ```
 /// let agent = get_agent();
-/// let resp = agent.get("http://example.invalid/").call();
+/// let resp = agent.get("[http://example.invalid/](http://example.invalid/)").call();
 /// // `resp` will be an error if the request fails or times out.
 /// assert!(resp.is_err());
 /// ```
@@ -133,25 +133,31 @@ fn get_agent() -> ureq::Agent {
 /// let _ = run_dashboard();
 /// ```
 fn run_dashboard() -> Result<()> {
-    // 1. First Run Check
-    if load_config().is_err() {
-        println!("No configuration found. Starting Setup...");
-        return run_setup_wizard();
-    }
+    // 1. First Run Check & Initialization
+    // We attempt to load the config once before entering the loop.
+    // If it fails, we trigger the setup wizard (which exits upon completion).
+    let mut config_url = match load_config() {
+        Ok(url) => url,
+        Err(_) => {
+            println!("No configuration found. Starting Setup...");
+            return run_setup_wizard();
+        }
+    };
 
     // 2. Main Loop
     loop {
         clear_screen();
         print_header();
 
-        // Fetch Status. Handle load failure gracefully.
-        let config_url = match load_config() {
-            Ok(url) => url,
+        // Attempt to reload config to pick up external changes
+        // If it fails, we log the warning but KEEP the last known valid URL.
+        match load_config() {
+            Ok(url) => config_url = url,
             Err(e) => {
                 eprintln!("Warning: Failed to reload config: {}", e);
-                String::new()
+                // Fallback: preserve the existing 'config_url'
             }
-        };
+        }
 
         let status = fetch_status(&config_url);
 
@@ -251,6 +257,11 @@ fn run_dashboard() -> Result<()> {
             }
             "3" => {
                 run_setup_wizard()?;
+                // If setup finishes successfully, we should try to reload the config immediately
+                // so the next loop iteration uses the new URL.
+                if let Ok(url) = load_config() {
+                    config_url = url;
+                }
             }
             "4" => {
                 uninstall_process()?;
@@ -274,7 +285,7 @@ fn run_dashboard() -> Result<()> {
 ///
 /// ```
 /// // This will poll the status endpoint at the provided base URL until success, error, or timeout.
-/// poll_for_success("http://127.0.0.1:8001");
+/// poll_for_success("[http://127.0.0.1:8001](http://127.0.0.1:8001)");
 /// ```
 fn poll_for_success(base_url: &str) {
     println!("\nWaiting for connection (Press Ctrl+C to cancel)...");
@@ -314,7 +325,7 @@ fn poll_for_success(base_url: &str) {
 /// # Examples
 ///
 /// ```no_run
-/// let status = fetch_status("http://127.0.0.1:8001").unwrap();
+/// let status = fetch_status("[http://127.0.0.1:8001](http://127.0.0.1:8001)").unwrap();
 /// println!("state = {:?}", status.state);
 /// ```
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
