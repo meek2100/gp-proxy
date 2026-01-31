@@ -35,8 +35,8 @@ const BINARY_NAME: &str = "gp-client-proxy";
 struct ServerStatus {
     state: String,    // idle, connecting, auth, connected, error
     vpn_mode: String, // standard, gateway, socks
+    // 'url' field removed as it is unused in the Rust client (handled by JS dashboard)
     #[allow(dead_code)]
-    url: Option<String>,
     error: Option<String>,
 }
 
@@ -100,7 +100,7 @@ fn main() -> Result<()> {
 ///
 /// ```
 /// let agent = get_agent();
-/// let resp = agent.get("http://example.invalid/").call();
+/// let resp = agent.get("[http://example.invalid/](http://example.invalid/)").call();
 /// // `resp` will be an error if the request fails or times out.
 /// assert!(resp.is_err());
 /// ```
@@ -133,19 +133,32 @@ fn get_agent() -> ureq::Agent {
 /// let _ = run_dashboard();
 /// ```
 fn run_dashboard() -> Result<()> {
-    // 1. First Run Check
-    if load_config().is_err() {
-        println!("No configuration found. Starting Setup...");
-        return run_setup_wizard();
-    }
+    // 1. First Run Check & Initialization
+    // We attempt to load the config once before entering the loop.
+    // If it fails, we trigger the setup wizard (which exits upon completion).
+    let mut config_url = match load_config() {
+        Ok(url) => url,
+        Err(_) => {
+            println!("No configuration found. Starting Setup...");
+            return run_setup_wizard();
+        }
+    };
 
     // 2. Main Loop
     loop {
         clear_screen();
         print_header();
 
-        // Fetch Status
-        let config_url = load_config().unwrap_or_default();
+        // Attempt to reload config to pick up external changes
+        // If it fails, we log the warning but KEEP the last known valid URL.
+        match load_config() {
+            Ok(url) => config_url = url,
+            Err(e) => {
+                eprintln!("Warning: Failed to reload config: {}", e);
+                // Fallback: preserve the existing 'config_url'
+            }
+        }
+
         let status = fetch_status(&config_url);
 
         // Display Status
@@ -244,6 +257,11 @@ fn run_dashboard() -> Result<()> {
             }
             "3" => {
                 run_setup_wizard()?;
+                // If setup finishes successfully, we should try to reload the config immediately
+                // so the next loop iteration uses the new URL.
+                if let Ok(url) = load_config() {
+                    config_url = url;
+                }
             }
             "4" => {
                 uninstall_process()?;
@@ -267,7 +285,7 @@ fn run_dashboard() -> Result<()> {
 ///
 /// ```
 /// // This will poll the status endpoint at the provided base URL until success, error, or timeout.
-/// poll_for_success("http://127.0.0.1:8001");
+/// poll_for_success("[http://127.0.0.1:8001](http://127.0.0.1:8001)");
 /// ```
 fn poll_for_success(base_url: &str) {
     println!("\nWaiting for connection (Press Ctrl+C to cancel)...");
@@ -307,7 +325,7 @@ fn poll_for_success(base_url: &str) {
 /// # Examples
 ///
 /// ```no_run
-/// let status = fetch_status("http://127.0.0.1:8001").unwrap();
+/// let status = fetch_status("[http://127.0.0.1:8001](http://127.0.0.1:8001)").unwrap();
 /// println!("state = {:?}", status.state);
 /// ```
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
@@ -546,8 +564,12 @@ fn remove_config() -> Result<()> {
 
 fn uninstall_process() -> Result<()> {
     println!("Removing...");
-    let _ = uninstall_handler();
-    let _ = remove_config();
+    if let Err(e) = uninstall_handler() {
+        eprintln!("Warning: Handler removal failed: {}", e);
+    }
+    if let Err(e) = remove_config() {
+        eprintln!("Warning: Config removal failed: {}", e);
+    }
     println!("Done.");
     wait_for_enter();
     Ok(())
@@ -632,13 +654,18 @@ fn install_handler() -> Result<()> {
         desktop_file,
     )?;
 
-    Command::new("xdg-mime")
+    let status = Command::new("xdg-mime")
         .args([
             "default",
             &format!("{}.desktop", BINARY_NAME),
             &format!("x-scheme-handler/{}", PROTOCOL_SCHEME),
         ])
         .status()?;
+
+    if !status.success() {
+        anyhow::bail!("xdg-mime failed with exit code: {:?}", status.code());
+    }
+
     Ok(())
 }
 

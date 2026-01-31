@@ -124,12 +124,10 @@ class Beacon(threading.Thread):
             ip (str): The chosen IPv4 address as a string; "127.0.0.1" on failure.
         """
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             # Connect to a non-routable address to force the OS to select the default interface IP
-            s.connect(("10.255.255.255", 1))
-            ip = s.getsockname()[0]
-            s.close()
-            return str(ip)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("10.255.255.255", 1))
+                return str(s.getsockname()[0])
         except OSError:
             # Fallback for environments without standard networking (e.g., testing)
             return "127.0.0.1"
@@ -285,7 +283,7 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
 
     Returns:
         analysis (LogAnalysis): Mapping with keys:
-                - state: One of "idle", "connected", "error", "input", or "auth".
+                - state: One of "idle", "connecting", "connected", "error", "input", or "auth".
                 - prompt: Text to present to the user (empty if none).
                 - prompt_type: Type of prompt ("text", "password", or "select").
                 - options: List of selectable options when prompt_type is "select".
@@ -314,6 +312,13 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
     if input_res:
         analysis_acc = input_res
 
+    # Detect connecting state to improve UI responsiveness
+    if analysis_acc["state"] == "idle":
+        for line in reversed(clean_lines):
+            if "Connecting" in line:
+                analysis_acc["state"] = "connecting"
+                break
+
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
         if analysis_acc["state"] != "input":
             analysis_acc["state"] = "auth"
@@ -336,7 +341,7 @@ def get_vpn_state() -> VPNState:
 
     Returns:
         VPNState: A dictionary containing:
-            - state: current state name (e.g., "idle", "input", "connected", "error", "auth").
+            - state: current state name (e.g., "idle", "connecting", "connected", "error", "auth", "input").
             - url: an SSO or callback URL if discovered, otherwise empty string.
             - prompt: user-facing prompt text when input is required, otherwise empty string.
             - input_type: type of expected input ("text", "password", or "select").
@@ -365,7 +370,7 @@ def get_vpn_state() -> VPNState:
                     "vpn_mode": vpn_mode,
                 }
         except Exception:
-            pass
+            logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
 
     log_content = ""
     analysis: LogAnalysis = {
@@ -425,13 +430,15 @@ def init_runtime_dir() -> None:
 
             # Setup FIFOs
             for fifo_path in [FIFO_STDIN, FIFO_CONTROL]:
-                if not fifo_path.exists():
-                    os.mkfifo(fifo_path)
-                    os.chmod(fifo_path, 0o600)  # Restricted permissions
-                elif not stat.S_ISFIFO(fifo_path.stat().st_mode):
-                    logger.error(f"{fifo_path} exists but is not a FIFO.")
-        except Exception as e:
-            logger.exception(f"Failed to initialize runtime dir: {e}")
+                try:
+                    os.mkfifo(fifo_path, mode=0o600)
+                except FileExistsError:
+                    if not stat.S_ISFIFO(fifo_path.stat().st_mode):
+                        logger.error(f"{fifo_path} exists but is not a FIFO.")
+
+        except Exception:
+            # logger.exception automatically includes the exception info; adding it manually is redundant.
+            logger.exception("Failed to initialize runtime dir")
 
 
 def write_fifo_nonblocking(fifo_path: Path, data: str) -> bool:
@@ -519,7 +526,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     with open(CLIENT_LOG, "rb") as f:
                         shutil.copyfileobj(f, self.wfile)
             except Exception:
-                pass
+                logger.debug("Error while streaming logs to client (connection may have closed)")
             return
 
         if self.path == "/":
@@ -605,9 +612,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self.send_error(501, "Not implemented for this platform")
             else:
                 self.send_error(400, "Empty input")
-        except Exception as e:
-            logger.exception(f"Input error: {e}")
-            self.send_error(500, str(e))
+        except Exception:
+            # logger.exception automatically includes the exception info
+            logger.exception("Input error")
+            self.send_error(500, "Internal server error")
 
     def do_POST(self) -> None:
         """Handle POST requests for connection control."""
