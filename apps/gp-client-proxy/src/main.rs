@@ -100,7 +100,7 @@ fn main() -> Result<()> {
 ///
 /// ```
 /// let agent = get_agent();
-/// let resp = agent.get("http://example.invalid/").call();
+/// let resp = agent.get("[http://example.invalid/](http://example.invalid/)").call();
 /// // `resp` will be an error if the request fails or times out.
 /// assert!(resp.is_err());
 /// ```
@@ -267,7 +267,7 @@ fn run_dashboard() -> Result<()> {
 ///
 /// ```
 /// // This will poll the status endpoint at the provided base URL until success, error, or timeout.
-/// poll_for_success("http://127.0.0.1:8001");
+/// poll_for_success("[http://127.0.0.1:8001](http://127.0.0.1:8001)");
 /// ```
 fn poll_for_success(base_url: &str) {
     println!("\nWaiting for connection (Press Ctrl+C to cancel)...");
@@ -307,7 +307,7 @@ fn poll_for_success(base_url: &str) {
 /// # Examples
 ///
 /// ```no_run
-/// let status = fetch_status("http://127.0.0.1:8001").unwrap();
+/// let status = fetch_status("[http://127.0.0.1:8001](http://127.0.0.1:8001)").unwrap();
 /// println!("state = {:?}", status.state);
 /// ```
 fn fetch_status(base_url: &str) -> Result<ServerStatus> {
@@ -632,13 +632,18 @@ fn install_handler() -> Result<()> {
         desktop_file,
     )?;
 
-    Command::new("xdg-mime")
+    let status = Command::new("xdg-mime")
         .args([
             "default",
             &format!("{}.desktop", BINARY_NAME),
             &format!("x-scheme-handler/{}", PROTOCOL_SCHEME),
         ])
         .status()?;
+
+    if !status.success() {
+        anyhow::bail!("xdg-mime failed with exit code: {:?}", status.code());
+    }
+
     Ok(())
 }
 
