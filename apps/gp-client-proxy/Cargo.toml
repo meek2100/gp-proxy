@@ -14,7 +14,7 @@ codegen-units = 1
 winres = "0.1"
 
 [dependencies]
-ureq = { version = "3.1", features = ["json"] }
+ureq = { version = "3.2", features = ["json"] }
 anyhow = "1.0"
 directories = "6.0"
 env_logger = "0.11"
