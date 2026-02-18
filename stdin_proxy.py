@@ -5,7 +5,17 @@ import sys
 
 
 def main() -> None:
-    """Proxies incoming TCP socket payloads directly to standard output."""
+    """
+    Proxies incoming TCP socket payloads directly to standard output.
+
+    This script acts as a bridge between the Python HTTP server and the
+    OpenConnect subprocess. It listens on a local TCP port and pipes any
+    received data (like passwords or 2FA codes) directly into stdout, which
+    the bash entrypoint captures and pipes into the VPN client.
+
+    Returns:
+        None: Exits cleanly when the socket is closed or the process terminates.
+    """
     port: int = int(os.getenv("IPC_STDIN_PORT", "32802"))
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

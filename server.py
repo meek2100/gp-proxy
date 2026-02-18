@@ -481,15 +481,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _is_authorized(self) -> bool:
         """
         Validates the request against the configured pre-shared API_TOKEN.
-        Enforces a strict fail-closed zero-trust model if no token is configured.
+        If no API_TOKEN environment variable is set, defaults to open access,
+        relying on network-level boundaries (e.g., Docker networks) for security.
 
         Returns:
-            bool: `True` if authorized, `False` otherwise.
+            bool: `True` if authorized or no token is required, `False` otherwise.
         """
         expected_token = os.getenv("API_TOKEN")
-        if not expected_token:
-            return False
 
+        # If no token is configured, allow the request
+        if not expected_token:
+            return True
+
+        # If a token is configured, strictly enforce it
         auth_header = self.headers.get("Authorization", "")
         if auth_header == f"Bearer {expected_token}":
             return True
