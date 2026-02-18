@@ -50,6 +50,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+# Catch pipe failures during the build process
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # 5. Install Runtime Dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iptables iproute2 util-linux procps tzdata \
