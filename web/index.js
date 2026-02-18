@@ -86,10 +86,10 @@ let isRestarting = false;
 function switchTab(tab) {
     document.querySelectorAll(".conn-tab-btn").forEach((b) => b.classList.remove("active"));
 
-    // Fix: Scope strictness added to prevent hijacking unrelated buttons
+    // DOM selection via explicit datasets prevents inner-text language/localization bugs
     const btns = document.querySelectorAll(".conn-tab-btn");
     btns.forEach((b) => {
-        if (b.textContent.toLowerCase().includes(tab === "socks" ? "socks" : "gateway")) {
+        if (b.dataset.tab === tab) {
             b.classList.add("active");
         }
     });
@@ -97,7 +97,7 @@ function switchTab(tab) {
     document.getElementById("sec-socks").style.display = tab === "socks" ? "block" : "none";
     document.getElementById("sec-gateway").style.display = tab === "gateway" ? "block" : "none";
 
-    // FIX: Accessibility focus management on tab change
+    // Accessibility focus management on tab change
     const activeSection = document.getElementById(tab === "socks" ? "sec-socks" : "sec-gateway");
     if (activeSection) {
         const header = activeSection.querySelector(".conn-header");
@@ -281,10 +281,19 @@ async function confirmReset() {
 async function handleFormSubmit(event) {
     event.preventDefault();
     const formData = new URLSearchParams(new FormData(event.target));
+
+    // Prevent frontend/backend I/O desync by buffering the polling execution
+    // while the local disk writes finish flushing to the backend analyzer.
+    isRestarting = true;
+    setTimeout(() => {
+        isRestarting = false;
+    }, 3000);
+
     await fetch("/submit", getFetchOptions("POST", formData));
     setView("connecting");
+    setBadge("CONNECTING...", "connecting");
     event.target.reset();
-    resetPoll(1000);
+    resetPoll(1500);
 }
 
 /**
@@ -298,7 +307,7 @@ async function updateStatus() {
         if (res.status === 401) {
             setBadge("Unauthorized (Check API Token)", "error");
             setView("error");
-            resetPoll(5000); // FIX: Ensure polling resumes so corrections resolve naturally
+            resetPoll(5000); // Ensure polling resumes so corrections resolve naturally
             return;
         }
         const data = await res.json();
@@ -363,7 +372,7 @@ async function updateStatus() {
 
         if (data.state === "input") {
             const container = document.getElementById("dynamic-input-container");
-            // FIX: Reliable DOM boundary assertion prevents injection bugs
+            // Reliable DOM boundary assertion prevents injection bugs
             const newOptionsStr = data.options ? JSON.stringify(data.options) : "[]";
 
             // DOM Diffing constraint: Only rebuild input elements when properties fundamentally change.

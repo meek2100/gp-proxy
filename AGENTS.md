@@ -31,7 +31,7 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
-    - **Zero-Touch Security:** On startup, the server dynamically generates a cryptographically secure `SESSION_TOKEN`. All control routes and status payloads strictly require `Authorization: Bearer <token>` headers. This mitigates CSRF and unauthorized local process manipulation.
+    - **Zero-Touch Security:** On startup, the server dynamically generates a cryptographically secure `SESSION_TOKEN`. All control routes and status payloads strictly require `Authorization: Bearer <token>` headers and enforce a **fail-closed** zero-trust model if a token is omitted. This mitigates CSRF and unauthorized local process manipulation.
     - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The response payload securely distributes the container IP, Port, and the `SESSION_TOKEN` to the Rust Host Agent.
 
 ### 2. The Host Agent (The Manager)
@@ -72,7 +72,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ### Container (Server)
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`.
-- **`server.py`:** Python Control Server. Handles `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.14 Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows.
+- **`server.py`:** Python Control Server. Handles `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.8+ Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets configurable via `IPC_CONTROL_PORT` and `IPC_STDIN_PORT` environment variables to support multi-instance dynamic allocation without breaking Windows testing compatibility.
 - **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py`. Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
 
 ### Host (Client)

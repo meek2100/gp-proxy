@@ -160,8 +160,12 @@
                     <div class="conn-container">
                         <div id="sec-socks" class="conn-section hidden" style="flex: 1">
                             <div class="conn-tabs">
-                                <button class="conn-tab-btn active" onclick="switchTab('socks')">SOCKS5 Proxy</button>
-                                <button class="conn-tab-btn" onclick="switchTab('gateway')">Transparent Gateway</button>
+                                <button class="conn-tab-btn active" data-tab="socks" onclick="switchTab('socks')">
+                                    SOCKS5 Proxy
+                                </button>
+                                <button class="conn-tab-btn" data-tab="gateway" onclick="switchTab('gateway')">
+                                    Transparent Gateway
+                                </button>
                             </div>
 
                             <div class="conn-content">
@@ -235,8 +239,10 @@
 
                         <div id="sec-gateway" class="conn-section hidden" style="flex: 1">
                             <div class="conn-tabs">
-                                <button class="conn-tab-btn" onclick="switchTab('socks')">SOCKS5 Proxy</button>
-                                <button class="conn-tab-btn active" onclick="switchTab('gateway')">
+                                <button class="conn-tab-btn" data-tab="socks" onclick="switchTab('socks')">
+                                    SOCKS5 Proxy
+                                </button>
+                                <button class="conn-tab-btn active" data-tab="gateway" onclick="switchTab('gateway')">
                                     Transparent Gateway
                                 </button>
                             </div>

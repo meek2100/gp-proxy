@@ -19,8 +19,8 @@ from typing import Any, TypedDict
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
 RUNTIME_DIR: Path = Path("/tmp/gp-runtime")
-IPC_STDIN_PORT: int = 32802
-IPC_CONTROL_PORT: int = 32801
+IPC_STDIN_PORT: int = int(os.getenv("IPC_STDIN_PORT", "32802"))
+IPC_CONTROL_PORT: int = int(os.getenv("IPC_CONTROL_PORT", "32801"))
 MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
 CLIENT_LOG: Path = Path("/tmp/gp-logs/gp-client.log")
 SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
@@ -138,7 +138,7 @@ class StateManager:
                     lines = lines[-300:]
                     log_content = "".join(lines)
 
-                    # FIX: Analyze the full log buffer to ensure rapid state transitions aren't swallowed
+                    # Analyze the full log buffer to ensure rapid state transitions aren't swallowed
                     clean_lines: list[str] = [strip_ansi(line).strip() for line in lines]
 
                     analysis = analyze_log_lines(clean_lines, log_content)
@@ -502,8 +502,8 @@ def _kill_and_poll() -> None:
 
         pgrep: str | None = shutil.which("pgrep")
         if pgrep:
-            for _ in range(20):
-                # FIX: Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
+            for _ in range(50):
+                # Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
                 res1: subprocess.CompletedProcess[bytes] = subprocess.run(
                     [pgrep, "gpclient"], stdout=subprocess.DEVNULL
                 )
@@ -526,15 +526,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _is_authorized(self) -> bool:
         """
         Validates the request against the configured pre-shared API_TOKEN.
-        If no token is set in the environment, all requests are authorized.
-        Failing authorization will result in a 401 response from the caller.
+        Enforces a strict fail-closed zero-trust model if no token is configured.
 
         Returns:
-            bool: `True` if authorized or no token is required, `False` otherwise.
+            bool: `True` if authorized, `False` otherwise.
         """
         expected_token = os.getenv("API_TOKEN")
         if not expected_token:
-            return True
+            return False
 
         auth_header = self.headers.get("Authorization", "")
         if auth_header == f"Bearer {expected_token}":
@@ -652,7 +651,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
             data: dict[str, list[str]] = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
 
-            # FIX: Use Python 3.14 Walrus operator
             if user_input_list := (data.get("callback_url") or data.get("user_input") or []):
                 user_input: str = user_input_list[0]
                 sanitized_input: str = user_input.strip().replace("\r", "").replace("\n", "")
