@@ -63,14 +63,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 6. Download GOST and Purge Wget
 # We install wget, fetch gost & its checksum, verify it, extract it, and then purge wget.
+# If TARGETARCH is 'arm', we fail explicitly as 32-bit ARM is unsupported.
 RUN apt-get update && apt-get install -y --no-install-recommends wget \
-    && wget -q "https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_${TARGETARCH}.tar.gz" \
+    && if [ "$TARGETARCH" = "arm" ]; then \
+    echo "Error: 32-bit ARM (arm/v7) is not supported by GOST v3.2.6 prebuilts." >&2 && exit 1; \
+    else \
+    wget -q "https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_${TARGETARCH}.tar.gz" \
     && wget -q "https://github.com/go-gost/gost/releases/download/v3.2.6/checksums.txt" \
     && grep "gost_3.2.6_linux_${TARGETARCH}.tar.gz" checksums.txt | sha256sum -c \
     && tar -xzf "gost_3.2.6_linux_${TARGETARCH}.tar.gz" gost \
     && mv gost /usr/bin/gost \
     && chmod +x /usr/bin/gost \
-    && rm "gost_3.2.6_linux_${TARGETARCH}.tar.gz" checksums.txt \
+    && rm "gost_3.2.6_linux_${TARGETARCH}.tar.gz" checksums.txt; \
+    fi \
     && apt-get purge -y wget \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
