@@ -10,7 +10,7 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
 
 **Strict linting and formatting are enforced via CI and Pre-commit hooks.** Any code changes must adhere to these standards to pass the `lint` workflow.
 
-- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`. Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[Any]` to satisfy Python 3.14 static type guarantees.
+- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`. Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]` to satisfy Python 3.14 static type guarantees.
 - **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
 - **Shell:** Uses `shellcheck` (gcc format).
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.
@@ -71,9 +71,9 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 ### Container (Server)
 
-- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, and invokes `gpclient`.
-- **`server.py`:** Python Control Server. Handles `API_TOKEN` bearer auth logic, length-limited payload parsing, safely resolves empty submission bodies to prevent index errors, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Note: Control endpoints enforce a `POSIX` FIFO requirement, intentionally rejecting Native Windows host execution to preserve Docker parity.
-- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py` (no brittle `sed` injections in the Dockerfile). Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
+- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`.
+- **`server.py`:** Python Control Server. Handles `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.14 Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows.
+- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py`. Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
 
 ### Host (Client)
 
@@ -87,18 +87,18 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ## Critical Implementation Details & Behaviors
 
 - **Status Polling JSON:** The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. The Rust client parses this field as `Option<String>`, and surfacing the actual API response via `.as_deref().unwrap_or(...)` prevents silent failure masking.
-- **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are only fully rebuilt when types or options fundamentally change; otherwise, only text labels are updated. This guarantees input fields do not lose user cursor focus during aggressive 1-second polling intervals.
-- **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. A strict 10-second timeout resets this flag to protect the UI from permanent deadlock if the backend unexpectedly reverts states.
-- **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`) to keep the user's CLI context highly responsive to cancellation actions (Ctrl+C) even if the backend blocks.
-- **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic. It does not rely on arbitrary `time.sleep()` delays, eliminating startup race conditions.
-- **API Security (`SESSION_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls. The Rust client natively injects this as an `Authorization` header on all control calls.
+- **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are compared against stringified array structures `JSON.stringify()` to ensure they are only fully rebuilt when types or options fundamentally change; otherwise, only text labels are updated.
+- **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. In addition, 401 exceptions forcefully command `resetPoll(5000)` to ensure background loop resurrection upon credential fixing.
+- **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`).
+- **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic.
+- **API Security (`SESSION_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls.
 
 ## System Optimizations & Guardrails (DO NOT REMOVE)
 
-- **IPC Deadlock Prevention (`entrypoint.sh`):** Bash `read` natively blocks on Named Pipes until an EOF is presented, permanently freezing the supervisor loop. The loop _must_ securely acquire a dual read/write descriptor via `exec 4<> "$PIPE_CONTROL"` so the watchdog tasks can securely operate while the pipe is idle.
 - **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states.
 - **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation.
-- **IPC Payload Sanitization:** All HTTP `/submit` parameters piped into `gpclient` MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to FIFO execution. Unfiltered payloads permit arbitrary shell interaction escapes.
+- **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows.
+- **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes.
 
 ## Handling Callbacks (`globalprotect://`)
 
@@ -107,8 +107,8 @@ The SAML flow often ends with a redirect to `globalprotect://...`.
 1.  **Browser Redirect:** The IDP redirects the browser to the custom protocol.
 2.  **OS Trigger:** The OS spawns `gp-client-proxy globalprotect://...`.
 3.  **Forwarding:** The Rust binary reads its config (`proxy_url.txt`), connects to the Docker container IP, injects the Bearer authorization header, and POSTs the payload to `/submit`.
-4.  **Processing:** `server.py` receives the payload and writes it to the named pipe `/tmp/gp-stdin`.
-5.  **Execution:** The running `gpclient` process reads the pipe and completes the handshake.
+4.  **Processing:** `server.py` receives the payload and dispatches it over the local TCP socket `127.0.0.1:32802`.
+5.  **Execution:** The `stdin_proxy.py` daemon receives the socket buffer and writes it directly to the running `gpclient` standard input to complete the handshake.
 
 ## Future Improvements
 

@@ -154,8 +154,6 @@ RUNTIME_DIR="/tmp/gp-runtime"
 CLIENT_LOG="/tmp/gp-logs/gp-client.log"
 SERVICE_LOG="/tmp/gp-logs/gp-service.log"
 MODE_FILE="$RUNTIME_DIR/gp-mode"
-PIPE_STDIN="$RUNTIME_DIR/gp-stdin"
-PIPE_CONTROL="$RUNTIME_DIR/gp-control"
 
 # Disable ANSI colors in Rust binaries
 export RUST_LOG_STYLE=never
@@ -371,7 +369,6 @@ rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR" /tmp/gp-logs
 chmod 700 "$RUNTIME_DIR"
 
-mkfifo "$PIPE_STDIN" "$PIPE_CONTROL"
 touch "$CLIENT_LOG" "$SERVICE_LOG"
 
 chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$RUNTIME_DIR"
@@ -399,16 +396,14 @@ tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
 sleep 3
 
-# --- FIX: Open FIFO for read/write on descriptor 4 to prevent blocking on EOF ---
-exec 4<>"$PIPE_CONTROL"
-
 # --- 7. MAIN LOOP ---
 while true; do
     check_services
     check_log_size
 
-    # Listen on descriptor 4 (non-blocking when empty, won't hang on closed writers)
-    if read -r -t 2 _ <&4; then
+    # Listen on local TCP socket for control commands (2-second timeout)
+    CMD=$(python3 /var/www/html/control_listener.py 2>/dev/null || true)
+    if [[ "$CMD" == "START" ]]; then
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 
@@ -425,7 +420,6 @@ while true; do
         # 2. Start gpclient
         runuser -u gpuser -- bash -c "
             > \"$CLIENT_LOG\"
-            exec 3<> \"$PIPE_STDIN\"
 
             # Safely build arguments array to satisfy shellcheck
             declare -a args=(sudo gpclient)
@@ -461,7 +455,7 @@ while true; do
             SAFE_CMD=\$(printf \"%q \" \"\${args[@]}\")
 
             echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"$SERVICE_LOG\"
-            script -q -c \"\$SAFE_CMD\" /dev/null <&3 >> \"$CLIENT_LOG\" 2>&1
+            python3 /var/www/html/stdin_proxy.py | script -q -c \"\$SAFE_CMD\" /dev/null >> \"$CLIENT_LOG\" 2>&1
         "
 
         # 3. Cleanup after disconnect

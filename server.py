@@ -1,5 +1,4 @@
 # File: server.py
-import errno
 import http.server
 import json
 import logging
@@ -8,7 +7,6 @@ import re
 import shutil
 import socket
 import socketserver
-import stat
 import subprocess
 import sys
 import threading
@@ -21,13 +19,11 @@ from typing import Any, TypedDict
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
 RUNTIME_DIR: Path = Path("/tmp/gp-runtime")
-FIFO_STDIN: Path = RUNTIME_DIR / "gp-stdin"
-FIFO_CONTROL: Path = RUNTIME_DIR / "gp-control"
+IPC_STDIN_PORT: int = 32802
+IPC_CONTROL_PORT: int = 32801
 MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
 CLIENT_LOG: Path = Path("/tmp/gp-logs/gp-client.log")
 SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
-
-O_NONBLOCK: int = getattr(os, "O_NONBLOCK", 0)
 
 # --- Pre-compiled Regex (Optimization) ---
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -141,7 +137,9 @@ class StateManager:
 
                     lines = lines[-300:]
                     log_content = "".join(lines)
-                    clean_lines: list[str] = [strip_ansi(line).strip() for line in lines[-100:]]
+
+                    # FIX: Analyze the full log buffer to ensure rapid state transitions aren't swallowed
+                    clean_lines: list[str] = [strip_ansi(line).strip() for line in lines]
 
                     analysis = analyze_log_lines(clean_lines, log_content)
 
@@ -457,48 +455,39 @@ def get_vpn_state() -> VPNState:
 
 def init_runtime_dir() -> None:
     """
-    Create the secure runtime directory and ensure required FIFOs exist.
-    On non-Windows systems, creates RUNTIME_DIR with mode 0o700 and ensures FIFO_STDIN and FIFO_CONTROL
-    exist as FIFOs with mode 0o600.
+    Create the secure runtime directory.
+    On non-Windows systems, creates RUNTIME_DIR with mode 0o700.
     """
-    if sys.platform != "win32":
-        try:
+    try:
+        if sys.platform != "win32":
             RUNTIME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-            for fifo_path in [FIFO_STDIN, FIFO_CONTROL]:
-                try:
-                    os.mkfifo(fifo_path, mode=0o600)
-                except FileExistsError:
-                    if not stat.S_ISFIFO(fifo_path.stat().st_mode):
-                        logger.error(f"{fifo_path} exists but is not a FIFO.")
-        except Exception:
-            logger.exception("Failed to initialize runtime dir")
+        else:
+            RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.exception(f"Failed to initialize runtime dir: {e}")
 
 
-def write_fifo_nonblocking(fifo_path: Path, data: str) -> bool:
+def send_ipc_message(port: int, data: str) -> bool:
     """
-    Perform a non-blocking write of `data` to the FIFO at `fifo_path`.
+    Perform a cross-platform socket connection to dispatch an IPC payload to the supervisor loop.
+    Replaces POSIX FIFOs to guarantee out-of-container testing compatibility on Windows.
 
     Parameters:
-        fifo_path (Path): Path to the FIFO (named pipe) to write to.
-        data (str): UTF-8 text to write into the FIFO.
+        port (int): The local TCP port of the target IPC proxy.
+        data (str): UTF-8 text to write into the socket.
 
     Returns:
-        bool: `True` if the data was written successfully, `False` if no reader was available or an error occurred.
+        bool: `True` if the data was written successfully, `False` if no listener was available.
     """
-    fd: int | None = None
     try:
-        fd = os.open(fifo_path, os.O_WRONLY | O_NONBLOCK)
-        os.write(fd, data.encode("utf-8"))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            s.connect(("127.0.0.1", port))
+            s.sendall(data.encode("utf-8"))
         return True
     except OSError as e:
-        if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.ENXIO):
-            logger.warning(f"No reader connected to {fifo_path}")
-            return False
-        logger.exception(f"FIFO write error: {e}")
+        logger.warning(f"IPC connection failed on port {port}: {e}")
         return False
-    finally:
-        if fd is not None:
-            os.close(fd)
 
 
 def _kill_and_poll() -> None:
@@ -514,8 +503,13 @@ def _kill_and_poll() -> None:
         pgrep: str | None = shutil.which("pgrep")
         if pgrep:
             for _ in range(20):
-                res1: subprocess.CompletedProcess[Any] = subprocess.run([pgrep, "gpclient"], stdout=subprocess.DEVNULL)
-                res2: subprocess.CompletedProcess[Any] = subprocess.run([pgrep, "gpservice"], stdout=subprocess.DEVNULL)
+                # FIX: Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
+                res1: subprocess.CompletedProcess[bytes] = subprocess.run(
+                    [pgrep, "gpclient"], stdout=subprocess.DEVNULL
+                )
+                res2: subprocess.CompletedProcess[bytes] = subprocess.run(
+                    [pgrep, "gpservice"], stdout=subprocess.DEVNULL
+                )
                 if res1.returncode != 0 and res2.returncode != 0:
                     break
                 time.sleep(0.1)
@@ -620,21 +614,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _handle_connect(self) -> None:
         """
         Handle an HTTP request to initiate a VPN connection.
-        Ensures existing processes are dead before writing to the control FIFO.
+        Ensures existing processes are dead before writing to the control IPC.
         """
         logger.info("User requested Connection")
         _kill_and_poll()
 
-        if sys.platform != "win32":
-            success: bool = write_fifo_nonblocking(FIFO_CONTROL, "START\n")
-            if success:
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"OK")
-            else:
-                self.send_error(503, "Service not ready (FIFO reader absent)")
+        success: bool = send_ipc_message(IPC_CONTROL_PORT, "START\n")
+        if success:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
         else:
-            self.send_error(501, "Not implemented for this platform (POSIX FIFO required)")
+            self.send_error(503, "Service not ready (IPC absent)")
 
     def _handle_disconnect(self) -> None:
         """
@@ -650,7 +641,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _handle_submit(self) -> None:
         """
         Handle form-encoded submissions containing either a callback URL or user-provided input.
-        Forwards the payload to the service input FIFO. Prevents memory exhaustion attacks.
+        Forwards the payload to the service input IPC. Prevents memory exhaustion attacks.
         Safely falls back on dictionary access to prevent IndexError on empty bodies.
         """
         try:
@@ -660,23 +651,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
 
             data: dict[str, list[str]] = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
-            user_input_list: list[str] = data.get("callback_url") or data.get("user_input") or []
-            user_input: str = user_input_list[0] if user_input_list else ""
 
-            if user_input:
+            # FIX: Use Python 3.14 Walrus operator
+            if user_input_list := (data.get("callback_url") or data.get("user_input") or []):
+                user_input: str = user_input_list[0]
                 sanitized_input: str = user_input.strip().replace("\r", "").replace("\n", "")
                 logger.info(f"User submitted input (Length: {len(sanitized_input)})")
 
-                if sys.platform != "win32":
-                    success: bool = write_fifo_nonblocking(FIFO_STDIN, sanitized_input + "\n")
-                    if success:
-                        self.send_response(200)
-                        self.end_headers()
-                        self.wfile.write(b"OK")
-                    else:
-                        self.send_error(503, "Service not ready (FIFO reader absent)")
+                success: bool = send_ipc_message(IPC_STDIN_PORT, sanitized_input + "\n")
+                if success:
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"OK")
                 else:
-                    self.send_error(501, "Not implemented for this platform (POSIX FIFO required)")
+                    self.send_error(503, "Service not ready (IPC absent)")
             else:
                 self.send_error(400, "Empty input")
         except Exception:

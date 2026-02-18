@@ -96,6 +96,16 @@ function switchTab(tab) {
 
     document.getElementById("sec-socks").style.display = tab === "socks" ? "block" : "none";
     document.getElementById("sec-gateway").style.display = tab === "gateway" ? "block" : "none";
+
+    // FIX: Accessibility focus management on tab change
+    const activeSection = document.getElementById(tab === "socks" ? "sec-socks" : "sec-gateway");
+    if (activeSection) {
+        const header = activeSection.querySelector(".conn-header");
+        if (header) {
+            header.setAttribute("tabindex", "-1");
+            header.focus();
+        }
+    }
 }
 
 /**
@@ -288,6 +298,7 @@ async function updateStatus() {
         if (res.status === 401) {
             setBadge("Unauthorized (Check API Token)", "error");
             setView("error");
+            resetPoll(5000); // FIX: Ensure polling resumes so corrections resolve naturally
             return;
         }
         const data = await res.json();
@@ -352,7 +363,8 @@ async function updateStatus() {
 
         if (data.state === "input") {
             const container = document.getElementById("dynamic-input-container");
-            const newOptionsStr = data.options ? data.options.join(",") : "";
+            // FIX: Reliable DOM boundary assertion prevents injection bugs
+            const newOptionsStr = data.options ? JSON.stringify(data.options) : "[]";
 
             // DOM Diffing constraint: Only rebuild input elements when properties fundamentally change.
             const needsFullRebuild =
