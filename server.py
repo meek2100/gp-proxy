@@ -495,6 +495,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             logger.info("%s - - %s", self.client_address[0], format % args)
 
+    def end_headers(self) -> None:
+        """
+        Inject optimal caching headers before completing the header block.
+        Works in tandem with Dockerfile build-time query strings to provide
+        instant page loads without serving stale assets.
+        """
+        # Parse the raw path to ignore query parameters (like ?v=1738200)
+        base_path: str = urllib.parse.urlparse(self.path).path
+
+        if base_path in ["/", "/index.html", "/status.json"]:
+            # Never cache the HTML or dynamic status payload
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        elif base_path.endswith((".css", ".js", ".png", ".ico")):
+            # Cache static assets for 1 year (relying on build-time hashes to bust cache)
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+
+        super().end_headers()
+
     def do_GET(self) -> None:
         """
         Handle incoming HTTP GET requests for status, log download, and static file serving.
@@ -502,7 +522,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith("/status.json"):
             self.send_response(200)
             self.send_header("Content-type", "application/json")
-            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(json.dumps(get_vpn_state()).encode("utf-8"))
             return

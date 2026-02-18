@@ -104,6 +104,13 @@ RUN mkdir -p /var/www/html /tmp/gp-logs /run/dbus && \
 COPY web/ /var/www/html/
 COPY server.py /var/www/html/
 
+# Inject a build-time Cache-Busting hash into HTML and JS to ensure instant UI updates for ALL assets
+RUN CACHE_HASH=$(date +%s) && \
+    sed -i "s/index.css/index.css?v=${CACHE_HASH}/g" /var/www/html/index.html && \
+    sed -i "s/index.js/index.js?v=${CACHE_HASH}/g" /var/www/html/index.html && \
+    sed -i "s/\.png/\.png?v=${CACHE_HASH}/g" /var/www/html/index.html /var/www/html/index.js && \
+    sed -i "s/\.ico/\.ico?v=${CACHE_HASH}/g" /var/www/html/index.html /var/www/html/index.js
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
