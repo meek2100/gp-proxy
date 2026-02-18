@@ -439,7 +439,15 @@ def _kill_and_poll() -> None:
     Terminates active OpenConnect processes and actively polls until they exit
     to prevent race conditions when generating new VPN sessions.
     Strictly typed to prevent Subprocess NoneType execution crashes.
+    Includes native support for Windows execution environments.
     """
+    if sys.platform == "win32":
+        taskkill: str | None = shutil.which("taskkill")
+        if taskkill is not None:
+            subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+            subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+        return
+
     sudo: str | None = shutil.which("sudo")
     pkill: str | None = shutil.which("pkill")
 
@@ -645,7 +653,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 class VPNServer(socketserver.ThreadingTCPServer):
     """Custom ThreadingTCPServer that safely enables address reuse."""
 
-    allow_reuse_address = True
+    allow_reuse_address: bool = True
 
 
 if __name__ == "__main__":
