@@ -230,6 +230,14 @@ check_services() {
         exit 1
     fi
 
+    # Check gost proxy status if it should be running
+    if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
+        if ! pgrep -x gost >/dev/null; then
+            log "ERROR" "CRITICAL: gost SOCKS proxy died unexpectedly."
+            exit 1
+        fi
+    fi
+
     local mode
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
@@ -354,7 +362,10 @@ log "INFO" "Starting Services..."
 dns_watchdog &
 
 if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
-    runuser -u gpuser -- microsocks -i 0.0.0.0 -p 1080 >/dev/null 2>&1 &
+    # GOST natively handles both TCP and UDP on the specified SOCKS5 port
+    # Enable UDP relay explicitly; gost v3 disables it by default
+    # Output is captured in the service log for debugging
+    runuser -u gpuser -- gost -L=socks5://:1080?udp=true >>"$SERVICE_LOG" 2>&1 &
 fi
 
 # Pass configuration to Server

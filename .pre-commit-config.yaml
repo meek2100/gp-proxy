@@ -32,7 +32,7 @@ repos:
 
   # 3. FORMATTERS
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.0
     hooks:
       - id: ruff-format
 
@@ -51,7 +51,7 @@ repos:
 
   # 4. LINTERS
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.0
     hooks:
       - id: ruff-check
         args: ["--fix"]
@@ -66,6 +66,7 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
+        args: ["--ignore-words-list", "gost"]
 
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.38.0

@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-This project encapsulates a GP-compatible VPN client inside a Docker container, exposing it via a SOCKS5 proxy (`microsocks`) on port 1080 and a Transparent Gateway. It utilizes a "Split-Agent" architecture where a secure **Container Agent** handles the networking/VPN and a **Host Agent** (Desktop App) handles the SSO authentication flow and management.
+This project encapsulates a GP-compatible VPN client inside a Docker container, exposing it via a SOCKS5 proxy (`gost`) on port 1080 and a Transparent Gateway. It utilizes a "Split-Agent" architecture where a secure **Container Agent** handles the networking/VPN and a **Host Agent** (Desktop App) handles the SSO authentication flow and management.
 
 ## Development Standards (Crucial)
 
@@ -15,7 +15,7 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
 - **Shell:** Uses `shellcheck` (gcc format).
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.
 - **YAML:** Uses `yamllint` (relaxed mode, max 120 chars).
-- **Docker:** Uses `hadolint` (ignores DL3008).
+- **Docker:** Uses `hadolint` (ignores DL3008). Multi-arch support should be handled via dynamic arguments like `TARGETARCH` when downloading specific binaries.
 
 ## Architecture
 
@@ -36,6 +36,7 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - Manages `iptables` for NAT/Forwarding.
     - Monitors the `gpclient` process.
     - Runs a "DNS Watchdog" to update `/etc/resolv.conf` dynamically when the VPN pushes new DNS servers.
+    - Starts `gost` as the SOCKS proxy, explicitly enabling UDP relay via `-L=socks5://:1080?udp=true`.
 
 ### 2. The Host Agent (The Manager)
 
@@ -66,8 +67,8 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 ## Network Modes (`VPN_MODE`)
 
-- **`standard`:** Starts `microsocks` (port 1080) AND configures `iptables` for NAT/IP Forwarding. Best for general use.
-- **`socks`:** Starts `microsocks` ONLY. Disables IP Forwarding and NAT. Locked down.
+- **`standard`:** Starts `gost` (port 1080) AND configures `iptables` for NAT/IP Forwarding. Best for general use.
+- **`socks`:** Starts `gost` ONLY. Disables IP Forwarding and NAT. Locked down.
 - **`gateway`:** Configures NAT/IP Forwarding ONLY. No SOCKS proxy. Requires `macvlan` network driver.
 
 ## Key Files
