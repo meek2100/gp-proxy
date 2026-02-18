@@ -5,8 +5,6 @@ on:
   push:
     tags: ["v*.*.*"]
     branches-ignore: ["**"]
-  pull_request:
-    branches: ["main"]
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -20,54 +18,12 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # Call the reusable linting workflow
   lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "apps/gp-client-proxy -> target"
-
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-          cache: "pip"
-          cache-dependency-path: pyproject.toml
-
-      - name: Cache pre-commit environments
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            pre-commit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
-            pre-commit-${{ runner.os }}-
-
-      - name: Install pre-commit
-        run: pip install pre-commit
-
-      - name: Install pre-commit hooks
-        run: pre-commit install-hooks
-
-      - name: Run pre-commit
-        env:
-          SKIP: no-commit-to-branch
-        run: pre-commit run --all-files --show-diff-on-failure
+    uses: ./.github/workflows/lint.yml
 
   build-and-push:
     needs: lint
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
