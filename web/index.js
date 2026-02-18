@@ -86,7 +86,8 @@ let isRestarting = false;
 function switchTab(tab) {
     document.querySelectorAll(".conn-tab-btn").forEach((b) => b.classList.remove("active"));
 
-    const btns = document.querySelectorAll("button");
+    // Fix: Scope strictness added to prevent hijacking unrelated buttons
+    const btns = document.querySelectorAll(".conn-tab-btn");
     btns.forEach((b) => {
         if (b.textContent.toLowerCase().includes(tab === "socks" ? "socks" : "gateway")) {
             b.classList.add("active");

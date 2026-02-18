@@ -35,20 +35,60 @@ GATEWAY_REGEX = re.compile(r"(?:>|\s)*([A-Za-z0-9\-\.]+\s+\([A-Za-z0-9\-\.]+\))"
 URL_PATTERN = re.compile(r'(https?://[^\s"<>]+)')
 
 
+class VPNState(TypedDict):
+    """Type definition for the VPN state response sent to the frontend."""
+
+    state: str  # Current connection state (idle, connecting, auth, input, connected, error)
+    url: str  # SSO URL for SAML authentication, if required
+    prompt: str  # Text prompt for user input (e.g., 'Enter Password')
+    input_type: str  # Type of input required (text, password, select)
+    options: list[str]  # Dropdown options for 'select' input types
+    error: str | None  # Error message if the state is 'error'
+    log: str | None  # Recent log lines, only populated if debug_mode is True
+    debug_mode: bool  # Whether debug logging is enabled
+    vpn_mode: str  # The configured network mode (standard, socks, gateway)
+
+
+class LogAnalysis(TypedDict):
+    """Internal type for the result of log analysis."""
+
+    state: str
+    prompt: str
+    prompt_type: str
+    options: list[str]
+    error: str | None
+    sso_url: str
+
+
 # --- State Management (Thread Safety) ---
 class StateManager:
     """
     Thread-safe manager for the VPN state.
     Prevents race conditions between the log analyzer thread and HTTP request threads.
+    Implements file stat caching to prevent heavy disk I/O on every API poll.
     """
 
     def __init__(self) -> None:
         """
         Initialize a thread-safe state manager.
-        Creates a private lock for synchronizing access and initializes the internal last-state tracker to None.
+        Creates a private lock for synchronizing access, initializes the internal last-state tracker,
+        and sets up I/O caching properties.
         """
         self._lock: threading.Lock = threading.Lock()
         self._last_state: str | None = None
+
+        # Caching mechanisms to optimize I/O
+        self._log_mtime: float = -1.0
+        self._log_size: int = -1
+        self._cached_analysis: LogAnalysis = {
+            "state": "idle",
+            "prompt": "",
+            "prompt_type": "text",
+            "options": [],
+            "error": None,
+            "sso_url": "",
+        }
+        self._cached_log: str = ""
 
     def update_and_check_transition(self, new_state: str) -> bool:
         """
@@ -65,6 +105,53 @@ class StateManager:
                 self._last_state = new_state
                 return True
             return False
+
+    def get_cached_log_analysis(self, log_path: Path) -> tuple[LogAnalysis, str]:
+        """
+        Reads and analyzes the log file safely, only processing it if it has changed since
+        the last read operation.
+
+        Parameters:
+            log_path (Path): Path to the log file.
+
+        Returns:
+            tuple[LogAnalysis, str]: A tuple containing the log analysis dictionary and the raw log text.
+        """
+        with self._lock:
+            try:
+                st = log_path.stat()
+                if st.st_mtime == self._log_mtime and st.st_size == self._log_size:
+                    return self._cached_analysis, self._cached_log
+
+                # Update cache signature
+                self._log_mtime = st.st_mtime
+                self._log_size = st.st_size
+
+                file_size: int = st.st_size
+                # Open in binary mode to prevent UTF-8 boundary splitting when seeking
+                with open(log_path, "rb") as f:
+                    if file_size > 65536:
+                        f.seek(file_size - 65536)
+                        f.readline()  # Align to the next newline boundary
+
+                    data: str = f.read().decode("utf-8", errors="replace")
+                    lines: list[str] = data.splitlines(keepends=True)
+                    if lines and not lines[-1].endswith("\n"):
+                        lines.pop()
+
+                    lines = lines[-300:]
+                    log_content = "".join(lines)
+                    clean_lines: list[str] = [strip_ansi(line).strip() for line in lines[-100:]]
+
+                    analysis = analyze_log_lines(clean_lines, log_content)
+
+                    self._cached_analysis = analysis
+                    self._cached_log = log_content
+                    return analysis, log_content
+
+            except Exception as e:
+                logger.exception(f"Log parse error: {e}")
+                return self._cached_analysis, self._cached_log
 
 
 state_manager = StateManager()
@@ -140,31 +227,6 @@ logging.basicConfig(
     ],
 )
 logger: logging.Logger = logging.getLogger()
-
-
-class VPNState(TypedDict):
-    """Type definition for the VPN state response sent to the frontend."""
-
-    state: str  # Current connection state (idle, connecting, auth, input, connected, error)
-    url: str  # SSO URL for SAML authentication, if required
-    prompt: str  # Text prompt for user input (e.g., 'Enter Password')
-    input_type: str  # Type of input required (text, password, select)
-    options: list[str]  # Dropdown options for 'select' input types
-    error: str | None  # Error message if the state is 'error'
-    log: str | None  # Recent log lines, only populated if debug_mode is True
-    debug_mode: bool  # Whether debug logging is enabled
-    vpn_mode: str  # The configured network mode (standard, socks, gateway)
-
-
-class LogAnalysis(TypedDict):
-    """Internal type for the result of log analysis."""
-
-    state: str
-    prompt: str
-    prompt_type: str
-    options: list[str]
-    error: str | None
-    sso_url: str
 
 
 def strip_ansi(text: str) -> str:
@@ -337,9 +399,8 @@ def get_vpn_state() -> VPNState:
     """
     Determine the current VPN service status by inspecting the runtime mode file and recent client log output.
 
-    Reads MODE_FILE (if present) to detect an explicit "idle" mode and otherwise parses the tail of CLIENT_LOG to
-    extract connection state, prompts, options, errors, and SSO URLs. May update the global state_manager with the
-    detected state.
+    Reads MODE_FILE (if present) to detect an explicit "idle" mode and otherwise utilizes the StateManager cache
+    to extract connection state, prompts, options, errors, and SSO URLs.
 
     Returns:
         VPNState: A dictionary containing the serializable current state.
@@ -376,28 +437,7 @@ def get_vpn_state() -> VPNState:
     }
 
     if CLIENT_LOG.exists():
-        try:
-            file_size: int = CLIENT_LOG.stat().st_size
-            # Open in binary mode to prevent UTF-8 boundary splitting when seeking
-            with open(CLIENT_LOG, "rb") as f:
-                if file_size > 65536:
-                    f.seek(file_size - 65536)
-                    f.readline()  # Align to the next newline boundary
-
-                data: str = f.read().decode("utf-8", errors="replace")
-
-                lines: list[str] = data.splitlines(keepends=True)
-                if lines and not lines[-1].endswith("\n"):
-                    lines.pop()
-
-                lines = lines[-300:]
-                log_content = "".join(lines)
-                clean_lines: list[str] = [strip_ansi(line).strip() for line in lines[-100:]]
-
-                analysis = analyze_log_lines(clean_lines, log_content)
-
-        except Exception as e:
-            logger.exception(f"Log parse error: {e}")
+        analysis, log_content = state_manager.get_cached_log_analysis(CLIENT_LOG)
 
     if state_manager.update_and_check_transition(analysis["state"]):
         logger.info(f"State Transition: -> {analysis['state']}")
@@ -474,12 +514,8 @@ def _kill_and_poll() -> None:
         pgrep: str | None = shutil.which("pgrep")
         if pgrep:
             for _ in range(20):
-                res1: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    [pgrep, "gpclient"], stdout=subprocess.DEVNULL
-                )
-                res2: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    [pgrep, "gpservice"], stdout=subprocess.DEVNULL
-                )
+                res1: subprocess.CompletedProcess[Any] = subprocess.run([pgrep, "gpclient"], stdout=subprocess.DEVNULL)
+                res2: subprocess.CompletedProcess[Any] = subprocess.run([pgrep, "gpservice"], stdout=subprocess.DEVNULL)
                 if res1.returncode != 0 and res2.returncode != 0:
                     break
                 time.sleep(0.1)
@@ -628,9 +664,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             user_input: str = user_input_list[0] if user_input_list else ""
 
             if user_input:
-                logger.info(f"User submitted input (Length: {len(user_input)})")
+                sanitized_input: str = user_input.strip().replace("\r", "").replace("\n", "")
+                logger.info(f"User submitted input (Length: {len(sanitized_input)})")
+
                 if sys.platform != "win32":
-                    success: bool = write_fifo_nonblocking(FIFO_STDIN, user_input.strip() + "\n")
+                    success: bool = write_fifo_nonblocking(FIFO_STDIN, sanitized_input + "\n")
                     if success:
                         self.send_response(200)
                         self.end_headers()

@@ -399,12 +399,16 @@ tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
 sleep 3
 
+# --- FIX: Open FIFO for read/write on descriptor 4 to prevent blocking on EOF ---
+exec 4<>"$PIPE_CONTROL"
+
 # --- 7. MAIN LOOP ---
 while true; do
     check_services
     check_log_size
 
-    if read -r -t 2 _ <"$PIPE_CONTROL"; then
+    # Listen on descriptor 4 (non-blocking when empty, won't hang on closed writers)
+    if read -r -t 2 _ <&4; then
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 

@@ -10,7 +10,7 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
 
 **Strict linting and formatting are enforced via CI and Pre-commit hooks.** Any code changes must adhere to these standards to pass the `lint` workflow.
 
-- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`.
+- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`. Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[Any]` to satisfy Python 3.14 static type guarantees.
 - **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
 - **Shell:** Uses `shellcheck` (gcc format).
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.
@@ -92,6 +92,13 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`) to keep the user's CLI context highly responsive to cancellation actions (Ctrl+C) even if the backend blocks.
 - **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic. It does not rely on arbitrary `time.sleep()` delays, eliminating startup race conditions.
 - **API Security (`SESSION_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls. The Rust client natively injects this as an `Authorization` header on all control calls.
+
+## System Optimizations & Guardrails (DO NOT REMOVE)
+
+- **IPC Deadlock Prevention (`entrypoint.sh`):** Bash `read` natively blocks on Named Pipes until an EOF is presented, permanently freezing the supervisor loop. The loop _must_ securely acquire a dual read/write descriptor via `exec 4<> "$PIPE_CONTROL"` so the watchdog tasks can securely operate while the pipe is idle.
+- **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states.
+- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation.
+- **IPC Payload Sanitization:** All HTTP `/submit` parameters piped into `gpclient` MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to FIFO execution. Unfiltered payloads permit arbitrary shell interaction escapes.
 
 ## Handling Callbacks (`globalprotect://`)
 
