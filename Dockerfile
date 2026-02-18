@@ -48,12 +48,20 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # 5. Install Runtime Dependencies
+# Remove microsocks from the apt-get install list
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    microsocks iptables iproute2 util-linux procps tzdata \
+    wget iptables iproute2 util-linux procps tzdata \
     vpnc-scripts ca-certificates \
     libxml2 libgnutls30t64 liblz4-1 libpsl5 libsecret-1-0 openssl \
     sudo libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
+
+# Download and extract the updated GOST 3.2.6 binary
+RUN wget https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_amd64.tar.gz \
+    && tar -xzf gost_3.2.6_linux_amd64.tar.gz \
+    && mv gost /usr/bin/gost \
+    && chmod +x /usr/bin/gost \
+    && rm gost_3.2.6_linux_amd64.tar.gz
 
 # 6. Setup User
 RUN useradd -m -s /bin/bash gpuser

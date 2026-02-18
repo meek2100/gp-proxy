@@ -354,7 +354,8 @@ log "INFO" "Starting Services..."
 dns_watchdog &
 
 if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
-    runuser -u gpuser -- microsocks -i 0.0.0.0 -p 1080 >/dev/null 2>&1 &
+    # GOST natively handles both TCP and UDP on the specified SOCKS5 port
+    runuser -u gpuser -- gost -L=socks5://:1080 >/dev/null 2>&1 &
 fi
 
 # Pass configuration to Server
