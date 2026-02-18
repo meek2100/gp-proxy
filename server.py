@@ -44,6 +44,7 @@ class VPNState(TypedDict):
     debug_mode: bool  # Whether debug logging is enabled
     vpn_mode: str  # The configured network mode (standard, socks, gateway)
     server_ip: str  # The dynamically detected best outbound IP
+    socks_auth_enabled: bool  # Whether GOST SOCKS5 auth is configured
 
 
 class LogAnalysis(TypedDict):
@@ -354,6 +355,7 @@ def get_vpn_state() -> VPNState:
     is_debug: bool = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
     vpn_mode: str = os.getenv("VPN_MODE", "standard")
     server_ip: str = get_best_ip()
+    socks_auth_enabled: bool = bool(os.getenv("GOST_AUTH"))
 
     if MODE_FILE.exists():
         try:
@@ -370,6 +372,7 @@ def get_vpn_state() -> VPNState:
                     "debug_mode": is_debug,
                     "vpn_mode": vpn_mode,
                     "server_ip": server_ip,
+                    "socks_auth_enabled": socks_auth_enabled,
                 }
         except Exception:
             logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
@@ -390,6 +393,7 @@ def get_vpn_state() -> VPNState:
         "debug_mode": is_debug,
         "vpn_mode": vpn_mode,
         "server_ip": server_ip,
+        "socks_auth_enabled": socks_auth_enabled,
     }
 
 
@@ -436,20 +440,22 @@ def _kill_and_poll() -> None:
     to prevent race conditions when generating new VPN sessions.
     Strictly typed to prevent Subprocess NoneType execution crashes.
     """
+    sudo: str | None = shutil.which("sudo")
     pkill: str | None = shutil.which("pkill")
-    if pkill is not None:
-        subprocess.run([pkill, "gpclient"], stderr=subprocess.DEVNULL)
-        subprocess.run([pkill, "gpservice"], stderr=subprocess.DEVNULL)
+
+    if sudo is not None and pkill is not None:
+        subprocess.run([sudo, pkill, "gpclient"], stderr=subprocess.DEVNULL)
+        subprocess.run([sudo, pkill, "gpservice"], stderr=subprocess.DEVNULL)
 
         pgrep: str | None = shutil.which("pgrep")
         if pgrep is not None:
             for _ in range(50):
                 # Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
                 res1: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    [pgrep, "gpclient"], stdout=subprocess.DEVNULL
+                    [sudo, pgrep, "gpclient"], stdout=subprocess.DEVNULL
                 )
                 res2: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    [pgrep, "gpservice"], stdout=subprocess.DEVNULL
+                    [sudo, pgrep, "gpservice"], stdout=subprocess.DEVNULL
                 )
                 if res1.returncode != 0 and res2.returncode != 0:
                     break

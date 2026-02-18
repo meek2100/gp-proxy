@@ -536,7 +536,7 @@ fn install_handler() -> Result<()> {
     fs::write(icon_dir.join("gp-client-proxy.png"), ICON_PNG)?;
 
     let desktop_file = format!(
-        "[Desktop Entry]\nType=Application\nName={}\nExec={} %u\nIcon=gp-client-proxy\nStartupNotify=false\nMimeType=x-scheme-handler/{};\n",
+        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" %u\nIcon=gp-client-proxy\nStartupNotify=false\nMimeType=x-scheme-handler/{};\n",
         APP_NAME, exe_path.to_string_lossy(), PROTOCOL_SCHEME
     );
     let apps_dir = dirs.data_local_dir().join("applications");

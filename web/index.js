@@ -362,6 +362,12 @@ async function updateStatus() {
         if (!showGateway) secGateway.classList.add("hidden");
         else secGateway.classList.remove("hidden");
 
+        // Dynamically toggle the SOCKS5 Auth hint based on server-side configuration
+        const authTextEl = document.getElementById("socks-auth-text");
+        if (authTextEl) {
+            authTextEl.innerText = data.socks_auth_enabled ? "See Env Config" : "None (Network Allowed)";
+        }
+
         if (window.innerWidth < 640 && showSocks && showGateway) {
             if (secSocks.style.display === "" && secGateway.style.display === "") {
                 switchTab("socks");
