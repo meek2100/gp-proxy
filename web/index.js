@@ -37,11 +37,11 @@ function updateAssets(theme) {
     const logo = document.getElementById("app-logo");
     const favicon = document.getElementById("app-favicon");
     if (theme === "dark") {
-        logo.src = "assets/gp-proxy/logo-light.png";
-        favicon.href = "assets/gp-proxy/favicon-light.ico";
+        logo.src = "assets/logo-light.png";
+        favicon.href = "assets/favicon-light.ico";
     } else {
-        logo.src = "assets/gp-proxy/logo-dark.png";
-        favicon.href = "assets/gp-proxy/favicon.ico";
+        logo.src = "assets/logo-dark.png";
+        favicon.href = "assets/favicon.ico";
     }
 }
 

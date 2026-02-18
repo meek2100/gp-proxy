@@ -77,7 +77,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, DNS Watchdog, cleanup traps, and invokes `gpclient`.
 - **`server.py`:** Python Control Server. Handles `LOG_LEVEL` parsing, log analysis regex, ANSI stripping, and UDP Beacon.
-- **`index.html` / `index.js` / `index.css`:** Frontend assets. Separated for maintainability and Docker layer caching, but strictly served locally by the Python server to ensure zero external internet dependencies. Supports **Dark Mode** (auto/toggle), dynamic form generation, and strict DOM diffing to prevent UI flickering and focus loss.
+- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching, but strictly served locally by the Python server to ensure zero external internet dependencies. Supports **Dark Mode** (auto/toggle), dynamic form generation, and strict DOM diffing to prevent UI flickering and focus loss.
 
 ### Host (Client)
 

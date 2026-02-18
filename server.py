@@ -633,7 +633,11 @@ if __name__ == "__main__":
         os.chdir(str(target_dir))
     else:
         # Fallback for local Windows development environments
-        os.chdir(str(Path(__file__).parent))
+        local_web_dir = Path(__file__).parent / "web"
+        if local_web_dir.exists() and local_web_dir.is_dir():
+            os.chdir(str(local_web_dir))
+        else:
+            os.chdir(str(Path(__file__).parent))
 
     init_runtime_dir()
 
