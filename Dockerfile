@@ -102,7 +102,11 @@ RUN mkdir -p /var/www/html /tmp/gp-logs /run/dbus && \
 
 # Copy the entire frontend web directory and the python backend
 COPY web/ /var/www/html/
-COPY server.py /var/www/html/
+COPY server.py control_listener.py stdin_proxy.py /var/www/html/
+
+# Ensure proper execution rights and ownership for the background services
+RUN chmod +x /var/www/html/server.py /var/www/html/control_listener.py /var/www/html/stdin_proxy.py && \
+    chown gpuser:gpuser /var/www/html/server.py /var/www/html/control_listener.py /var/www/html/stdin_proxy.py
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
