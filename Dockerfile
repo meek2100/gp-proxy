@@ -57,7 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and extract the updated GOST 3.2.6 binary
-RUN wget https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_amd64.tar.gz \
+RUN wget -q https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_amd64.tar.gz \
     && tar -xzf gost_3.2.6_linux_amd64.tar.gz \
     && mv gost /usr/bin/gost \
     && chmod +x /usr/bin/gost \
