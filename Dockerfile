@@ -43,8 +43,9 @@ RUN cargo build --release --bin gpclient --no-default-features && \
 # --- Runtime Stage (Final Image) ---
 FROM python:3.14-slim
 
-# ARG used to pull the correct architecture binary for gost
+# ARGs used to pull the correct architecture and version for gost
 ARG TARGETARCH=amd64
+ARG GOST_VERSION="3.2.6"
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -66,15 +67,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # If TARGETARCH is 'arm', we fail explicitly as 32-bit ARM is unsupported.
 RUN apt-get update && apt-get install -y --no-install-recommends wget \
     && if [ "$TARGETARCH" = "arm" ]; then \
-    echo "Error: 32-bit ARM (arm/v7) is not supported by GOST v3.2.6 prebuilts." >&2 && exit 1; \
+    echo "Error: 32-bit ARM (arm/v7) is not supported by GOST v${GOST_VERSION} prebuilts." >&2 && exit 1; \
     else \
-    wget -q "https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_${TARGETARCH}.tar.gz" \
-    && wget -q "https://github.com/go-gost/gost/releases/download/v3.2.6/checksums.txt" \
-    && grep "gost_3.2.6_linux_${TARGETARCH}.tar.gz" checksums.txt | sha256sum -c \
-    && tar -xzf "gost_3.2.6_linux_${TARGETARCH}.tar.gz" gost \
+    wget -q "https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_${TARGETARCH}.tar.gz" \
+    && wget -q "https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/checksums.txt" \
+    && grep "gost_${GOST_VERSION}_linux_${TARGETARCH}.tar.gz" checksums.txt | sha256sum -c \
+    && tar -xzf "gost_${GOST_VERSION}_linux_${TARGETARCH}.tar.gz" gost \
     && mv gost /usr/bin/gost \
     && chmod +x /usr/bin/gost \
-    && rm "gost_3.2.6_linux_${TARGETARCH}.tar.gz" checksums.txt; \
+    && rm "gost_${GOST_VERSION}_linux_${TARGETARCH}.tar.gz" checksums.txt; \
     fi \
     && apt-get purge -y wget \
     && apt-get autoremove -y \
