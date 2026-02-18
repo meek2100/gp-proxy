@@ -43,6 +43,7 @@ class VPNState(TypedDict):
     log: str | None  # Recent log lines, only populated if debug_mode is True
     debug_mode: bool  # Whether debug logging is enabled
     vpn_mode: str  # The configured network mode (standard, socks, gateway)
+    server_ip: str  # The dynamically detected best outbound IP
 
 
 class LogAnalysis(TypedDict):
@@ -105,7 +106,7 @@ class StateManager:
     def get_cached_log_analysis(self, log_path: Path) -> tuple[LogAnalysis, str]:
         """
         Reads and analyzes the log file safely, only processing it if it has changed since
-        the last read operation.
+        the last read operation. Includes TOCTOU file handling.
 
         Parameters:
             log_path (Path): Path to the log file.
@@ -147,12 +148,38 @@ class StateManager:
                     self._cached_log = log_content
                     return analysis, log_content
 
+            except FileNotFoundError:
+                # Log might have rotated or cleared; return safe default
+                return {
+                    "state": "idle",
+                    "prompt": "",
+                    "prompt_type": "text",
+                    "options": [],
+                    "error": None,
+                    "sso_url": "",
+                }, ""
             except Exception as e:
                 logger.exception(f"Log parse error: {e}")
                 return self._cached_analysis, self._cached_log
 
 
 state_manager = StateManager()
+
+
+def get_best_ip() -> str:
+    """
+    Selects the container's primary outbound IP address.
+    Attempts to determine the best local IPv4 address by creating a UDP socket.
+
+    Returns:
+        str: The chosen IPv4 address as a string; "127.0.0.1" on failure.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return str(s.getsockname()[0])
+    except OSError:
+        return "127.0.0.1"
 
 
 # --- UDP BEACON ---
@@ -189,7 +216,7 @@ class Beacon(threading.Thread):
                 if message == "GP_DISCOVER":
                     response: str = json.dumps(
                         {
-                            "ip": self.get_best_ip(),
+                            "ip": get_best_ip(),
                             "port": PORT,
                             "hostname": socket.gethostname(),
                             "token": os.getenv("API_TOKEN", ""),
@@ -198,21 +225,6 @@ class Beacon(threading.Thread):
                     self.sock.sendto(response.encode("utf-8"), addr)
             except Exception as e:
                 logger.error(f"Beacon error: {e}")
-
-    def get_best_ip(self) -> str:
-        """
-        Selects the container's primary outbound IP address.
-        Attempts to determine the best local IPv4 address by creating a UDP socket.
-
-        Returns:
-            str: The chosen IPv4 address as a string; "127.0.0.1" on failure.
-        """
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("10.255.255.255", 1))
-                return str(s.getsockname()[0])
-        except OSError:
-            return "127.0.0.1"
 
 
 # --- Logging Setup ---
@@ -240,127 +252,71 @@ def strip_ansi(text: str) -> str:
     return ANSI_ESCAPE.sub("", text)
 
 
-def _check_connected(clean_lines: list[str]) -> LogAnalysis | None:
+def _extract_gateways(clean_lines: list[str]) -> list[str]:
+    """Forward scans the logs to gather all available gateway options."""
+    input_options: list[str] = []
+    seen: set[str] = set()
+    for scan_line in clean_lines:
+        m = GATEWAY_REGEX.search(scan_line)
+        if m:
+            opt: str = m.group(1).strip()
+            if opt not in seen and "Which gateway" not in opt:
+                seen.add(opt)
+                input_options.append(opt)
+    return sorted(input_options)
+
+
+def _extract_sso_url(full_log_content: str, port: int) -> str:
+    """Extracts the most recent valid SSO URL from the full log content."""
+    found_urls: list[str] = URL_PATTERN.findall(full_log_content)
+    if found_urls:
+        local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
+        return local_urls[-1] if local_urls else found_urls[-1]
+    return ""
+
+
+def _evaluate_line_state(line: str, clean_lines: list[str], analysis_acc: LogAnalysis) -> bool:
     """
-    Determine whether the provided cleaned log lines indicate a successful VPN connection.
-
-    Parameters:
-        clean_lines (list[str]): Log lines stripped of ANSI sequences.
-
-    Returns:
-        LogAnalysis | None: Connected state mapping if found, otherwise None.
+    Evaluates a single chronological log line and mutates the state dictionary directly.
+    Returns True if state found.
     """
-    for line in reversed(clean_lines):
-        if "Connected" in line and "to" in line:
-            return {
-                "state": "connected",
-                "prompt": "",
-                "prompt_type": "text",
-                "options": [],
-                "error": None,
-                "sso_url": "",
-            }
-    return None
-
-
-def _check_error(clean_lines: list[str]) -> LogAnalysis | None:
-    """
-    Check for specific failure messages in the log lines.
-
-    Parameters:
-        clean_lines (list[str]): Log lines stripped of ANSI sequences.
-
-    Returns:
-        LogAnalysis | None: Error state mapping if a failure is detected, otherwise None.
-    """
-    for line in reversed(clean_lines):
-        if "Login failed" in line or "GP response error" in line:
-            error_msg: str = line
-            if "512" in line:
-                error_msg = "Gateway Rejected Connection (Error 512). Check Gateway selection."
-            return {
-                "state": "error",
-                "prompt": "",
-                "prompt_type": "text",
-                "options": [],
-                "error": error_msg,
-                "sso_url": "",
-            }
-    return None
-
-
-def _check_input_request(clean_lines: list[str]) -> LogAnalysis | None:
-    """
-    Detects whether the VPN client log requests user input (gateway selection, password, or username).
-
-    Parameters:
-        clean_lines (list[str]): Log lines already stripped of ANSI sequences, in chronological order.
-
-    Returns:
-        LogAnalysis | None: `LogAnalysis` with state `"input"` and prompt fields, or None.
-    """
-    for line in reversed(clean_lines):
-        if "Which gateway do you want to connect to" in line:
-            input_options: list[str] = []
-            seen: set[str] = set()
-            for scan_line in clean_lines:
-                m = GATEWAY_REGEX.search(scan_line)
-                if m:
-                    opt: str = m.group(1).strip()
-                    if opt not in seen and "Which gateway" not in opt:
-                        seen.add(opt)
-                        input_options.append(opt)
-            return {
-                "state": "input",
-                "prompt": "Select Gateway",
-                "prompt_type": "select",
-                "options": sorted(input_options),
-                "error": None,
-                "sso_url": "",
-            }
-
-        if "password:" in line.lower():
-            return {
-                "state": "input",
-                "prompt": "Enter Password",
-                "prompt_type": "password",
-                "options": [],
-                "error": None,
-                "sso_url": "",
-            }
-
-        if "username:" in line.lower():
-            return {
-                "state": "input",
-                "prompt": "Enter Username",
-                "prompt_type": "text",
-                "options": [],
-                "error": None,
-                "sso_url": "",
-            }
-    return None
+    if "Connected" in line and "to" in line:
+        analysis_acc["state"] = "connected"
+        return True
+    if "Login failed" in line or "GP response error" in line:
+        error_msg: str = line
+        if "512" in line:
+            error_msg = "Gateway Rejected Connection (Error 512). Check Gateway selection."
+        analysis_acc["state"] = "error"
+        analysis_acc["error"] = error_msg
+        return True
+    if "Which gateway do you want to connect to" in line:
+        analysis_acc["state"] = "input"
+        analysis_acc["prompt"] = "Select Gateway"
+        analysis_acc["prompt_type"] = "select"
+        analysis_acc["options"] = _extract_gateways(clean_lines)
+        return True
+    if "password:" in line.lower():
+        analysis_acc["state"] = "input"
+        analysis_acc["prompt"] = "Enter Password"
+        analysis_acc["prompt_type"] = "password"
+        return True
+    if "username:" in line.lower():
+        analysis_acc["state"] = "input"
+        analysis_acc["prompt"] = "Enter Username"
+        analysis_acc["prompt_type"] = "text"
+        return True
+    if "Connecting" in line:
+        analysis_acc["state"] = "connecting"
+        return True
+    return False
 
 
 def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnalysis:
     """
     Determine the current VPN state and any required user interaction by inspecting cleaned log lines and the full
-    log text.
-
-    Parameters:
-        clean_lines (list[str]): Log lines with ANSI sequences removed, in chronological order.
-        full_log_content (str): Entire raw log content (used to detect authentication events and extract SSO URLs).
-
-    Returns:
-        LogAnalysis: Mapping representing the current operational state of the VPN.
+    log text. Performs a single backward-chronological pass to ensure the most recent event dictates the state.
     """
-    res: LogAnalysis | None = _check_connected(clean_lines)
-    if res:
-        return res
-
-    res = _check_error(clean_lines)
-    if res:
-        return res
-
     analysis_acc: LogAnalysis = {
         "state": "idle",
         "prompt": "",
@@ -370,25 +326,17 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
         "sso_url": "",
     }
 
-    input_res: LogAnalysis | None = _check_input_request(clean_lines)
-    if input_res:
-        analysis_acc = input_res
+    # Single backward chronological pass ensures the most recent event dictates state
+    for line in reversed(clean_lines):
+        if _evaluate_line_state(line, clean_lines, analysis_acc):
+            break
 
-    # Detect connecting state to improve UI responsiveness
-    if analysis_acc["state"] == "idle":
-        for line in reversed(clean_lines):
-            if "Connecting" in line:
-                analysis_acc["state"] = "connecting"
-                break
-
+    # Overarching full-log context checks
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
-        if analysis_acc["state"] != "input":
+        if analysis_acc["state"] not in ["input", "error", "connected"]:
             analysis_acc["state"] = "auth"
 
-        found_urls: list[str] = URL_PATTERN.findall(full_log_content)
-        if found_urls:
-            local_urls: list[str] = [u for u in found_urls if str(PORT) not in u and "127.0.0.1" not in u]
-            analysis_acc["sso_url"] = local_urls[-1] if local_urls else found_urls[-1]
+        analysis_acc["sso_url"] = _extract_sso_url(full_log_content, PORT)
 
     return analysis_acc
 
@@ -405,6 +353,7 @@ def get_vpn_state() -> VPNState:
     """
     is_debug: bool = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
     vpn_mode: str = os.getenv("VPN_MODE", "standard")
+    server_ip: str = get_best_ip()
 
     if MODE_FILE.exists():
         try:
@@ -420,22 +369,12 @@ def get_vpn_state() -> VPNState:
                     "log": "Ready." if is_debug else None,
                     "debug_mode": is_debug,
                     "vpn_mode": vpn_mode,
+                    "server_ip": server_ip,
                 }
         except Exception:
             logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
 
-    log_content: str = ""
-    analysis: LogAnalysis = {
-        "state": "idle",
-        "prompt": "",
-        "prompt_type": "text",
-        "options": [],
-        "error": None,
-        "sso_url": "",
-    }
-
-    if CLIENT_LOG.exists():
-        analysis, log_content = state_manager.get_cached_log_analysis(CLIENT_LOG)
+    analysis, log_content = state_manager.get_cached_log_analysis(CLIENT_LOG)
 
     if state_manager.update_and_check_transition(analysis["state"]):
         logger.info(f"State Transition: -> {analysis['state']}")
@@ -450,6 +389,7 @@ def get_vpn_state() -> VPNState:
         "log": log_content if is_debug else None,
         "debug_mode": is_debug,
         "vpn_mode": vpn_mode,
+        "server_ip": server_ip,
     }
 
 
@@ -494,14 +434,15 @@ def _kill_and_poll() -> None:
     """
     Terminates active OpenConnect processes and actively polls until they exit
     to prevent race conditions when generating new VPN sessions.
+    Strictly typed to prevent Subprocess NoneType execution crashes.
     """
     pkill: str | None = shutil.which("pkill")
-    if pkill:
+    if pkill is not None:
         subprocess.run([pkill, "gpclient"], stderr=subprocess.DEVNULL)
         subprocess.run([pkill, "gpservice"], stderr=subprocess.DEVNULL)
 
         pgrep: str | None = shutil.which("pgrep")
-        if pgrep:
+        if pgrep is not None:
             for _ in range(50):
                 # Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
                 res1: subprocess.CompletedProcess[bytes] = subprocess.run(
@@ -637,18 +578,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
 
-    def _handle_submit(self) -> None:
+    def _handle_submit(self, length: int) -> None:
         """
         Handle form-encoded submissions containing either a callback URL or user-provided input.
         Forwards the payload to the service input IPC. Prevents memory exhaustion attacks.
         Safely falls back on dictionary access to prevent IndexError on empty bodies.
         """
         try:
-            length: int = int(self.headers.get("Content-Length", 0))
-            if length > 8192:  # Prevent memory exhaustion (DOS)
-                self.send_error(413, "Payload Too Large")
-                return
-
             data: dict[str, list[str]] = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
 
             if user_input_list := (data.get("callback_url") or data.get("user_input") or []):
@@ -673,9 +609,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Handle incoming HTTP POST requests for connection control routing.
         Validates the authorization token before routing to explicit handlers.
+        Globally enforces payload size limits.
         """
         if not self._is_authorized():
             self.send_error(401, "Unauthorized")
+            return
+
+        try:
+            length: int = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        except TypeError:
+            length = 0
+
+        if length > 8192:  # Prevent memory exhaustion (DOS)
+            self.send_error(413, "Payload Too Large")
             return
 
         if self.path == "/connect":
@@ -683,29 +631,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/disconnect":
             self._handle_disconnect()
         elif self.path == "/submit":
-            self._handle_submit()
+            self._handle_submit(length)
         else:
             self.send_error(404, "Endpoint not found")
+
+
+class VPNServer(socketserver.ThreadingTCPServer):
+    """Custom ThreadingTCPServer that safely enables address reuse."""
+
+    allow_reuse_address = True
 
 
 if __name__ == "__main__":
     target_dir: Path = Path("/var/www/html")
     if target_dir.exists() and target_dir.is_dir():
-        os.chdir(str(target_dir))
+        os.chdir(target_dir)
     else:
         # Fallback for local Windows development environments
         local_web_dir = Path(__file__).parent / "web"
         if local_web_dir.exists() and local_web_dir.is_dir():
-            os.chdir(str(local_web_dir))
+            os.chdir(local_web_dir)
         else:
-            os.chdir(str(Path(__file__).parent))
+            os.chdir(Path(__file__).parent)
 
     init_runtime_dir()
 
     beacon: Beacon = Beacon()
     beacon.start()
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.ThreadingTCPServer(("", PORT), Handler) as httpd:
+    with VPNServer(("", PORT), Handler) as httpd:
         logger.info(f"Server listening on {PORT}")
         httpd.serve_forever()

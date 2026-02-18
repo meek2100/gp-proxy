@@ -110,6 +110,7 @@ function switchTab(tab) {
 
 /**
  * Updates dynamic IP address fields in the UI based on the current hostname.
+ * Provides a basic fallback until updateStatus fetches the true IP from the backend.
  */
 function updateIPs() {
     const host = window.location.hostname;
@@ -216,11 +217,13 @@ function handleSSOClick(btn) {
  */
 async function restartAuth() {
     isRestarting = true;
+    window.expectedNextState = "auth_refresh";
 
-    // 10-second safety timeout to prevent infinite deadlocks if the backend transitions silently
+    // 15-second safety timeout to prevent infinite deadlocks if the backend transitions silently
     setTimeout(() => {
         isRestarting = false;
-    }, 10000);
+        window.expectedNextState = null;
+    }, 15000);
 
     window.vpnState = null;
     setBadge("Generating Link...", "connecting");
@@ -247,6 +250,14 @@ function resetSSOButtonState(newUrl) {
 async function triggerConnect() {
     setBadge("Starting...", "connecting");
     setView("connecting");
+    window.expectedNextState = "connecting";
+    isRestarting = true;
+
+    setTimeout(() => {
+        isRestarting = false;
+        window.expectedNextState = null;
+    }, 15000);
+
     await fetch("/connect", getFetchOptions("POST"));
     resetPoll(1000);
 }
@@ -257,6 +268,14 @@ async function triggerConnect() {
 async function triggerDisconnect() {
     if (confirm("Disconnect VPN session?")) {
         setBadge("Disconnecting...", "idle");
+        window.expectedNextState = "idle";
+        isRestarting = true;
+
+        setTimeout(() => {
+            isRestarting = false;
+            window.expectedNextState = null;
+        }, 15000);
+
         await fetch("/disconnect", getFetchOptions("POST"));
         resetPoll(1000);
     }
@@ -268,9 +287,17 @@ async function triggerDisconnect() {
 async function confirmReset() {
     if (confirm("Force reset process? This will kill the VPN.")) {
         setBadge("Resetting...", "idle");
+        window.expectedNextState = "idle";
+        isRestarting = true;
+
+        setTimeout(() => {
+            isRestarting = false;
+            window.expectedNextState = null;
+        }, 15000);
+
         await fetch("/disconnect", getFetchOptions("POST"));
         window.vpnState = null;
-        isRestarting = false;
+        resetPoll(1000);
     }
 }
 
@@ -282,12 +309,13 @@ async function handleFormSubmit(event) {
     event.preventDefault();
     const formData = new URLSearchParams(new FormData(event.target));
 
-    // Prevent frontend/backend I/O desync by buffering the polling execution
-    // while the local disk writes finish flushing to the backend analyzer.
     isRestarting = true;
+    window.expectedNextState = "connecting";
+
     setTimeout(() => {
         isRestarting = false;
-    }, 3000);
+        window.expectedNextState = null;
+    }, 15000);
 
     await fetch("/submit", getFetchOptions("POST", formData));
     setView("connecting");
@@ -311,6 +339,16 @@ async function updateStatus() {
             return;
         }
         const data = await res.json();
+
+        // Enforce valid numerical IPv4 address for network settings mapping
+        const ipv4Regex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+        const displayIp = ipv4Regex.test(window.location.hostname)
+            ? window.location.hostname
+            : data.server_ip || window.location.hostname;
+
+        document.querySelectorAll(".dyn-ip").forEach((el) => {
+            if (el.innerText !== displayIp) el.innerText = displayIp;
+        });
 
         const showGateway = data.vpn_mode === "gateway" || data.vpn_mode === "standard";
         const showSocks = data.vpn_mode === "socks" || data.vpn_mode === "standard";
@@ -341,10 +379,17 @@ async function updateStatus() {
         }
 
         if (isRestarting) {
-            if (data.state === "error" || data.state === "connected") {
+            if (data.state === window.expectedNextState || data.state === "error" || data.state === "connected") {
                 isRestarting = false;
-            } else if (data.state === "auth" && data.url && data.url !== lastAuthUrl) {
+                window.expectedNextState = null;
+            } else if (
+                window.expectedNextState === "auth_refresh" &&
+                data.state === "auth" &&
+                data.url &&
+                data.url !== lastAuthUrl
+            ) {
                 isRestarting = false;
+                window.expectedNextState = null;
             } else {
                 resetPoll(1000);
                 return;
