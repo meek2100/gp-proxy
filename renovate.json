@@ -1,0 +1,13 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": ["config:base", ":preserveSemverRanges", ":dependencyDashboard"],
+    "customManagers": [
+        {
+            "customType": "regex",
+            "fileMatch": ["(^|/)Dockerfile$"],
+            "matchStrings": ["ARG GOST_VERSION=\"(?<currentValue>.*?)\""],
+            "depNameTemplate": "go-gost/gost",
+            "datasourceTemplate": "github-releases"
+        }
+    ]
+}
