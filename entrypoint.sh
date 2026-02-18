@@ -136,6 +136,16 @@ else
 fi
 export VPN_DISABLE_IPV6
 
+# 15. Allowed Subnets
+RAW_SUBNETS=$(get_env_value "ALLOWED_SUBNETS" "allowed_subnets")
+ALLOWED_SUBNETS=$(clean_val "$RAW_SUBNETS")
+export ALLOWED_SUBNETS
+
+# 16. Gost Auth
+RAW_GOST_AUTH=$(get_env_value "GOST_AUTH" "gost_auth")
+GOST_AUTH=$(clean_val "$RAW_GOST_AUTH")
+export GOST_AUTH
+
 # ==============================================================================
 # 2. RUNTIME SETUP
 # ==============================================================================
@@ -336,7 +346,18 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
         echo 1 >/proc/sys/net/ipv4/ip_forward
     fi
     iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
-    iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+
+    if [[ -n "$ALLOWED_SUBNETS" ]]; then
+        log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
+        IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
+        for subnet in "${SUBNETS[@]}"; do
+            iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
+        done
+        iptables -A FORWARD -o tun0 -j DROP
+    else
+        iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+    fi
+
     iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 fi
 
@@ -363,7 +384,12 @@ log "INFO" "Starting Services..."
 dns_watchdog &
 
 if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
-    runuser -u gpuser -- gost -L=socks5://:1080?udp=true >>"$SERVICE_LOG" 2>&1 &
+    gost_args="-L=socks5://:1080?udp=true"
+    if [[ -n "$GOST_AUTH" ]]; then
+        log "INFO" "SOCKS5 Authentication Enabled."
+        gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
+    fi
+    runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
 fi
 
 runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" \

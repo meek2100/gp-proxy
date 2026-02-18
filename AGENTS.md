@@ -31,8 +31,8 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
-    - **Security:** If the `API_TOKEN` environment variable is defined, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers to prevent unauthorized manipulation on shared LANs.
-    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent.
+    - **Zero-Touch Security:** On startup, the server dynamically generates a cryptographically secure `SESSION_TOKEN`. All control routes and status payloads strictly require `Authorization: Bearer <token>` headers. This mitigates CSRF and unauthorized local process manipulation.
+    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The response payload securely distributes the container IP, Port, and the `SESSION_TOKEN` to the Rust Host Agent.
 - **Orchestrator (`entrypoint.sh`):**
     - Manages `iptables` for NAT/Forwarding.
     - Monitors the `gpclient` process.
@@ -50,9 +50,9 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 1.  **Dashboard Mode (Interactive):**
     - Launches when the user runs the executable.
-    - **Auto-Discovery:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically.
+    - **Auto-Discovery:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP and `SESSION_TOKEN` automatically.
     - **Management:** Displays real-time status (polled from `status.json`) and allows Connect/Disconnect actions.
-    - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required.
+    - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required, injecting the token via `?token=...`.
     - **Connection Info:** Displays the calculated Gateway IP and SOCKS port when connected.
 2.  **Handler Mode (Background):**
     - Triggered by the OS when a `globalprotect://` link is clicked.
@@ -96,7 +96,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are only rebuilt when requirements strictly change, preventing focus loss during aggressive 1-second polling intervals.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`) to keep the user's CLI context highly responsive to cancellation actions (Ctrl+C) even if the backend blocks.
 - **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic. It does not rely on arbitrary `time.sleep()` delays, eliminating startup race conditions.
-- **API Security (`API_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls.
+- **API Security (`SESSION_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls. The Rust client natively injects this as an `Authorization` header on all control calls.
 
 ## Handling Callbacks (`globalprotect://`)
 
@@ -104,7 +104,7 @@ The SAML flow often ends with a redirect to `globalprotect://...`.
 
 1.  **Browser Redirect:** The IDP redirects the browser to the custom protocol.
 2.  **OS Trigger:** The OS spawns `gp-client-proxy globalprotect://...`.
-3.  **Forwarding:** The Rust binary reads its config (`proxy_url.txt`), connects to the Docker container IP, and POSTs the payload to `/submit`.
+3.  **Forwarding:** The Rust binary reads its config (`proxy_url.txt`), connects to the Docker container IP, injects the Bearer authorization header, and POSTs the payload to `/submit`.
 4.  **Processing:** `server.py` receives the payload and writes it to the named pipe `/tmp/gp-stdin`.
 5.  **Execution:** The running `gpclient` process reads the pipe and completes the handshake.
 
