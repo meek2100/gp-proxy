@@ -12,6 +12,8 @@ const apiToken = localStorage.getItem("api_token");
 
 /**
  * Helper to construct fetch options incorporating the Authorization header if required.
+ * If the apiToken is missing or rejected by the backend, the server will return a 401 Unauthorized,
+ * which the polling loop detects to present an error state to the user.
  * @param {string} method - HTTP Method
  * @param {BodyInit|null} body - Request body
  * @returns {RequestInit}
@@ -203,6 +205,12 @@ function handleSSOClick(btn) {
  */
 async function restartAuth() {
     isRestarting = true;
+
+    // 10-second safety timeout to prevent infinite deadlocks if the backend transitions silently
+    setTimeout(() => {
+        isRestarting = false;
+    }, 10000);
+
     window.vpnState = null;
     setBadge("Generating Link...", "connecting");
     document.getElementById("btn-restart-auth").classList.add("hidden");
@@ -271,6 +279,7 @@ async function handleFormSubmit(event) {
 /**
  * Periodically fetches and updates the frontend state from the backend.
  * Implements strict DOM diffing for dynamic inputs to preserve user focus.
+ * If API token validation fails, presents the user with an authorization error.
  */
 async function updateStatus() {
     try {
@@ -345,11 +354,10 @@ async function updateStatus() {
             const newOptionsStr = data.options ? data.options.join(",") : "";
 
             // DOM Diffing constraint: Only rebuild input elements when properties fundamentally change.
-            if (
-                container.dataset.prompt !== data.prompt ||
-                container.dataset.type !== data.input_type ||
-                container.dataset.options !== newOptionsStr
-            ) {
+            const needsFullRebuild =
+                container.dataset.type !== data.input_type || container.dataset.options !== newOptionsStr;
+
+            if (needsFullRebuild) {
                 container.innerHTML = "";
                 container.dataset.prompt = data.prompt;
                 container.dataset.type = data.input_type;
@@ -382,6 +390,13 @@ async function updateStatus() {
                     input.name = "user_input";
                     input.required = true;
                     container.appendChild(input);
+                }
+            } else if (container.dataset.prompt !== data.prompt) {
+                // Safely update the label text if only the prompt changed, maintaining focus on the input box
+                container.dataset.prompt = data.prompt;
+                const label = container.querySelector("label");
+                if (label) {
+                    label.textContent = data.prompt;
                 }
             }
         }

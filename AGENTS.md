@@ -10,8 +10,8 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
 
 **Strict linting and formatting are enforced via CI and Pre-commit hooks.** Any code changes must adhere to these standards to pass the `lint` workflow.
 
-- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14.
-- **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed.
+- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`.
+- **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
 - **Shell:** Uses `shellcheck` (gcc format).
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.
 - **YAML:** Uses `yamllint` (relaxed mode, max 120 chars).
@@ -33,12 +33,6 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
     - **Zero-Touch Security:** On startup, the server dynamically generates a cryptographically secure `SESSION_TOKEN`. All control routes and status payloads strictly require `Authorization: Bearer <token>` headers. This mitigates CSRF and unauthorized local process manipulation.
     - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The response payload securely distributes the container IP, Port, and the `SESSION_TOKEN` to the Rust Host Agent.
-- **Orchestrator (`entrypoint.sh`):**
-    - Manages `iptables` for NAT/Forwarding.
-    - Monitors the `gpclient` process.
-    - Runs a "DNS Watchdog" to update `/etc/resolv.conf` dynamically when the VPN pushes new DNS servers.
-    - Starts `gost` as the SOCKS proxy, explicitly enabling UDP relay via `-L=socks5://:1080?udp=true`.
-    - Handles SOCKS5 access control using the `GOST_AUTH` environment variable and restricts transparent routing via `ALLOWED_SUBNETS`.
 
 ### 2. The Host Agent (The Manager)
 
@@ -78,7 +72,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ### Container (Server)
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, and invokes `gpclient`.
-- **`server.py`:** Python Control Server. Handles `API_TOKEN` bearer auth logic, length-limited payload parsing, binary `CLIENT_LOG` reading, and UDP Beacon.
+- **`server.py`:** Python Control Server. Handles `API_TOKEN` bearer auth logic, length-limited payload parsing, safely resolves empty submission bodies to prevent index errors, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Note: Control endpoints enforce a `POSIX` FIFO requirement, intentionally rejecting Native Windows host execution to preserve Docker parity.
 - **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py` (no brittle `sed` injections in the Dockerfile). Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
 
 ### Host (Client)
@@ -92,8 +86,9 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 ## Critical Implementation Details & Behaviors
 
-- **Status Polling JSON:** The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. The Rust client parses this field as `Option<String>`, and returning an empty string `""` causes silent unwrap failures.
-- **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are only rebuilt when requirements strictly change, preventing focus loss during aggressive 1-second polling intervals.
+- **Status Polling JSON:** The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. The Rust client parses this field as `Option<String>`, and surfacing the actual API response via `.as_deref().unwrap_or(...)` prevents silent failure masking.
+- **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are only fully rebuilt when types or options fundamentally change; otherwise, only text labels are updated. This guarantees input fields do not lose user cursor focus during aggressive 1-second polling intervals.
+- **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. A strict 10-second timeout resets this flag to protect the UI from permanent deadlock if the backend unexpectedly reverts states.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`) to keep the user's CLI context highly responsive to cancellation actions (Ctrl+C) even if the backend blocks.
 - **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic. It does not rely on arbitrary `time.sleep()` delays, eliminating startup race conditions.
 - **API Security (`SESSION_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls. The Rust client natively injects this as an `Authorization` header on all control calls.

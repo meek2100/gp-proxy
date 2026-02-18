@@ -133,7 +133,7 @@ fn run_dashboard() -> Result<()> {
         match load_config() {
             Ok(c) => config = c,
             Err(e) => {
-                eprintln!("Warning: Failed to reload config: {}", e);
+                eprintln!("[WARNING] Failed to reload config: {}", e);
             }
         }
 
@@ -146,7 +146,7 @@ fn run_dashboard() -> Result<()> {
                 println!("MODE:      {}", s.vpn_mode.to_uppercase());
 
                 if s.state == "connected" {
-                    println!("\n[!] CONNECTION DETAILS");
+                    println!("\n[i] CONNECTION DETAILS");
                     let host_ip = config
                         .base_url
                         .trim_start_matches("http://")
@@ -251,13 +251,16 @@ fn poll_for_success(config: &ProxyConfig) {
     while start.elapsed().as_secs() < 60 {
         if let Ok(s) = fetch_status(config) {
             if s.state == "connected" {
-                println!("\n✅ SUCCESS! VPN is Connected.");
+                println!("\n[SUCCESS] VPN is Connected.");
                 println!("You may close this window or return to menu.");
                 thread::sleep(Duration::from_secs(2));
                 return;
             }
             if s.state == "error" {
-                println!("\n❌ Connection Failed: {:?}", s.error.unwrap_or_default());
+                println!(
+                    "\n[ERROR] Connection Failed: {}",
+                    s.error.as_deref().unwrap_or("Unknown error occurred")
+                );
                 wait_for_enter();
                 return;
             }
@@ -304,12 +307,12 @@ fn run_setup_wizard() -> Result<()> {
 
     match try_discover() {
         Ok(resp) => {
-            println!("✅ FOUND SERVER: {}:{}", resp.ip, resp.port);
+            println!("[SUCCESS] FOUND SERVER: {}:{}", resp.ip, resp.port);
             found_url = format!("http://{}:{}", resp.ip, resp.port);
             found_token = resp.token;
         }
         Err(_) => {
-            println!("❌ No server found automatically.");
+            println!("[ERROR] No server found automatically.");
         }
     }
 
@@ -335,7 +338,7 @@ fn run_setup_wizard() -> Result<()> {
 
     let final_url = if input.is_empty() {
         if found_url.is_empty() {
-            println!("Error: IP required.");
+            println!("[ERROR] IP required.");
             wait_for_enter();
             return Ok(());
         }
@@ -343,7 +346,12 @@ fn run_setup_wizard() -> Result<()> {
     } else if input.contains("://") {
         input.to_string()
     } else {
-        format!("http://{}:8001", input)
+        // Attempt basic HTTPS inference if a standard TLS port is supplied
+        if input.ends_with(":443") || input.ends_with(":8443") {
+            format!("https://{}", input)
+        } else {
+            format!("http://{}:8001", input)
+        }
     };
 
     // If the user manually inputs an IP that differs, we discard the discovered token
@@ -363,11 +371,11 @@ fn run_setup_wizard() -> Result<()> {
 
     println!("Registering System Link Handler...");
     if let Err(e) = install_handler() {
-        println!("⚠️ Warning: Failed to register handler: {}", e);
+        println!("[WARNING] Failed to register handler: {}", e);
         println!("(You may need to run as Administrator/Root)");
         wait_for_enter();
     } else {
-        println!("✅ System Handler Registered.");
+        println!("[SUCCESS] System Handler Registered.");
     }
 
     println!("\nSetup Complete!");
@@ -471,10 +479,10 @@ fn remove_config() -> Result<()> {
 fn uninstall_process() -> Result<()> {
     println!("Removing...");
     if let Err(e) = uninstall_handler() {
-        eprintln!("Warning: Handler removal failed: {}", e);
+        eprintln!("[WARNING] Handler removal failed: {}", e);
     }
     if let Err(e) = remove_config() {
-        eprintln!("Warning: Config removal failed: {}", e);
+        eprintln!("[WARNING] Config removal failed: {}", e);
     }
     println!("Done.");
     wait_for_enter();

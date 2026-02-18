@@ -75,7 +75,7 @@ class Beacon(threading.Thread):
     """
     Background thread that listens for UDP broadcast packets.
     Used by the Desktop Client to auto-discover this container's IP address
-    on the local network without user intervention.
+    and session token on the local network without user intervention.
     """
 
     def __init__(self) -> None:
@@ -86,12 +86,14 @@ class Beacon(threading.Thread):
         super().__init__()
         self.daemon = True
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Prevent BindError during rapid restarts
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("", UDP_BEACON_PORT))
 
     def run(self) -> None:
         """
         Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the best IP, server port,
-        and hostname.
+        hostname, and the required API token for zero-touch authentication.
         """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
@@ -101,7 +103,12 @@ class Beacon(threading.Thread):
 
                 if message == "GP_DISCOVER":
                     response: str = json.dumps(
-                        {"ip": self.get_best_ip(), "port": PORT, "hostname": socket.gethostname()}
+                        {
+                            "ip": self.get_best_ip(),
+                            "port": PORT,
+                            "hostname": socket.gethostname(),
+                            "token": os.getenv("API_TOKEN", ""),
+                        }
                     )
                     self.sock.sendto(response.encode("utf-8"), addr)
             except Exception as e:
@@ -490,6 +497,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Validates the request against the configured pre-shared API_TOKEN.
         If no token is set in the environment, all requests are authorized.
+        Failing authorization will result in a 401 response from the caller.
+
+        Returns:
+            bool: `True` if authorized or no token is required, `False` otherwise.
         """
         expected_token = os.getenv("API_TOKEN")
         if not expected_token:
@@ -587,7 +598,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 self.send_error(503, "Service not ready (FIFO reader absent)")
         else:
-            self.send_error(501, "Not implemented for this platform")
+            self.send_error(501, "Not implemented for this platform (POSIX FIFO required)")
 
     def _handle_disconnect(self) -> None:
         """
@@ -604,6 +615,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Handle form-encoded submissions containing either a callback URL or user-provided input.
         Forwards the payload to the service input FIFO. Prevents memory exhaustion attacks.
+        Safely falls back on dictionary access to prevent IndexError on empty bodies.
         """
         try:
             length: int = int(self.headers.get("Content-Length", 0))
@@ -612,10 +624,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
 
             data: dict[str, list[str]] = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
-            user_input_list: list[str] = data.get("callback_url", [""])
-            if not user_input_list[0]:
-                user_input_list = data.get("user_input", [""])
-            user_input: str = user_input_list[0]
+            user_input_list: list[str] = data.get("callback_url") or data.get("user_input") or []
+            user_input: str = user_input_list[0] if user_input_list else ""
 
             if user_input:
                 logger.info(f"User submitted input (Length: {len(user_input)})")
@@ -628,7 +638,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     else:
                         self.send_error(503, "Service not ready (FIFO reader absent)")
                 else:
-                    self.send_error(501, "Not implemented for this platform")
+                    self.send_error(501, "Not implemented for this platform (POSIX FIFO required)")
             else:
                 self.send_error(400, "Empty input")
         except Exception:
@@ -636,7 +646,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(500, "Internal server error")
 
     def do_POST(self) -> None:
-        """Handle POST requests for connection control routing."""
+        """
+        Handle incoming HTTP POST requests for connection control routing.
+        Validates the authorization token before routing to explicit handlers.
+        """
         if not self._is_authorized():
             self.send_error(401, "Unauthorized")
             return
