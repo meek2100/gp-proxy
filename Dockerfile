@@ -43,32 +43,41 @@ RUN cargo build --release --bin gpclient --no-default-features && \
 # --- Runtime Stage (Final Image) ---
 FROM python:3.14-slim
 
+# ARG used to pull the correct architecture binary for gost
+ARG TARGETARCH=amd64
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # 5. Install Runtime Dependencies
-# Remove microsocks from the apt-get install list
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget iptables iproute2 util-linux procps tzdata \
+    iptables iproute2 util-linux procps tzdata \
     vpnc-scripts ca-certificates \
     libxml2 libgnutls30t64 liblz4-1 libpsl5 libsecret-1-0 openssl \
     sudo libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and extract the updated GOST 3.2.6 binary
-RUN wget -q https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_amd64.tar.gz \
-    && tar -xzf gost_3.2.6_linux_amd64.tar.gz \
+# 6. Download GOST and Purge Wget
+# We install wget, fetch gost & its checksum, verify it, extract it, and then purge wget.
+RUN apt-get update && apt-get install -y --no-install-recommends wget \
+    && wget -q "https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_${TARGETARCH}.tar.gz" \
+    && wget -q "https://github.com/go-gost/gost/releases/download/v3.2.6/checksums.txt" \
+    && grep "gost_3.2.6_linux_${TARGETARCH}.tar.gz" checksums.txt | sha256sum -c \
+    && tar -xzf "gost_3.2.6_linux_${TARGETARCH}.tar.gz" gost \
     && mv gost /usr/bin/gost \
     && chmod +x /usr/bin/gost \
-    && rm gost_3.2.6_linux_amd64.tar.gz
+    && rm "gost_3.2.6_linux_${TARGETARCH}.tar.gz" checksums.txt \
+    && apt-get purge -y wget \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
-# 6. Setup User
+# 7. Setup User
 RUN useradd -m -s /bin/bash gpuser
 RUN echo "gpuser ALL=(root) NOPASSWD: /usr/bin/gpclient, /usr/bin/pkill" > /etc/sudoers.d/gpuser && \
     chmod 0440 /etc/sudoers.d/gpuser
 
-# 7. Copy Binaries
+# 8. Copy Binaries
 COPY --from=builder \
     /usr/src/app/target/release/gpclient \
     /usr/src/app/target/release/gpservice \
@@ -76,11 +85,11 @@ COPY --from=builder \
     /usr/bin/
 COPY --from=builder /usr/src/app/healthcheck /usr/bin/healthcheck
 
-# 8. Set Capabilities
+# 9. Set Capabilities
 RUN setcap 'cap_net_admin,cap_net_bind_service+ep' /usr/bin/gpservice && \
     ldconfig
 
-# 9. Setup App
+# 10. Setup App
 RUN mkdir -p /var/www/html /tmp/gp-logs /run/dbus && \
     chown -R gpuser:gpuser /var/www/html /tmp/gp-logs /run/dbus
 
@@ -90,7 +99,7 @@ COPY assets/gp-proxy /var/www/html/assets/gp-proxy/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# 10. Healthcheck
+# 11. Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD /usr/bin/healthcheck || exit 1
 

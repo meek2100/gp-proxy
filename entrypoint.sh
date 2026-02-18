@@ -355,7 +355,8 @@ dns_watchdog &
 
 if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
     # GOST natively handles both TCP and UDP on the specified SOCKS5 port
-    runuser -u gpuser -- gost -L=socks5://:1080 >/dev/null 2>&1 &
+    # Enable UDP relay explicitly; gost v3 disables it by default
+    runuser -u gpuser -- gost -L=socks5://:1080?udp=true >/dev/null 2>&1 &
 fi
 
 # Pass configuration to Server
