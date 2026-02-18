@@ -77,7 +77,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, DNS Watchdog, cleanup traps, and invokes `gpclient`.
 - **`server.py`:** Python Control Server. Handles `LOG_LEVEL` parsing, log analysis regex, ANSI stripping, and UDP Beacon.
-- **`index.html`:** Frontend. Supports **Dark Mode** (auto/toggle), dynamic form generation, and "Restart Auth" lock to prevent UI flickering.
+- **`index.html` / `index.js` / `index.css`:** Frontend assets. Separated for maintainability and Docker layer caching, but strictly served locally by the Python server to ensure zero external internet dependencies. Supports **Dark Mode** (auto/toggle), dynamic form generation, and strict DOM diffing to prevent UI flickering and focus loss.
 
 ### Host (Client)
 
@@ -87,6 +87,13 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
     - Uses `webbrowser` to launch the auth page.
     - Implements the "Manager" TUI (Text User Interface).
 - **`apps/gp-client-proxy/Cargo.toml`:** Dependency definitions.
+
+## Critical Implementation Details & Behaviors
+
+- **Status Polling JSON:** The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. The Rust client parses this field as `Option<String>`, and returning an empty string `""` causes silent unwrap failures.
+- **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are only rebuilt when requirements strictly change, preventing focus loss during aggressive 1-second polling intervals.
+- **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`) to keep the user's CLI context highly responsive to cancellation actions (Ctrl+C) even if the backend blocks.
+- **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic. It does not rely on arbitrary `time.sleep()` delays, eliminating startup race conditions.
 
 ## Handling Callbacks (`globalprotect://`)
 
@@ -100,7 +107,6 @@ The SAML flow often ends with a redirect to `globalprotect://...`.
 
 ## Future Improvements
 
-- **Frontend:** Ensure `index.html` has **zero external dependencies** (inline CSS/JS) for strict LAN-only deployments.
 - **Security:** Implement an optional Pre-Shared Key (PSK) or Token between the Host Agent and Container Agent to prevent unauthorized control on shared LANs.
 - **Automated Callback:** Requires an embedded browser extension or custom handler to POST the callback to `localhost:8001/submit` automatically
 - **SOCKS5 Authentication:** Implement an optional SOCKS5 authentication method to prevent unauthorized access to the proxy.

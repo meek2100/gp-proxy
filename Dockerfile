@@ -63,8 +63,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 6. Download GOST and Purge Wget
-# We install wget, fetch gost & its checksum, verify it, extract it, and then purge wget.
-# If TARGETARCH is 'arm', we fail explicitly as 32-bit ARM is unsupported.
 RUN apt-get update && apt-get install -y --no-install-recommends wget \
     && if [ "$TARGETARCH" = "arm" ]; then \
     echo "Error: 32-bit ARM (arm/v7) is not supported by GOST v${GOST_VERSION} prebuilts." >&2 && exit 1; \
@@ -98,11 +96,12 @@ COPY --from=builder /usr/src/app/healthcheck /usr/bin/healthcheck
 RUN setcap 'cap_net_admin,cap_net_bind_service+ep' /usr/bin/gpservice && \
     ldconfig
 
-# 10. Setup App
+# 10. Setup App Environment
 RUN mkdir -p /var/www/html /tmp/gp-logs /run/dbus && \
     chown -R gpuser:gpuser /var/www/html /tmp/gp-logs /run/dbus
 
-COPY server.py index.html /var/www/html/
+# Incorporate the newly separated JS and CSS files into the web root
+COPY server.py index.html index.js index.css /var/www/html/
 COPY assets/gp-proxy /var/www/html/assets/gp-proxy/
 
 COPY entrypoint.sh /entrypoint.sh

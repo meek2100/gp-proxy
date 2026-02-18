@@ -91,7 +91,7 @@ repos:
       - id: docker-compose-check
         files: ^docker-compose\.yml$
 
-  # 5. TYPE CHECKERS
+  # 5. TYPE CHECKERS (Configured for Python 3.14)
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: "v1.19.1"
     hooks:
@@ -103,6 +103,7 @@ repos:
     hooks:
       - id: pyright
         files: '\.py$'
+
   # --- RUST (System Hooks) ---
   # Requires 'cargo' to be in your $PATH
   - repo: local

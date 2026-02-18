@@ -13,13 +13,13 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 get_env_value() {
     local val=""
     for key in "$@"; do
-        if [ -n "${!key}" ]; then
+        if [[ -n "${!key}" ]]; then
             val="${!key}"
             break
         fi
         local match_line
         match_line=$(env | grep -i "^${key}=" | head -n 1)
-        if [ -n "$match_line" ]; then
+        if [[ -n "$match_line" ]]; then
             val="${match_line#*=}"
             break
         fi
@@ -43,14 +43,14 @@ clean_val() {
 RAW_LOG_LEVEL=$(get_env_value "LOG_LEVEL" "log_level")
 CLEAN_LOG_LEVEL=$(clean_val "$RAW_LOG_LEVEL")
 LOG_LEVEL="${CLEAN_LOG_LEVEL^^}"
-[ -z "$LOG_LEVEL" ] && LOG_LEVEL="INFO"
+[[ -z "$LOG_LEVEL" ]] && LOG_LEVEL="INFO"
 export LOG_LEVEL
 
 # 2. VPN_MODE
 RAW_VPN_MODE=$(get_env_value "VPN_MODE" "vpn_mode")
 CLEAN_VPN_MODE=$(clean_val "$RAW_VPN_MODE")
 VPN_MODE="${CLEAN_VPN_MODE,,}"
-[ -z "$VPN_MODE" ] && VPN_MODE="standard"
+[[ -z "$VPN_MODE" ]] && VPN_MODE="standard"
 export VPN_MODE
 
 # 3. VPN_PORTAL (Required)
@@ -151,7 +151,7 @@ PIPE_CONTROL="$RUNTIME_DIR/gp-control"
 export RUST_LOG_STYLE=never
 
 # Apply Timezone
-if [ -f "/usr/share/zoneinfo/$TZ" ]; then
+if [[ -f "/usr/share/zoneinfo/$TZ" ]]; then
     ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime && echo "$TZ" >/etc/timezone
 fi
 
@@ -167,7 +167,7 @@ log() {
         *) [[ "$level" == "INFO" || "$level" == "WARN" || "$level" == "ERROR" ]] && should_log=true ;;
     esac
 
-    if [ "$should_log" = true ]; then
+    if [[ "$should_log" == true ]]; then
         local timestamp
         timestamp=$(date +'%Y-%m-%dT%H:%M:%SZ')
         echo "[$timestamp] [$level] $msg" >>"$SERVICE_LOG"
@@ -177,9 +177,9 @@ log() {
 
 # --- VERBOSITY MAPPING ---
 GP_VERBOSITY=""
-if [ "$LOG_LEVEL" == "DEBUG" ]; then
+if [[ "$LOG_LEVEL" == "DEBUG" ]]; then
     GP_VERBOSITY="-v"
-elif [ "$LOG_LEVEL" == "TRACE" ]; then
+elif [[ "$LOG_LEVEL" == "TRACE" ]]; then
     GP_VERBOSITY="-vv"
 fi
 
@@ -191,10 +191,10 @@ log "INFO" "Mode:        $VPN_MODE"
 log "INFO" "Log Level:   $LOG_LEVEL"
 log "INFO" "Verbosity:   ${GP_VERBOSITY:-None}"
 log "INFO" "Portal:      ${VPN_PORTAL:-[Not Set]}"
-if [ -n "$VPN_GATEWAY" ]; then
+if [[ -n "$VPN_GATEWAY" ]]; then
     log "INFO" "Gateway:     $VPN_GATEWAY"
 fi
-if [ -n "$DNS_SERVERS" ]; then
+if [[ -n "$DNS_SERVERS" ]]; then
     log "INFO" "Custom DNS:  $DNS_SERVERS"
 fi
 log "INFO" "------------------------------------------"
@@ -213,10 +213,10 @@ trap cleanup SIGTERM SIGINT
 check_log_size() {
     local max_size=10485760
     for logfile in "$CLIENT_LOG" "$SERVICE_LOG"; do
-        if [ -f "$logfile" ]; then
+        if [[ -f "$logfile" ]]; then
             local size
             size=$(stat -c%s "$logfile")
-            if [ "$size" -gt "$max_size" ]; then
+            if [[ "$size" -gt "$max_size" ]]; then
                 echo "[$(date)] Log truncated due to size limit." >"$logfile"
             fi
         fi
@@ -230,7 +230,6 @@ check_services() {
         exit 1
     fi
 
-    # Check gost proxy status if it should be running
     if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
         if ! pgrep -x gost >/dev/null; then
             log "ERROR" "CRITICAL: gost SOCKS proxy died unexpectedly."
@@ -241,7 +240,7 @@ check_services() {
     local mode
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
-    if [ "$mode" == "active" ]; then
+    if [[ "$mode" == "active" ]]; then
         if ! pgrep -f "gpservice" >/dev/null; then
             log "ERROR" "CRITICAL: gpservice died while VPN was active."
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
@@ -257,7 +256,7 @@ dns_watchdog() {
     local last_dns=""
     while true; do
         local current_dns=""
-        if [ -f /etc/resolv.conf ]; then
+        if [[ -f /etc/resolv.conf ]]; then
             while read -r line; do
                 if [[ "$line" =~ ^nameserver\ +([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
                     local ip="${BASH_REMATCH[1]}"
@@ -269,10 +268,10 @@ dns_watchdog() {
             done </etc/resolv.conf
         fi
 
-        if [ -n "$current_dns" ] && [ "$current_dns" != "$last_dns" ]; then
+        if [[ -n "$current_dns" ]] && [[ "$current_dns" != "$last_dns" ]]; then
             if [[ "$current_dns" != "8.8.8.8" && "$current_dns" != "1.1.1.1" ]]; then
                 log "INFO" "VPN DNS Detected: $current_dns. Enabling Forwarding..."
-                if [ -n "$last_dns" ]; then
+                if [[ -n "$last_dns" ]]; then
                     iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
                     iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
                 fi
@@ -286,8 +285,8 @@ dns_watchdog() {
 }
 
 # --- 1. SETUP ---
-if [ -n "$PUID" ]; then usermod -u "$PUID" gpuser; fi
-if [ -n "$PGID" ]; then groupmod -g "$PGID" gpuser; fi
+if [[ -n "$PUID" ]]; then usermod -u "$PUID" gpuser; fi
+if [[ -n "$PGID" ]]; then groupmod -g "$PGID" gpuser; fi
 
 # --- 2. NETWORK & MODE DETECTION ---
 log "INFO" "Inspecting network environment..."
@@ -299,8 +298,8 @@ else
     log "DEBUG" "Network detection: Standard/Bridge interface detected."
 fi
 
-if [ "$VPN_MODE" == "gateway" ] || [ "$VPN_MODE" == "standard" ]; then
-    if [ "$IS_MACVLAN" = false ]; then
+if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
+    if [[ "$IS_MACVLAN" == false ]]; then
         log "WARN" "Configuration Mismatch: '$VPN_MODE' mode requested but no Macvlan interface found."
         log "WARN" "Gateway features require a direct routable IP (Macvlan)."
         log "WARN" ">>> REVERTING TO 'socks' MODE to ensure functionality. <<<"
@@ -310,17 +309,19 @@ fi
 
 # --- 3. DNS CONFIGURATION ---
 DNS_TO_APPLY=""
-if [ -n "$DNS_SERVERS" ]; then
+if [[ -n "$DNS_SERVERS" ]]; then
     DNS_TO_APPLY="$DNS_SERVERS"
-elif [ "$IS_MACVLAN" = true ]; then
+elif [[ "$IS_MACVLAN" == true ]]; then
     log "INFO" "Macvlan detected. Applying fallback defaults."
     DNS_TO_APPLY="8.8.8.8 1.1.1.1"
 fi
 
-if [ -n "$DNS_TO_APPLY" ]; then
+if [[ -n "$DNS_TO_APPLY" ]]; then
     log "INFO" "Overwriting /etc/resolv.conf"
     echo "options ndots:0" >/etc/resolv.conf
-    for ip in $DNS_TO_APPLY; do
+    # Using read -ra to safely split by spaces to appease shellcheck SC2086
+    read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
+    for ip in "${DNS_ARRAY[@]}"; do
         echo "nameserver $ip" >>/etc/resolv.conf
     done
 fi
@@ -330,8 +331,8 @@ iptables -F
 iptables -t nat -F
 iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
 
-if [ "$VPN_MODE" = "gateway" ] || [ "$VPN_MODE" = "standard" ]; then
-    if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]; then
+if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]]; then
         echo 1 >/proc/sys/net/ipv4/ip_forward
     fi
     iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
@@ -339,7 +340,7 @@ if [ "$VPN_MODE" = "gateway" ] || [ "$VPN_MODE" = "standard" ]; then
     iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 fi
 
-if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
+if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
     iptables -A INPUT -p udp --dport 1080 -j ACCEPT
 fi
@@ -361,21 +362,15 @@ chmod 644 "$MODE_FILE"
 log "INFO" "Starting Services..."
 dns_watchdog &
 
-if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
-    # GOST natively handles both TCP and UDP on the specified SOCKS5 port
-    # Enable UDP relay explicitly; gost v3 disables it by default
-    # Output is captured in the service log for debugging
+if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     runuser -u gpuser -- gost -L=socks5://:1080?udp=true >>"$SERVICE_LOG" 2>&1 &
 fi
 
-# Pass configuration to Server
 runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" \
     python3 -u /var/www/html/server.py >>"$SERVICE_LOG" 2>&1 &
 
-# FIX: Stream logs to Docker stdout in background
 tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
-# Grace period
 sleep 3
 
 # --- 7. MAIN LOOP ---
@@ -387,7 +382,7 @@ while true; do
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 
-        # 1. Start gpservice (On-Demand)
+        # 1. Start gpservice
         log "INFO" "Starting gpservice..."
         runuser -u gpuser -- bash -c "
             /usr/bin/gpservice 2>&1 | \
@@ -402,38 +397,37 @@ while true; do
             > \"$CLIENT_LOG\"
             exec 3<> \"$PIPE_STDIN\"
 
-            # Build Arguments Array
-            declare -a args
-            args=(sudo gpclient $GP_VERBOSITY --fix-openssl connect \"$VPN_PORTAL\" --browser remote)
+            # Safely build arguments array to satisfy shellcheck
+            declare -a args=(sudo gpclient)
 
-            # Gateway Logic
-            if [ -n \"$VPN_GATEWAY\" ]; then
+            if [[ -n \"$GP_VERBOSITY\" ]]; then
+                args+=(\"$GP_VERBOSITY\")
+            fi
+
+            args+=(--fix-openssl connect \"$VPN_PORTAL\" --browser remote)
+
+            if [[ -n \"$VPN_GATEWAY\" ]]; then
                 args+=(--gateway \"$VPN_GATEWAY\")
             else
                 args+=(--as-gateway)
             fi
 
-            # Optional Configuration
-            [ \"$VPN_HIP_REPORT\" == \"true\" ]   && args+=(--hip)
-            [ \"$VPN_NO_DTLS\" == \"true\" ]      && args+=(--no-dtls)
-            [ \"$VPN_DISABLE_IPV6\" == \"true\" ] && args+=(--disable-ipv6)
+            [[ \"$VPN_HIP_REPORT\" == \"true\" ]]   && args+=(--hip)
+            [[ \"$VPN_NO_DTLS\" == \"true\" ]]      && args+=(--no-dtls)
+            [[ \"$VPN_DISABLE_IPV6\" == \"true\" ]] && args+=(--disable-ipv6)
 
-            [ -n \"$VPN_OS\" ]             && args+=(--os \"$VPN_OS\")
-            [ -n \"$VPN_OS_VERSION\" ]     && args+=(--os-version \"$VPN_OS_VERSION\")
-            [ -n \"$VPN_CLIENT_VERSION\" ] && args+=(--client-version \"$VPN_CLIENT_VERSION\")
+            [[ -n \"$VPN_OS\" ]]             && args+=(--os \"$VPN_OS\")
+            [[ -n \"$VPN_OS_VERSION\" ]]     && args+=(--os-version \"$VPN_OS_VERSION\")
+            [[ -n \"$VPN_CLIENT_VERSION\" ]] && args+=(--client-version \"$VPN_CLIENT_VERSION\")
 
-            # Custom Arguments (handle word splitting for flags)
-            if [ -n \"\$GP_ARGS\" ]; then
-                # Option B: Use eval to parse quoted arguments correctly (e.g. --os \"Windows 10\")
-                # SECURITY NOTE: This uses eval on env var content. Ensure GP_ARGS is trusted.
+            # Safely evaluate string to handle quoted CLI flags like --os \"Windows 10\"
+            if [[ -n \"\$GP_ARGS\" ]]; then
                 eval \"set -- \$GP_ARGS\"
                 for arg in \"\$@\"; do
                     args+=(\"\$arg\")
                 done
             fi
 
-            # Serialize array to safe string for 'script -c' using shell escaping
-            # This prevents injection from env vars into the script execution shell
             SAFE_CMD=\$(printf \"%q \" \"\${args[@]}\")
 
             echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"$SERVICE_LOG\"
