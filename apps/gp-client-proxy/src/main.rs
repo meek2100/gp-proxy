@@ -45,6 +45,25 @@ struct ServerStatus {
 struct DiscoveryResponse {
     ip: String,
     port: u16,
+    #[serde(default)]
+    token: String, // Zero-touch session token for API authorization
+}
+
+#[derive(Clone, Debug)]
+struct ProxyConfig {
+    base_url: String,
+    token: String,
+}
+
+impl ProxyConfig {
+    /// Generates the authenticated browser URL to pass the zero-touch token to the frontend
+    fn browser_url(&self) -> String {
+        if self.token.is_empty() {
+            self.base_url.clone()
+        } else {
+            format!("{}/?token={}", self.base_url, self.token)
+        }
+    }
 }
 
 /// Program entry point that dispatches between the protocol handler, uninstaller, and interactive dashboard.
@@ -99,8 +118,8 @@ fn get_fast_agent() -> ureq::Agent {
 
 /// Displays the interactive dashboard and launcher for the GP Client Proxy.
 fn run_dashboard() -> Result<()> {
-    let mut config_url = match load_config() {
-        Ok(url) => url,
+    let mut config = match load_config() {
+        Ok(c) => c,
         Err(_) => {
             println!("No configuration found. Starting Setup...");
             return run_setup_wizard();
@@ -112,23 +131,24 @@ fn run_dashboard() -> Result<()> {
         print_header();
 
         match load_config() {
-            Ok(url) => config_url = url,
+            Ok(c) => config = c,
             Err(e) => {
                 eprintln!("Warning: Failed to reload config: {}", e);
             }
         }
 
-        let status = fetch_status(&config_url);
+        let status = fetch_status(&config);
 
         match &status {
             Ok(s) => {
-                println!("SERVER:    Online ({})", config_url);
+                println!("SERVER:    Online ({})", config.base_url);
                 println!("STATUS:    {}", s.state.to_uppercase());
                 println!("MODE:      {}", s.vpn_mode.to_uppercase());
 
                 if s.state == "connected" {
                     println!("\n[!] CONNECTION DETAILS");
-                    let host_ip = config_url
+                    let host_ip = config
+                        .base_url
                         .trim_start_matches("http://")
                         .trim_start_matches("https://")
                         .split(':')
@@ -145,8 +165,8 @@ fn run_dashboard() -> Result<()> {
                 }
             }
             Err(_) => {
-                println!("SERVER:    Unreachable ({})", config_url);
-                println!("STATUS:    OFFLINE");
+                println!("SERVER:    Unreachable ({})", config.base_url);
+                println!("STATUS:    OFFLINE (Or Unauthorized)");
             }
         }
         println!("----------------------------------------");
@@ -174,16 +194,17 @@ fn run_dashboard() -> Result<()> {
 
         match input.trim() {
             "1" => {
-                let _ = webbrowser::open(&config_url);
+                let _ = webbrowser::open(&config.browser_url());
             }
             "2" => {
                 if let Ok(s) = &status {
                     if s.state == "connected" {
                         println!("Disconnecting...");
-                        if let Err(e) = get_agent()
-                            .post(&format!("{}/disconnect", config_url))
-                            .send_empty()
-                        {
+                        let mut req = get_agent().post(&format!("{}/disconnect", config.base_url));
+                        if !config.token.is_empty() {
+                            req = req.header("Authorization", &format!("Bearer {}", config.token));
+                        }
+                        if let Err(e) = req.send_empty() {
                             println!("Error disconnecting: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
@@ -191,24 +212,25 @@ fn run_dashboard() -> Result<()> {
                         }
                     } else {
                         println!("Initiating Connection...");
-                        if let Err(e) = get_agent()
-                            .post(&format!("{}/connect", config_url))
-                            .send_empty()
-                        {
+                        let mut req = get_agent().post(&format!("{}/connect", config.base_url));
+                        if !config.token.is_empty() {
+                            req = req.header("Authorization", &format!("Bearer {}", config.token));
+                        }
+                        if let Err(e) = req.send_empty() {
                             println!("Error initiating connection: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
                             println!("Launching Browser for Auth...");
-                            let _ = webbrowser::open(&config_url);
-                            poll_for_success(&config_url);
+                            let _ = webbrowser::open(&config.browser_url());
+                            poll_for_success(&config);
                         }
                     }
                 }
             }
             "3" => {
                 run_setup_wizard()?;
-                if let Ok(url) = load_config() {
-                    config_url = url;
+                if let Ok(c) = load_config() {
+                    config = c;
                 }
             }
             "4" => {
@@ -222,12 +244,12 @@ fn run_dashboard() -> Result<()> {
 }
 
 /// Polls the proxy server's status endpoint using `get_fast_agent` until connected, error, or timeout.
-fn poll_for_success(base_url: &str) {
+fn poll_for_success(config: &ProxyConfig) {
     println!("\nWaiting for connection (Press Ctrl+C to cancel)...");
     let start = Instant::now();
 
     while start.elapsed().as_secs() < 60 {
-        if let Ok(s) = fetch_status(base_url) {
+        if let Ok(s) = fetch_status(config) {
             if s.state == "connected" {
                 println!("\n✅ SUCCESS! VPN is Connected.");
                 println!("You may close this window or return to menu.");
@@ -249,12 +271,12 @@ fn poll_for_success(base_url: &str) {
 }
 
 /// Fetches the proxy server's status using a fast-timeout HTTP agent.
-fn fetch_status(base_url: &str) -> Result<ServerStatus> {
-    let resp: ServerStatus = get_fast_agent()
-        .get(&format!("{}/status.json", base_url))
-        .call()?
-        .body_mut()
-        .read_json()?;
+fn fetch_status(config: &ProxyConfig) -> Result<ServerStatus> {
+    let mut req = get_fast_agent().get(&format!("{}/status.json", config.base_url));
+    if !config.token.is_empty() {
+        req = req.header("Authorization", &format!("Bearer {}", config.token));
+    }
+    let resp: ServerStatus = req.call()?.body_mut().read_json()?;
     Ok(resp)
 }
 
@@ -278,11 +300,13 @@ fn run_setup_wizard() -> Result<()> {
     println!("Scanning network for GP Proxy Server...");
 
     let mut found_url = String::new();
+    let mut found_token = String::new();
 
     match try_discover() {
         Ok(resp) => {
             println!("✅ FOUND SERVER: {}:{}", resp.ip, resp.port);
             found_url = format!("http://{}:{}", resp.ip, resp.port);
+            found_token = resp.token;
         }
         Err(_) => {
             println!("❌ No server found automatically.");
@@ -322,8 +346,20 @@ fn run_setup_wizard() -> Result<()> {
         format!("http://{}:8001", input)
     };
 
+    // If the user manually inputs an IP that differs, we discard the discovered token
+    let final_token = if input.is_empty() {
+        found_token
+    } else {
+        String::new()
+    };
+
+    let config = ProxyConfig {
+        base_url: final_url,
+        token: final_token,
+    };
+
     println!("Saving configuration...");
-    save_config(&final_url)?;
+    save_config(&config)?;
 
     println!("Registering System Link Handler...");
     if let Err(e) = install_handler() {
@@ -336,20 +372,25 @@ fn run_setup_wizard() -> Result<()> {
 
     println!("\nSetup Complete!");
     println!("Launching Web Dashboard...");
-    let _ = webbrowser::open(&final_url);
-    poll_for_success(&final_url);
+    let _ = webbrowser::open(&config.browser_url());
+    poll_for_success(&config);
 
     Ok(())
 }
 
 fn handle_link(url: &str) -> Result<()> {
-    let proxy_base = load_config()?;
-    let target_endpoint = format!("{}/submit", proxy_base.trim_end_matches('/'));
+    let config = load_config()?;
+    let target_endpoint = format!("{}/submit", config.base_url.trim_end_matches('/'));
 
-    let resp = get_agent()
+    let mut req = get_agent()
         .post(&target_endpoint)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .send_form([("callback_url", url)])?;
+        .header("Content-Type", "application/x-www-form-urlencoded");
+
+    if !config.token.is_empty() {
+        req = req.header("Authorization", &format!("Bearer {}", config.token));
+    }
+
+    let resp = req.send_form([("callback_url", url)])?;
 
     if resp.status() != 200 {
         anyhow::bail!("Server Error: {}", resp.status());
@@ -390,17 +431,35 @@ fn get_config_path() -> Result<PathBuf> {
     }
     Ok(config_dir.join(CONFIG_FILE_NAME))
 }
-fn load_config() -> Result<String> {
+
+fn load_config() -> Result<ProxyConfig> {
     let path = get_config_path()?;
     if !path.exists() {
         anyhow::bail!("No config");
     }
-    Ok(fs::read_to_string(path)?.trim().to_string())
+    let content = fs::read_to_string(path)?;
+    let mut lines = content.lines();
+
+    let base_url = lines.next().unwrap_or("").trim().to_string();
+    if base_url.is_empty() {
+        anyhow::bail!("Invalid config: Missing URL");
+    }
+
+    let token = lines.next().unwrap_or("").trim().to_string();
+
+    Ok(ProxyConfig { base_url, token })
 }
-fn save_config(url: &str) -> Result<()> {
-    fs::write(get_config_path()?, url)?;
+
+fn save_config(config: &ProxyConfig) -> Result<()> {
+    let content = if config.token.is_empty() {
+        config.base_url.clone()
+    } else {
+        format!("{}\n{}", config.base_url, config.token)
+    };
+    fs::write(get_config_path()?, content)?;
     Ok(())
 }
+
 fn remove_config() -> Result<()> {
     let path = get_config_path()?;
     if path.exists() {

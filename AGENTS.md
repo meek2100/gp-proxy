@@ -31,12 +31,14 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
+    - **Security:** If the `API_TOKEN` environment variable is defined, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers to prevent unauthorized manipulation on shared LANs.
     - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent.
 - **Orchestrator (`entrypoint.sh`):**
     - Manages `iptables` for NAT/Forwarding.
     - Monitors the `gpclient` process.
     - Runs a "DNS Watchdog" to update `/etc/resolv.conf` dynamically when the VPN pushes new DNS servers.
     - Starts `gost` as the SOCKS proxy, explicitly enabling UDP relay via `-L=socks5://:1080?udp=true`.
+    - Handles SOCKS5 access control using the `GOST_AUTH` environment variable and restricts transparent routing via `ALLOWED_SUBNETS`.
 
 ### 2. The Host Agent (The Manager)
 
@@ -75,9 +77,9 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 ### Container (Server)
 
-- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, DNS Watchdog, cleanup traps, and invokes `gpclient`.
-- **`server.py`:** Python Control Server. Handles `LOG_LEVEL` parsing, log analysis regex, ANSI stripping, and UDP Beacon.
-- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching, but strictly served locally by the Python server to ensure zero external internet dependencies. Supports **Dark Mode** (auto/toggle), dynamic form generation, and strict DOM diffing to prevent UI flickering and focus loss.
+- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, and invokes `gpclient`.
+- **`server.py`:** Python Control Server. Handles `API_TOKEN` bearer auth logic, length-limited payload parsing, binary `CLIENT_LOG` reading, and UDP Beacon.
+- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py` (no brittle `sed` injections in the Dockerfile). Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
 
 ### Host (Client)
 
@@ -94,6 +96,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are only rebuilt when requirements strictly change, preventing focus loss during aggressive 1-second polling intervals.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`) to keep the user's CLI context highly responsive to cancellation actions (Ctrl+C) even if the backend blocks.
 - **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic. It does not rely on arbitrary `time.sleep()` delays, eliminating startup race conditions.
+- **API Security (`API_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls.
 
 ## Handling Callbacks (`globalprotect://`)
 
@@ -107,7 +110,4 @@ The SAML flow often ends with a redirect to `globalprotect://...`.
 
 ## Future Improvements
 
-- **Security:** Implement an optional Pre-Shared Key (PSK) or Token between the Host Agent and Container Agent to prevent unauthorized control on shared LANs.
-- **Automated Callback:** Requires an embedded browser extension or custom handler to POST the callback to `localhost:8001/submit` automatically
-- **SOCKS5 Authentication:** Implement an optional SOCKS5 authentication method to prevent unauthorized access to the proxy.
-- **Gateway Protection:** Implement an optional Gateway Protection method to prevent unauthorized access to the proxy.
+- **Automated Callback:** Requires an embedded browser extension or custom handler to POST the callback to `localhost:8001/submit` automatically, removing the need for protocol handlers.

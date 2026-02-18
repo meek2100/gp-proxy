@@ -138,15 +138,15 @@ logger: logging.Logger = logging.getLogger()
 class VPNState(TypedDict):
     """Type definition for the VPN state response sent to the frontend."""
 
-    state: str
-    url: str
-    prompt: str
-    input_type: str
-    options: list[str]
-    error: str | None
-    log: str | None
-    debug_mode: bool
-    vpn_mode: str
+    state: str  # Current connection state (idle, connecting, auth, input, connected, error)
+    url: str  # SSO URL for SAML authentication, if required
+    prompt: str  # Text prompt for user input (e.g., 'Enter Password')
+    input_type: str  # Type of input required (text, password, select)
+    options: list[str]  # Dropdown options for 'select' input types
+    error: str | None  # Error message if the state is 'error'
+    log: str | None  # Recent log lines, only populated if debug_mode is True
+    debug_mode: bool  # Whether debug logging is enabled
+    vpn_mode: str  # The configured network mode (standard, socks, gateway)
 
 
 class LogAnalysis(TypedDict):
@@ -371,14 +371,14 @@ def get_vpn_state() -> VPNState:
     if CLIENT_LOG.exists():
         try:
             file_size: int = CLIENT_LOG.stat().st_size
-            with open(CLIENT_LOG, errors="replace") as f:
+            # Open in binary mode to prevent UTF-8 boundary splitting when seeking
+            with open(CLIENT_LOG, "rb") as f:
                 if file_size > 65536:
                     f.seek(file_size - 65536)
-                    f.readline()
+                    f.readline()  # Align to the next newline boundary
 
-                data: str = f.read()
+                data: str = f.read().decode("utf-8", errors="replace")
 
-                # Prevent parsing broken partial lines if file is being actively written to
                 lines: list[str] = data.splitlines(keepends=True)
                 if lines and not lines[-1].endswith("\n"):
                     lines.pop()
@@ -486,11 +486,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     Handles API endpoints for status, connections, and log downloads.
     """
 
+    def _is_authorized(self) -> bool:
+        """
+        Validates the request against the configured pre-shared API_TOKEN.
+        If no token is set in the environment, all requests are authorized.
+        """
+        expected_token = os.getenv("API_TOKEN")
+        if not expected_token:
+            return True
+
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header == f"Bearer {expected_token}":
+            return True
+
+        return False
+
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """
-        Log HTTP requests to the module logger.
+        Log HTTP requests to the module logger. Avoids index errors on missing args.
         """
-        if "status.json" in args[0]:
+        if args and "status.json" in str(args[0]):
             logger.debug("%s - - %s", self.client_address[0], format % args)
         else:
             logger.info("%s - - %s", self.client_address[0], format % args)
@@ -498,19 +513,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         """
         Inject optimal caching headers before completing the header block.
-        Works in tandem with Dockerfile build-time query strings to provide
-        instant page loads without serving stale assets.
         """
-        # Parse the raw path to ignore query parameters (like ?v=1738200)
         base_path: str = urllib.parse.urlparse(self.path).path
 
         if base_path in ["/", "/index.html", "/status.json"]:
-            # Never cache the HTML or dynamic status payload
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
         elif base_path.endswith((".css", ".js", ".png", ".ico")):
-            # Cache static assets for 1 year (relying on build-time hashes to bust cache)
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
 
         super().end_headers()
@@ -520,6 +530,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Handle incoming HTTP GET requests for status, log download, and static file serving.
         """
         if self.path.startswith("/status.json"):
+            if not self._is_authorized():
+                self.send_error(401, "Unauthorized")
+                return
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
@@ -527,6 +540,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if self.path == "/download_logs":
+            if not self._is_authorized():
+                self.send_error(401, "Unauthorized")
+                return
             if os.getenv("LOG_LEVEL", "INFO").upper() not in ["DEBUG", "TRACE"]:
                 self.send_error(403, "Debug mode required to download logs.")
                 return
@@ -587,10 +603,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _handle_submit(self) -> None:
         """
         Handle form-encoded submissions containing either a callback URL or user-provided input.
-        Forwards the payload to the service input FIFO.
+        Forwards the payload to the service input FIFO. Prevents memory exhaustion attacks.
         """
         try:
             length: int = int(self.headers.get("Content-Length", 0))
+            if length > 8192:  # Prevent memory exhaustion (DOS)
+                self.send_error(413, "Payload Too Large")
+                return
+
             data: dict[str, list[str]] = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
             user_input_list: list[str] = data.get("callback_url", [""])
             if not user_input_list[0]:
@@ -617,6 +637,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle POST requests for connection control routing."""
+        if not self._is_authorized():
+            self.send_error(401, "Unauthorized")
+            return
+
         if self.path == "/connect":
             self._handle_connect()
         elif self.path == "/disconnect":

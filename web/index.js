@@ -1,8 +1,35 @@
 // File: web/index.js
 
+// --- Authentication Token Handling ---
+// Automatically extract token from URL if provided (e.g. ?token=secret) and store securely.
+const urlParams = new URLSearchParams(window.location.search);
+const urlToken = urlParams.get("token");
+if (urlToken) {
+    localStorage.setItem("api_token", urlToken);
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
+const apiToken = localStorage.getItem("api_token");
+
+/**
+ * Helper to construct fetch options incorporating the Authorization header if required.
+ * @param {string} method - HTTP Method
+ * @param {BodyInit|null} body - Request body
+ * @returns {RequestInit}
+ */
+function getFetchOptions(method = "GET", body = null) {
+    const headers = {};
+    if (apiToken) {
+        headers["Authorization"] = `Bearer ${apiToken}`;
+    }
+    const options = { method, headers };
+    if (body) {
+        options.body = body;
+    }
+    return options;
+}
+
 /**
  * Initializes the application theme based on local storage or system preferences.
- * Applies the 'data-theme' attribute to the document element and updates visual assets.
  */
 function initTheme() {
     const stored = localStorage.getItem("theme");
@@ -18,8 +45,7 @@ function initTheme() {
 }
 
 /**
- * Toggles between dark and light themes, saves the preference to localStorage,
- * and updates associated assets.
+ * Toggles between dark and light themes, saves the preference to localStorage.
  */
 function toggleTheme() {
     const current = document.documentElement.getAttribute("data-theme");
@@ -79,22 +105,46 @@ function updateIPs() {
 
 /**
  * Copies the text content of a given element to the clipboard and shows visual feedback.
+ * Uses a robust fallback for non-secure contexts.
  * @param {HTMLElement} el - The element to copy from.
  */
 async function copyToClip(el) {
     const text = el.innerText.trim();
+    const originalBg = el.style.backgroundColor;
+    const originalColor = el.style.color;
+
+    const triggerSuccess = () => {
+        el.style.backgroundColor = "var(--accent-green)";
+        el.style.color = "white";
+        setTimeout(() => {
+            el.style.backgroundColor = originalBg;
+            el.style.color = originalColor || "";
+        }, 200);
+    };
+
     try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
+        if (navigator.clipboard && window.isSecureContext) {
             await navigator.clipboard.writeText(text);
-            const originalBg = el.style.backgroundColor;
-            el.style.backgroundColor = "var(--accent-green)";
-            el.style.color = "white";
-            setTimeout(() => {
-                el.style.backgroundColor = originalBg;
-                el.style.color = "";
-            }, 200);
+            triggerSuccess();
+            return;
+        }
+
+        // Fallback for non-secure contexts (e.g., local IP HTTP access)
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand("copy");
+        textArea.remove();
+
+        if (successful) {
+            triggerSuccess();
         } else {
-            console.warn("Clipboard API unavailable");
+            console.warn("Fallback clipboard copy failed.");
         }
     } catch (err) {
         console.warn("Clipboard copy failed", err);
@@ -156,7 +206,7 @@ async function restartAuth() {
     window.vpnState = null;
     setBadge("Generating Link...", "connecting");
     document.getElementById("btn-restart-auth").classList.add("hidden");
-    await fetch("/connect", { method: "POST" });
+    await fetch("/connect", getFetchOptions("POST"));
     resetPoll(1000);
 }
 
@@ -178,7 +228,7 @@ function resetSSOButtonState(newUrl) {
 async function triggerConnect() {
     setBadge("Starting...", "connecting");
     setView("connecting");
-    await fetch("/connect", { method: "POST" });
+    await fetch("/connect", getFetchOptions("POST"));
     resetPoll(1000);
 }
 
@@ -188,7 +238,7 @@ async function triggerConnect() {
 async function triggerDisconnect() {
     if (confirm("Disconnect VPN session?")) {
         setBadge("Disconnecting...", "idle");
-        await fetch("/disconnect", { method: "POST" });
+        await fetch("/disconnect", getFetchOptions("POST"));
         resetPoll(1000);
     }
 }
@@ -199,7 +249,7 @@ async function triggerDisconnect() {
 async function confirmReset() {
     if (confirm("Force reset process? This will kill the VPN.")) {
         setBadge("Resetting...", "idle");
-        await fetch("/disconnect", { method: "POST" });
+        await fetch("/disconnect", getFetchOptions("POST"));
         window.vpnState = null;
         isRestarting = false;
     }
@@ -212,7 +262,7 @@ async function confirmReset() {
 async function handleFormSubmit(event) {
     event.preventDefault();
     const formData = new URLSearchParams(new FormData(event.target));
-    await fetch("/submit", { method: "POST", body: formData });
+    await fetch("/submit", getFetchOptions("POST", formData));
     setView("connecting");
     event.target.reset();
     resetPoll(1000);
@@ -224,7 +274,12 @@ async function handleFormSubmit(event) {
  */
 async function updateStatus() {
     try {
-        const res = await fetch("/status.json?t=" + Date.now());
+        const res = await fetch("/status.json?t=" + Date.now(), getFetchOptions("GET"));
+        if (res.status === 401) {
+            setBadge("Unauthorized (Check API Token)", "error");
+            setView("error");
+            return;
+        }
         const data = await res.json();
 
         const showGateway = data.vpn_mode === "gateway" || data.vpn_mode === "standard";
@@ -256,7 +311,7 @@ async function updateStatus() {
         }
 
         if (isRestarting) {
-            if (data.state === "error") {
+            if (data.state === "error" || data.state === "connected") {
                 isRestarting = false;
             } else if (data.state === "auth" && data.url && data.url !== lastAuthUrl) {
                 isRestarting = false;
