@@ -1,4 +1,4 @@
-// File: index.js
+// File: web/index.js
 
 /**
  * Initializes the application theme based on local storage or system preferences.

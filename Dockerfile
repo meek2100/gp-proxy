@@ -100,9 +100,9 @@ RUN setcap 'cap_net_admin,cap_net_bind_service+ep' /usr/bin/gpservice && \
 RUN mkdir -p /var/www/html /tmp/gp-logs /run/dbus && \
     chown -R gpuser:gpuser /var/www/html /tmp/gp-logs /run/dbus
 
-# Incorporate the newly separated JS and CSS files into the web root
-COPY server.py index.html index.js index.css /var/www/html/
-COPY assets/gp-proxy /var/www/html/assets/gp-proxy/
+# Copy the entire frontend web directory and the python backend
+COPY web/ /var/www/html/
+COPY server.py /var/www/html/
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
