@@ -1,4 +1,5 @@
 # File: server.py
+import hmac
 import http.server
 import json
 import logging
@@ -188,7 +189,7 @@ class Beacon(threading.Thread):
     """
     Background thread that listens for UDP broadcast packets.
     Used by the Desktop Client to auto-discover this container's IP address
-    and session token on the local network without user intervention.
+    and API parameters on the local network.
     """
 
     def __init__(self) -> None:
@@ -206,7 +207,11 @@ class Beacon(threading.Thread):
     def run(self) -> None:
         """
         Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the best IP, server port,
-        hostname, and the required API token for zero-touch authentication.
+        and hostname.
+
+        Security Note: The API token is intentionally omitted from the broadcast payload to prevent
+        cleartext sniffing on untrusted LANs. If an API_TOKEN is configured, the Host Agent must be
+        pre-provisioned to use it.
         """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
@@ -220,12 +225,11 @@ class Beacon(threading.Thread):
                             "ip": get_best_ip(),
                             "port": PORT,
                             "hostname": socket.gethostname(),
-                            "token": os.getenv("API_TOKEN", ""),
                         }
                     )
                     self.sock.sendto(response.encode("utf-8"), addr)
             except Exception as e:
-                logger.error(f"Beacon error: {e}")
+                logger.exception(f"Beacon error: {e}")
 
 
 # --- Logging Setup ---
@@ -483,6 +487,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Validates the request against the configured pre-shared API_TOKEN.
         If no API_TOKEN environment variable is set, defaults to open access,
         relying on network-level boundaries (e.g., Docker networks) for security.
+        Uses hmac.compare_digest for timing-safe string comparison.
 
         Returns:
             bool: `True` if authorized or no token is required, `False` otherwise.
@@ -493,12 +498,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not expected_token:
             return True
 
-        # If a token is configured, strictly enforce it
+        # If a token is configured, strictly enforce it safely
         auth_header = self.headers.get("Authorization", "")
-        if auth_header == f"Bearer {expected_token}":
-            return True
-
-        return False
+        return hmac.compare_digest(auth_header, f"Bearer {expected_token}")
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """
@@ -524,10 +526,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         super().end_headers()
 
-    def do_GET(self) -> None:
+    def do_GET(self) -> None:  # noqa: C901
         """
         Handle incoming HTTP GET requests for status, log download, and static file serving.
         """
+        # Security Guard: Explicitly block serving python source files if present
+        if self.path.endswith(".py"):
+            self.send_error(403, "Forbidden")
+            return
+
         if self.path.startswith("/status.json"):
             if not self._is_authorized():
                 self.send_error(401, "Unauthorized")

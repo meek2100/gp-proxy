@@ -61,8 +61,31 @@ impl ProxyConfig {
         if self.token.is_empty() {
             self.base_url.clone()
         } else {
-            format!("{}/?token={}", self.base_url, self.token)
+            format!("{}/?token={}", self.base_url, encode_token(&self.token))
         }
+    }
+}
+
+/// Helper function to safely percent-encode the token without requiring additional dependencies
+fn encode_token(token: &str) -> String {
+    token
+        .as_bytes()
+        .iter()
+        .map(|&b| match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
+
+/// Helper function to uniformly inject the Authorization header if a token is present
+fn with_auth<T>(req: ureq::RequestBuilder<T>, token: &str) -> ureq::RequestBuilder<T> {
+    if token.is_empty() {
+        req
+    } else {
+        req.header("Authorization", &format!("Bearer {}", token))
     }
 }
 
@@ -126,6 +149,9 @@ fn run_dashboard() -> Result<()> {
         }
     };
 
+    let agent = get_agent();
+    let fast_agent = get_fast_agent();
+
     loop {
         clear_screen();
         print_header();
@@ -137,7 +163,7 @@ fn run_dashboard() -> Result<()> {
             }
         }
 
-        let status = fetch_status(&config);
+        let status = fetch_status(&config, &fast_agent);
 
         match &status {
             Ok(s) => {
@@ -200,11 +226,8 @@ fn run_dashboard() -> Result<()> {
                 if let Ok(s) = &status {
                     if s.state == "connected" {
                         println!("Disconnecting...");
-                        let mut req = get_agent().post(&format!("{}/disconnect", config.base_url));
-                        if !config.token.is_empty() {
-                            req = req.header("Authorization", &format!("Bearer {}", config.token));
-                        }
-                        if let Err(e) = req.send_empty() {
+                        let req = agent.post(&format!("{}/disconnect", config.base_url));
+                        if let Err(e) = with_auth(req, &config.token).send_empty() {
                             println!("Error disconnecting: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
@@ -212,17 +235,14 @@ fn run_dashboard() -> Result<()> {
                         }
                     } else {
                         println!("Initiating Connection...");
-                        let mut req = get_agent().post(&format!("{}/connect", config.base_url));
-                        if !config.token.is_empty() {
-                            req = req.header("Authorization", &format!("Bearer {}", config.token));
-                        }
-                        if let Err(e) = req.send_empty() {
+                        let req = agent.post(&format!("{}/connect", config.base_url));
+                        if let Err(e) = with_auth(req, &config.token).send_empty() {
                             println!("Error initiating connection: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
                             println!("Launching Browser for Auth...");
                             let _ = webbrowser::open(&config.browser_url());
-                            poll_for_success(&config);
+                            poll_for_success(&config, &fast_agent);
                         }
                     }
                 }
@@ -244,12 +264,12 @@ fn run_dashboard() -> Result<()> {
 }
 
 /// Polls the proxy server's status endpoint using `get_fast_agent` until connected, error, or timeout.
-fn poll_for_success(config: &ProxyConfig) {
+fn poll_for_success(config: &ProxyConfig, agent: &ureq::Agent) {
     println!("\nWaiting for connection (Press Ctrl+C to cancel)...");
     let start = Instant::now();
 
     while start.elapsed().as_secs() < 60 {
-        if let Ok(s) = fetch_status(config) {
+        if let Ok(s) = fetch_status(config, agent) {
             if s.state == "connected" {
                 println!("\n[SUCCESS] VPN is Connected.");
                 println!("You may close this window or return to menu.");
@@ -274,12 +294,12 @@ fn poll_for_success(config: &ProxyConfig) {
 }
 
 /// Fetches the proxy server's status using a fast-timeout HTTP agent.
-fn fetch_status(config: &ProxyConfig) -> Result<ServerStatus> {
-    let mut req = get_fast_agent().get(&format!("{}/status.json", config.base_url));
-    if !config.token.is_empty() {
-        req = req.header("Authorization", &format!("Bearer {}", config.token));
-    }
-    let resp: ServerStatus = req.call()?.body_mut().read_json()?;
+fn fetch_status(config: &ProxyConfig, agent: &ureq::Agent) -> Result<ServerStatus> {
+    let req = agent.get(&format!("{}/status.json", config.base_url));
+    let resp: ServerStatus = with_auth(req, &config.token)
+        .call()?
+        .body_mut()
+        .read_json()?;
     Ok(resp)
 }
 
@@ -381,7 +401,9 @@ fn run_setup_wizard() -> Result<()> {
     println!("\nSetup Complete!");
     println!("Launching Web Dashboard...");
     let _ = webbrowser::open(&config.browser_url());
-    poll_for_success(&config);
+
+    let fast_agent = get_fast_agent();
+    poll_for_success(&config, &fast_agent);
 
     Ok(())
 }
@@ -390,15 +412,12 @@ fn handle_link(url: &str) -> Result<()> {
     let config = load_config()?;
     let target_endpoint = format!("{}/submit", config.base_url.trim_end_matches('/'));
 
-    let mut req = get_agent()
+    let agent = get_agent();
+    let req = agent
         .post(&target_endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded");
 
-    if !config.token.is_empty() {
-        req = req.header("Authorization", &format!("Bearer {}", config.token));
-    }
-
-    let resp = req.send_form([("callback_url", url)])?;
+    let resp = with_auth(req, &config.token).send_form([("callback_url", url)])?;
 
     if resp.status() != 200 {
         anyhow::bail!("Server Error: {}", resp.status());

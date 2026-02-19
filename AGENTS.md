@@ -26,6 +26,8 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
 **Location:** Inside Docker (`server.py`, `entrypoint.sh`)
 **Role:** State Management & Networking
 
+- **Source Code Isolation:** Python backend scripts (`server.py`, `control_listener.py`, `stdin_proxy.py`) MUST reside in `/opt/gp-proxy/` and NOT in the `/var/www/html/` web root. This prevents accidental source code exposure via the `http.server.SimpleHTTPRequestHandler`.
+- **Timing-Safe Authentication:** Any token comparison logic (such as checking `API_TOKEN` in HTTP headers) must strictly utilize `hmac.compare_digest()` to prevent timing attacks.
 - **Web Server (`server.py`):**
     - Runs on Port 8001.
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
@@ -88,6 +90,8 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 - **Status Polling JSON:** The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. The Rust client parses this field as `Option<String>`, and surfacing the actual API response via `.as_deref().unwrap_or(...)` prevents silent failure masking.
 - **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are compared against stringified array structures `JSON.stringify()` to ensure they are only fully rebuilt when types or options fundamentally change; otherwise, only text labels are updated.
+- **Frontend Network Resilience:** All UI actions that invoke API endpoints (`triggerConnect`, `handleFormSubmit`, etc.) must be wrapped in `try/catch/finally` blocks to ensure the frontend polling loop (`resetPoll`) resurrects if a network exception occurs. This prevents the UI from becoming permanently locked in a 'loading' state.
+- **Rust Connection Pooling:** The Host Agent must utilize a single, globally instantiated `ureq::Agent` for standard connections and a separate fast `ureq::Agent` for status polling. Do not instantiate new HTTP agents inside loops, as this discards TCP connection pooling and exhausts system ports.
 - **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. In addition, 401 exceptions forcefully command `resetPoll(5000)` to ensure background loop resurrection upon credential fixing.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`).
 - **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic.
@@ -100,6 +104,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation.
 - **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows.
 - **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes.
+- **Shell Injection Boundaries:** `eval` is utilized in `entrypoint.sh` strictly to parse quoted string flags passed dynamically via the `GP_ARGS` environment variable. This constitutes a trust boundary; the operator is responsible for sanitizing `GP_ARGS` at the orchestrator level.
 
 ## Handling Callbacks (`globalprotect://`)
 

@@ -349,7 +349,12 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
         log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
         IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
         for subnet in "${SUBNETS[@]}"; do
-            iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
+            # Secure CIDR Validation
+            if [[ "$subnet" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+                iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
+            else
+                log "ERROR" "Invalid subnet CIDR format ignored: $subnet"
+            fi
         done
         iptables -A FORWARD -o tun0 -j DROP
     else
@@ -380,6 +385,11 @@ chmod 644 "$MODE_FILE"
 log "INFO" "Starting Services..."
 dns_watchdog &
 
+# Setup persistent control pipe to eliminate Python interpreter startup overhead in the polling loop
+mkfifo "$RUNTIME_DIR/gp_control_pipe"
+exec 3<>"$RUNTIME_DIR/gp_control_pipe"
+chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
+
 if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     gost_args="-L=socks5://:1080?udp=true"
     if [[ -n "$GOST_AUTH" ]]; then
@@ -390,7 +400,10 @@ if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
 fi
 
 runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" \
-    python3 -u /var/www/html/server.py >>"$SERVICE_LOG" 2>&1 &
+    python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
+
+# Start persistent control listener directly bound to the pipe descriptor
+runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
 
 tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
@@ -401,8 +414,9 @@ while true; do
     check_services
     check_log_size
 
-    # Listen on local TCP socket for control commands (2-second timeout)
-    CMD=$(python3 /var/www/html/control_listener.py 2>/dev/null || true)
+    # Listen on local TCP socket via persistent background pipe (2-second timeout)
+    CMD=""
+    read -r -t 2 CMD <&3 || true
     if [[ "$CMD" == "START" ]]; then
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
@@ -444,7 +458,9 @@ while true; do
             [[ -n \"$VPN_OS_VERSION\" ]]     && args+=(--os-version \"$VPN_OS_VERSION\")
             [[ -n \"$VPN_CLIENT_VERSION\" ]] && args+=(--client-version \"$VPN_CLIENT_VERSION\")
 
-            # Safely evaluate string to handle quoted CLI flags like --os \"Windows 10\"
+            # TRUST BOUNDARY: GP_ARGS is operator-controlled via environment variable.
+            # eval is required here to safely parse quoted shell arguments (e.g., --os \"Windows 10\").
+            # Ensure GP_ARGS is properly sanitized within your deployment orchestrator.
             if [[ -n \"\$GP_ARGS\" ]]; then
                 eval \"set -- \$GP_ARGS\"
                 for arg in \"\$@\"; do
@@ -455,7 +471,7 @@ while true; do
             SAFE_CMD=\$(printf \"%q \" \"\${args[@]}\")
 
             echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"$SERVICE_LOG\"
-            python3 /var/www/html/stdin_proxy.py | script -q -c \"\$SAFE_CMD\" /dev/null >> \"$CLIENT_LOG\" 2>&1
+            python3 /opt/gp-proxy/stdin_proxy.py | script -q -c \"\$SAFE_CMD\" /dev/null >> \"$CLIENT_LOG\" 2>&1
         "
 
         # 3. Cleanup after disconnect

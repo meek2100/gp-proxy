@@ -18,7 +18,6 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Call the reusable linting workflow
   lint:
     uses: ./.github/workflows/lint.yml
 

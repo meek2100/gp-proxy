@@ -212,7 +212,7 @@
                                         onclick="copyToClip(this)"
                                         aria-label="Copy Port"
                                     >
-                                        1080
+                                        <span id="socks-port">1080</span>
                                         <svg
                                             class="copy-icon"
                                             viewBox="0 0 24 24"
@@ -296,7 +296,7 @@
                                         onclick="copyToClip(this)"
                                         aria-label="Copy Subnet Mask"
                                     >
-                                        255.255.255.0
+                                        <span id="gateway-mask">255.255.255.0</span>
                                         <svg
                                             class="copy-icon"
                                             viewBox="0 0 24 24"
@@ -348,7 +348,7 @@
                 </div>
 
                 <div id="debug-section" class="hidden">
-                    <a href="/download_logs" class="debug-toggle">Download Logs</a>
+                    <a href="#" class="debug-toggle" onclick="downloadLogs(event)">Download Logs</a>
                     <button
                         class="debug-toggle"
                         onclick="document.getElementById('debug-log').classList.toggle('hidden')"

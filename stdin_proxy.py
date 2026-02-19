@@ -29,7 +29,7 @@ def main() -> None:
                     data: bytes = c.recv(4096)
                     if data:
                         sys.stdout.buffer.write(data)
-                        sys.stdout.flush()
+                        sys.stdout.buffer.flush()
             except Exception:
                 # Exit cleanly if the process is terminated or the pipe breaks
                 break

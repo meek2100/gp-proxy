@@ -1,14 +1,21 @@
 // File: web/index.js
 
 // --- Authentication Token Handling ---
-// Automatically extract token from URL if provided (e.g. ?token=secret) and store securely.
+// Automatically extract token from URL if provided (e.g. ?token=secret) and store.
+// Syncs across tabs automatically via the storage event to maintain valid session states.
 const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get("token");
 if (urlToken) {
     localStorage.setItem("api_token", urlToken);
     window.history.replaceState({}, document.title, window.location.pathname);
 }
-const apiToken = localStorage.getItem("api_token");
+let apiToken = localStorage.getItem("api_token");
+
+window.addEventListener("storage", (e) => {
+    if (e.key === "api_token") {
+        apiToken = e.newValue;
+    }
+});
 
 /**
  * Helper to construct fetch options incorporating the Authorization header if required.
@@ -84,10 +91,10 @@ let isRestarting = false;
  * @param {string} tab - The tab to activate ('socks' or 'gateway').
  */
 function switchTab(tab) {
-    document.querySelectorAll(".conn-tab-btn").forEach((b) => b.classList.remove("active"));
-
     // DOM selection via explicit datasets prevents inner-text language/localization bugs
     const btns = document.querySelectorAll(".conn-tab-btn");
+    btns.forEach((b) => b.classList.remove("active"));
+
     btns.forEach((b) => {
         if (b.dataset.tab === tab) {
             b.classList.add("active");
@@ -228,8 +235,14 @@ async function restartAuth() {
     window.vpnState = null;
     setBadge("Generating Link...", "connecting");
     document.getElementById("btn-restart-auth").classList.add("hidden");
-    await fetch("/connect", getFetchOptions("POST"));
-    resetPoll(1000);
+
+    try {
+        await fetch("/connect", getFetchOptions("POST"));
+    } catch (e) {
+        console.error("Failed to restart auth:", e);
+    } finally {
+        resetPoll(1000);
+    }
 }
 
 /**
@@ -258,8 +271,13 @@ async function triggerConnect() {
         window.expectedNextState = null;
     }, 15000);
 
-    await fetch("/connect", getFetchOptions("POST"));
-    resetPoll(1000);
+    try {
+        await fetch("/connect", getFetchOptions("POST"));
+    } catch (e) {
+        console.error("Connect fetch failed:", e);
+    } finally {
+        resetPoll(1000);
+    }
 }
 
 /**
@@ -276,8 +294,13 @@ async function triggerDisconnect() {
             window.expectedNextState = null;
         }, 15000);
 
-        await fetch("/disconnect", getFetchOptions("POST"));
-        resetPoll(1000);
+        try {
+            await fetch("/disconnect", getFetchOptions("POST"));
+        } catch (e) {
+            console.error("Disconnect fetch failed:", e);
+        } finally {
+            resetPoll(1000);
+        }
     }
 }
 
@@ -295,9 +318,14 @@ async function confirmReset() {
             window.expectedNextState = null;
         }, 15000);
 
-        await fetch("/disconnect", getFetchOptions("POST"));
-        window.vpnState = null;
-        resetPoll(1000);
+        try {
+            await fetch("/disconnect", getFetchOptions("POST"));
+        } catch (e) {
+            console.error("Force reset fetch failed:", e);
+        } finally {
+            window.vpnState = null;
+            resetPoll(1000);
+        }
     }
 }
 
@@ -317,12 +345,45 @@ async function handleFormSubmit(event) {
         window.expectedNextState = null;
     }, 15000);
 
-    await fetch("/submit", getFetchOptions("POST", formData));
-    setView("connecting");
-    setBadge("CONNECTING...", "connecting");
-    event.target.reset();
-    resetPoll(1500);
+    try {
+        await fetch("/submit", getFetchOptions("POST", formData));
+        setView("connecting");
+        setBadge("CONNECTING...", "connecting");
+        event.target.reset();
+    } catch (e) {
+        console.error("Form submit failed:", e);
+    } finally {
+        resetPoll(1500);
+    }
 }
+
+/**
+ * Fetches the VPN logs through the authorized JS fetch wrapper instead of a static link.
+ * @param {Event} event - The click event.
+ */
+async function downloadLogs(event) {
+    if (event) event.preventDefault();
+    try {
+        const res = await fetch("/download_logs", getFetchOptions("GET"));
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.style.display = "none";
+        a.href = url;
+        a.download = "vpn_full_debug.log";
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+    } catch (e) {
+        console.error("Failed to download logs:", e);
+        alert("Failed to download logs. Ensure debug mode is enabled and you are authorized.");
+    }
+}
+window.downloadLogs = downloadLogs;
 
 /**
  * Periodically fetches and updates the frontend state from the backend.
@@ -332,9 +393,13 @@ async function handleFormSubmit(event) {
 async function updateStatus() {
     try {
         const res = await fetch("/status.json?t=" + Date.now(), getFetchOptions("GET"));
-        if (res.status === 401) {
-            setBadge("Unauthorized (Check API Token)", "error");
-            setView("error");
+        if (!res.ok) {
+            if (res.status === 401) {
+                setBadge("Unauthorized (Check API Token)", "error");
+                setView("error");
+            } else {
+                throw new Error(`HTTP Error: ${res.status}`);
+            }
             resetPoll(5000); // Ensure polling resumes so corrections resolve naturally
             return;
         }
@@ -362,7 +427,13 @@ async function updateStatus() {
         if (!showGateway) secGateway.classList.add("hidden");
         else secGateway.classList.remove("hidden");
 
-        // Dynamically toggle the SOCKS5 Auth hint based on server-side configuration
+        // Dynamically toggle the UI labels
+        const socksPortEl = document.getElementById("socks-port");
+        if (socksPortEl) socksPortEl.innerText = "1080";
+
+        const gatewayMaskEl = document.getElementById("gateway-mask");
+        if (gatewayMaskEl) gatewayMaskEl.innerText = "255.255.255.0";
+
         const authTextEl = document.getElementById("socks-auth-text");
         if (authTextEl) {
             authTextEl.innerText = data.socks_auth_enabled ? "See Env Config" : "None (Network Allowed)";
@@ -478,6 +549,7 @@ async function updateStatus() {
         const newDelay = fastStates.includes(data.state) ? 1000 : 5000;
         resetPoll(newDelay);
     } catch (e) {
+        console.error("Status update failed:", e);
         resetPoll(5000);
     }
 }
@@ -494,7 +566,7 @@ function resetPoll(delay) {
 // Initialization
 initTheme();
 updateIPs();
-updateStatus();
+updateStatus().catch((e) => console.error("Initial status fetch failed:", e));
 
 // Responsive handling
 window.addEventListener("resize", () => {
