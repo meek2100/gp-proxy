@@ -28,6 +28,7 @@ get_env_value() {
 }
 
 # Helper: Strip quotes and trim whitespace
+# Warning: Uses xargs, which will strip inner quotes.
 clean_val() {
     local val="$1"
     val="${val%\"}"
@@ -35,6 +36,17 @@ clean_val() {
     val="${val%\'}"
     val="${val#\'}"
     echo "$val" | xargs
+}
+
+# Helper: Strip outer quotes and trim leading/trailing whitespace ONLY
+# Preserves inner quotes required for 'eval' parsing (e.g., GP_ARGS).
+clean_val_preserve_inner() {
+    local val="$1"
+    val="${val%\"}"
+    val="${val#\"}"
+    val="${val%\'}"
+    val="${val#\'}"
+    echo "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
 # --- Resolve & Normalize Variables ---
@@ -71,7 +83,7 @@ export DNS_SERVERS
 
 # 6. GP_ARGS (Custom)
 RAW_GP_ARGS=$(get_env_value "GP_ARGS" "gp_args")
-GP_ARGS=$(clean_val "$RAW_GP_ARGS")
+GP_ARGS=$(clean_val_preserve_inner "$RAW_GP_ARGS")
 export GP_ARGS
 
 # 7. TIMEZONE
