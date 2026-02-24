@@ -15,8 +15,8 @@ services:
       - API_TOKEN=${API_TOKEN:-}
       - TZ=${TZ:-UTC}
       # PUID/PGID matching the host user prevents permission issues with mounted volumes
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
     networks:
       # If using gateway mode, you must connect this container to a macvlan network
       # to obtain a routable IP on your LAN.

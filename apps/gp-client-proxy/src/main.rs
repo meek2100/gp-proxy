@@ -418,9 +418,7 @@ fn handle_link(url: &str) -> Result<()> {
     let target_endpoint = format!("{}/submit", config.base_url.trim_end_matches('/'));
 
     let agent = get_agent();
-    let req = agent
-        .post(&target_endpoint)
-        .header("Content-Type", "application/x-www-form-urlencoded");
+    let req = agent.post(&target_endpoint);
 
     let resp = with_auth(req, &config.token).send_form([("callback_url", url)])?;
 
@@ -484,9 +482,9 @@ fn load_config() -> Result<ProxyConfig> {
 
 fn save_config(config: &ProxyConfig) -> Result<()> {
     let content = if config.token.is_empty() {
-        config.base_url.clone()
+        format!("{}\n", config.base_url)
     } else {
-        format!("{}\n{}", config.base_url, config.token)
+        format!("{}\n{}\n", config.base_url, config.token)
     };
     fs::write(get_config_path()?, content)?;
     Ok(())

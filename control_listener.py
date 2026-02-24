@@ -36,9 +36,13 @@ def main() -> None:
                         with c:
                             data: bytes = c.recv(1024)
                             if data:
-                                # Use sys.stdout to avoid Ruff T201 'print' violations
-                                sys.stdout.write(data.decode("utf-8").strip() + "\n")
-                                sys.stdout.flush()
+                                try:
+                                    # Use sys.stdout to avoid Ruff T201 'print' violations
+                                    sys.stdout.write(data.decode("utf-8").strip() + "\n")
+                                    sys.stdout.flush()
+                                except UnicodeDecodeError as exc:
+                                    sys.stderr.write(f"[control_listener] Malformed input ignored: {exc}\n")
+                                    sys.stderr.flush()
                 except OSError as exc:
                     # Log transient socket errors and continue the daemon loop
                     sys.stderr.write(f"[control_listener] Socket error: {exc}\n")
@@ -49,7 +53,7 @@ def main() -> None:
                 except SystemExit:
                     # Honor intentional shutdowns
                     sys.exit(0)
-    except Exception as e:
+    except OSError as e:
         # Only crash on unrecoverable initialization errors
         sys.stderr.write(f"[control_listener] Fatal error: {e}\n")
         sys.exit(1)

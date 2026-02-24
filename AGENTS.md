@@ -33,8 +33,8 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
-    - **Configurable Zero-Touch Security:** The server evaluates the `API_TOKEN` environment variable. If an `API_TOKEN` is provided, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers and enforce a **fail-closed** zero-trust model. If omitted, the server defaults to open access, relying on network-level boundaries (e.g., Docker networks) for security.
-    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port to the Host Agent. For security against LAN sniffing, the `SESSION_TOKEN` is strictly omitted. If `API_TOKEN` is enforced, the operator must pre-provision the Host Agent with the token.
+    - **Configurable Zero-Touch Security:** The server evaluates the `API_TOKEN` environment variable. If an `API_TOKEN` is provided, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers and enforce a **fail-closed** zero-trust model. If omitted, `entrypoint.sh` enforces a secure-by-default posture by auto-generating a random 16-byte token and printing it to the container logs.
+    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port to the Host Agent. For security against LAN sniffing, the `SESSION_TOKEN` is strictly omitted. Since `API_TOKEN` is enforced, the operator must pre-provision the Host Agent with the token.
 
 ### 2. The Host Agent (The Manager)
 
@@ -46,7 +46,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 1.  **Dashboard Mode (Interactive):**
     - Launches when the user runs the executable.
-    - **Auto-Discovery:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically. Prompts the user to manually enter the `API_TOKEN` if required by the container environment.
+    - **Auto-Discovery:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically. Prompts the user to manually enter the `API_TOKEN` required by the container environment.
     - **Management:** Displays real-time status (polled from `status.json`) and allows Connect/Disconnect actions.
     - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required, injecting the token via `?token=...`.
     - **Connection Info:** Displays the calculated Gateway IP and SOCKS port when connected.

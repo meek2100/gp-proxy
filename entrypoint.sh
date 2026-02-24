@@ -146,6 +146,16 @@ RAW_GOST_AUTH=$(get_env_value "GOST_AUTH" "gost_auth")
 GOST_AUTH=$(clean_val "$RAW_GOST_AUTH")
 export GOST_AUTH
 
+# 17. API Token (Secure By Default)
+RAW_API_TOKEN=$(get_env_value "API_TOKEN" "api_token")
+API_TOKEN=$(clean_val "$RAW_API_TOKEN")
+IS_GENERATED_TOKEN=false
+if [[ -z "$API_TOKEN" ]]; then
+    API_TOKEN=$(openssl rand -hex 16)
+    IS_GENERATED_TOKEN=true
+fi
+export API_TOKEN
+
 # ==============================================================================
 # 2. RUNTIME SETUP
 # ==============================================================================
@@ -204,6 +214,15 @@ if [[ -n "$VPN_GATEWAY" ]]; then
 fi
 if [[ -n "$DNS_SERVERS" ]]; then
     log "INFO" "Custom DNS:  $DNS_SERVERS"
+fi
+
+if [[ "$IS_GENERATED_TOKEN" == true ]]; then
+    log "WARN" "------------------------------------------"
+    log "WARN" " NO API_TOKEN PROVIDED IN ENVIRONMENT!    "
+    log "WARN" " SECURE-BY-DEFAULT POSTURE IS ACTIVE.     "
+    log "WARN" " Auto-generated Token: $API_TOKEN"
+else
+    log "INFO" "API Token:   [Provided via Environment]"
 fi
 log "INFO" "------------------------------------------"
 
@@ -409,13 +428,19 @@ chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
 if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     gost_args="-L=socks5://:1080?udp=true"
     if [[ -n "$GOST_AUTH" ]]; then
-        log "INFO" "SOCKS5 Authentication Enabled."
-        gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
+        if [[ "$GOST_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
+            log "INFO" "SOCKS5 Authentication Enabled."
+            gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
+        else
+            log "ERROR" "GOST_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
+            GOST_AUTH=""
+        fi
     fi
     runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
 fi
 
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" \
+# Ensure API_TOKEN and GOST_AUTH states are definitively passed down to the server context
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" GOST_AUTH="$GOST_AUTH" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
 # Start persistent control listener directly bound to the pipe descriptor
@@ -478,6 +503,7 @@ while true; do
             # eval is required here to safely parse quoted shell arguments (e.g., --os \"Windows 10\").
             # Ensure GP_ARGS is properly sanitized within your deployment orchestrator.
             if [[ -n \"\$GP_ARGS\" ]]; then
+                log \"DEBUG\" \"raw GP_ARGS: \$GP_ARGS\"
                 eval \"set -- \$GP_ARGS\"
                 for arg in \"\$@\"; do
                     args+=(\"\$arg\")
