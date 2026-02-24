@@ -98,7 +98,7 @@ SERVER:    Online ([http://192.168.1.50:8001](http://192.168.1.50:8001))
 STATUS:    CONNECTED
 MODE:      STANDARD
 
-[!] CONNECTION DETAILS
+[i] CONNECTION DETAILS
 SOCKS5 Proxy:  192.168.1.50:1080 (No Auth)
 Gateway IP:    192.168.1.50
 DNS Server:    192.168.1.50
@@ -127,7 +127,11 @@ DNS Server:    192.168.1.50
 ## 🔒 Security Considerations
 
 **Token Storage in the Desktop App:**
-If you configure an `API_TOKEN` to lock down your Docker container, the Desktop Companion App (`gp-client-proxy`) will prompt you for this token during setup. The app stores the proxy URL and your session token in plaintext within the OS's standard user configuration directory (e.g., `%APPDATA%\gpproxy\client\proxy_url.txt` on Windows, or `~/.config/gpproxy/client/proxy_url.txt` on macOS/Linux).
+If you configure an `API_TOKEN` to lock down your Docker container, the Desktop Companion App (`gp-client-proxy`) will prompt you for this token during setup. The app stores the proxy URL and your session token in plaintext within the OS's standard user configuration directory:
+
+- **Windows:** `%APPDATA%\gpproxy\client\proxy_url.txt`
+- **macOS:** `~/Library/Application Support/com.gpproxy.client/proxy_url.txt`
+- **Linux:** `~/.config/gpproxy/client/proxy_url.txt`
 
 It relies on the inherent OS-level file permissions to protect this file from other users on the system. Security-conscious users operating in shared environments should ensure appropriate directory permissions are set, or provide the token dynamically via environment variables if strict zero-footprint operation is required.
 

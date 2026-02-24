@@ -26,20 +26,33 @@ def main() -> None:
             s.listen(1)
 
             while True:
-                # Non-blocking wait for 2 seconds to ensure interruptibility during teardown
-                r: list[socket.socket]
-                r, _, _ = select.select([s], [], [], 2.0)
-                if r:
-                    c: socket.socket
-                    c, _ = s.accept()
-                    with c:
-                        data: bytes = c.recv(1024)
-                        if data:
-                            # Use sys.stdout to avoid Ruff T201 'print' violations
-                            sys.stdout.write(data.decode("utf-8").strip() + "\n")
-                            sys.stdout.flush()
-    except Exception:
-        sys.exit(0)
+                try:
+                    # Non-blocking wait for 2 seconds to ensure interruptibility during teardown
+                    r: list[socket.socket]
+                    r, _, _ = select.select([s], [], [], 2.0)
+                    if r:
+                        c: socket.socket
+                        c, _ = s.accept()
+                        with c:
+                            data: bytes = c.recv(1024)
+                            if data:
+                                # Use sys.stdout to avoid Ruff T201 'print' violations
+                                sys.stdout.write(data.decode("utf-8").strip() + "\n")
+                                sys.stdout.flush()
+                except OSError as exc:
+                    # Log transient socket errors and continue the daemon loop
+                    sys.stderr.write(f"[control_listener] Socket error: {exc}\n")
+                    sys.stderr.flush()
+                except KeyboardInterrupt:
+                    # Honor intentional shutdowns
+                    sys.exit(0)
+                except SystemExit:
+                    # Honor intentional shutdowns
+                    sys.exit(0)
+    except Exception as e:
+        # Only crash on unrecoverable initialization errors
+        sys.stderr.write(f"[control_listener] Fatal error: {e}\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

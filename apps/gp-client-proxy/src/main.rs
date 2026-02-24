@@ -39,6 +39,9 @@ struct ServerStatus {
     // Properly deserialized as null when no error is present due to Python server returning `None` instead of `""`
     #[allow(dead_code)]
     error: Option<String>,
+
+    #[serde(default)]
+    socks_auth_enabled: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -180,7 +183,12 @@ fn run_dashboard() -> Result<()> {
                         .unwrap_or("Unknown");
 
                     if s.vpn_mode == "socks" || s.vpn_mode == "standard" {
-                        println!("SOCKS5 Proxy:  {}:1080 (No Auth)", host_ip);
+                        let auth_str = if s.socks_auth_enabled {
+                            "(Auth Enabled)"
+                        } else {
+                            "(No Auth)"
+                        };
+                        println!("SOCKS5 Proxy:  {}:1080 {}", host_ip, auth_str);
                     }
                     if s.vpn_mode == "gateway" || s.vpn_mode == "standard" {
                         println!("Gateway IP:    {}", host_ip);
