@@ -56,6 +56,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          # TODO: For strict production releases, restrict pushing to tag events only.
+          # Replace `push: true` with the following line when ready to lock down branch pushes:
+          # push: ${{ github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

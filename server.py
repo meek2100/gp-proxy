@@ -1,4 +1,5 @@
 # File: server.py
+import hashlib
 import hmac
 import http.server
 import json
@@ -116,39 +117,16 @@ class StateManager:
         Returns:
             tuple[LogAnalysis, str]: A tuple containing the log analysis dictionary and the raw log text.
         """
+        # Phase 1: Rapid state checks inside the lock
         with self._lock:
             try:
                 st = log_path.stat()
                 if st.st_mtime == self._log_mtime and st.st_size == self._log_size:
                     return self._cached_analysis, self._cached_log
 
-                # Update cache signature
-                self._log_mtime = st.st_mtime
-                self._log_size = st.st_size
-
-                file_size: int = st.st_size
-                # Open in binary mode to prevent UTF-8 boundary splitting when seeking
-                with open(log_path, "rb") as f:
-                    if file_size > 65536:
-                        f.seek(file_size - 65536)
-                        f.readline()  # Align to the next newline boundary
-
-                    data: str = f.read().decode("utf-8", errors="replace")
-                    lines: list[str] = data.splitlines(keepends=True)
-                    if lines and not lines[-1].endswith("\n"):
-                        lines.pop()
-
-                    lines = lines[-300:]
-                    log_content = "".join(lines)
-
-                    # Analyze the full log buffer to ensure rapid state transitions aren't swallowed
-                    clean_lines: list[str] = [strip_ansi(line).strip() for line in lines]
-
-                    analysis = analyze_log_lines(clean_lines, log_content)
-
-                    self._cached_analysis = analysis
-                    self._cached_log = log_content
-                    return analysis, log_content
+                # Capture signature parameters for validation post-read
+                current_mtime = st.st_mtime
+                current_size = st.st_size
 
             except FileNotFoundError:
                 # Log might have rotated or cleared; return safe default
@@ -161,8 +139,44 @@ class StateManager:
                     "sso_url": "",
                 }, ""
             except Exception as e:
-                logger.exception(f"Log parse error: {e}")
+                logger.exception(f"Log stat error: {e}")
                 return self._cached_analysis, self._cached_log
+
+        # Phase 2: Perform heavy disk I/O and text processing outside the lock to prevent polling bottlenecks
+        try:
+            with open(log_path, "rb") as f:
+                if current_size > 65536:
+                    f.seek(current_size - 65536)
+                    f.readline()  # Align to the next newline boundary
+
+                data: str = f.read().decode("utf-8", errors="replace")
+                lines: list[str] = data.splitlines(keepends=True)
+                if lines and not lines[-1].endswith("\n"):
+                    lines.pop()
+
+                lines = lines[-300:]
+                log_content = "".join(lines)
+
+                clean_lines: list[str] = [strip_ansi(line).strip() for line in lines]
+                analysis = analyze_log_lines(clean_lines, log_content)
+        except Exception as e:
+            logger.exception(f"Log parse error: {e}")
+            with self._lock:
+                return self._cached_analysis, self._cached_log
+
+        # Phase 3: Re-acquire lock to update the shared state
+        with self._lock:
+            try:
+                # Validate the file didn't shift beneath us to close the TOCTOU window
+                st_verify = log_path.stat()
+                if st_verify.st_mtime == current_mtime and st_verify.st_size == current_size:
+                    self._log_mtime = current_mtime
+                    self._log_size = current_size
+                    self._cached_analysis = analysis
+                    self._cached_log = log_content
+            except FileNotFoundError:
+                pass
+            return self._cached_analysis, self._cached_log
 
 
 state_manager = StateManager()
@@ -189,7 +203,7 @@ class Beacon(threading.Thread):
     """
     Background thread that listens for UDP broadcast packets.
     Used by the Desktop Client to auto-discover this container's IP address
-    and API parameters on the local network.
+    and session parameters on the local network.
     """
 
     def __init__(self) -> None:
@@ -229,7 +243,7 @@ class Beacon(threading.Thread):
                     )
                     self.sock.sendto(response.encode("utf-8"), addr)
             except Exception as e:
-                logger.exception(f"Beacon error: {e}")
+                logger.error(f"Beacon error: {e}")
 
 
 # --- Logging Setup ---
@@ -680,6 +694,20 @@ if __name__ == "__main__":
             os.chdir(Path(__file__).parent)
 
     init_runtime_dir()
+
+    # Dynamic cache busting for the frontend GUI.
+    # Modifying index.html directly guarantees browsers pull fresh immutable assets exactly on new container releases.
+    try:
+        index_path = Path("index.html")
+        if index_path.exists():
+            build_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+            content = index_path.read_text("utf-8")
+            content = re.sub(r'href="index\.css(\?v=[a-zA-Z0-9]+)?"', f'href="index.css?v={build_hash}"', content)
+            content = re.sub(r'src="index\.js(\?v=[a-zA-Z0-9]+)?"', f'src="index.js?v={build_hash}"', content)
+            index_path.write_text(content, "utf-8")
+            logger.info(f"Injected cache-busting hash {build_hash} into index.html")
+    except Exception as e:
+        logger.warning(f"Failed to apply cache busting to HTML: {e}")
 
     beacon: Beacon = Beacon()
     beacon.start()

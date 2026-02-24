@@ -45,8 +45,6 @@ struct ServerStatus {
 struct DiscoveryResponse {
     ip: String,
     port: u16,
-    #[serde(default)]
-    token: String, // Zero-touch session token for API authorization
 }
 
 #[derive(Clone, Debug)]
@@ -323,13 +321,11 @@ fn run_setup_wizard() -> Result<()> {
     println!("Scanning network for GP Proxy Server...");
 
     let mut found_url = String::new();
-    let mut found_token = String::new();
 
     match try_discover() {
         Ok(resp) => {
             println!("[SUCCESS] FOUND SERVER: {}:{}", resp.ip, resp.port);
             found_url = format!("http://{}:{}", resp.ip, resp.port);
-            found_token = resp.token;
         }
         Err(_) => {
             println!("[ERROR] No server found automatically.");
@@ -374,12 +370,13 @@ fn run_setup_wizard() -> Result<()> {
         }
     };
 
-    // If the user manually inputs an IP that differs, we discard the discovered token
-    let final_token = if input.is_empty() {
-        found_token
-    } else {
-        String::new()
-    };
+    println!("\nDoes the server require an API Token?");
+    println!("(Leave blank if your container is deployed for open LAN access)");
+    print!("Token > ");
+    io::stdout().flush()?;
+    let mut token_input = String::new();
+    io::stdin().read_line(&mut token_input)?;
+    let final_token = token_input.trim().to_string();
 
     let config = ProxyConfig {
         base_url: final_url,

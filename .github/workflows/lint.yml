@@ -48,7 +48,7 @@ jobs:
             pre-commit-${{ runner.os }}-
 
       - name: Install pre-commit
-        run: pip install pre-commit
+        run: pip install pre-commit==4.5.1
 
       - name: Install pre-commit hooks
         run: pre-commit install-hooks

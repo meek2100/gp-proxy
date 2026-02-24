@@ -33,8 +33,8 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
-    - **Configurable Zero-Touch Security:** The server evaluates the `API_TOKEN` environment variable. If an `API_TOKEN` is provided, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers and enforce a **fail-closed** zero-trust model. If omitted, the server defaults to open access, relying on network-level boundaries (e.g., Docker networks) for security. The UDP Beacon automatically distributes the token (if configured) to the Host Agent.
-    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The response payload securely distributes the container IP, Port, and the `SESSION_TOKEN` to the Rust Host Agent.
+    - **Configurable Zero-Touch Security:** The server evaluates the `API_TOKEN` environment variable. If an `API_TOKEN` is provided, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers and enforce a **fail-closed** zero-trust model. If omitted, the server defaults to open access, relying on network-level boundaries (e.g., Docker networks) for security.
+    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port to the Host Agent. For security against LAN sniffing, the `SESSION_TOKEN` is strictly omitted. If `API_TOKEN` is enforced, the operator must pre-provision the Host Agent with the token.
 
 ### 2. The Host Agent (The Manager)
 
@@ -46,7 +46,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 1.  **Dashboard Mode (Interactive):**
     - Launches when the user runs the executable.
-    - **Auto-Discovery:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP and `SESSION_TOKEN` automatically.
+    - **Auto-Discovery:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically. Prompts the user to manually enter the `API_TOKEN` if required by the container environment.
     - **Management:** Displays real-time status (polled from `status.json`) and allows Connect/Disconnect actions.
     - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required, injecting the token via `?token=...`.
     - **Connection Info:** Displays the calculated Gateway IP and SOCKS port when connected.
@@ -75,7 +75,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`.
 - **`server.py`:** Python Control Server. Handles optional `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.8+ Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management (`_kill_and_poll`) dynamically detects the host OS (`sys.platform == "win32"`) to utilize `taskkill`, enabling full native Windows development and testing outside the container.
-- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py`. Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
+- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py` alongside dynamic MD5 cache-busting hashes applied at container startup. Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
 
 ### Host (Client)
 
@@ -101,10 +101,11 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ## System Optimizations & Guardrails (DO NOT REMOVE)
 
 - **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states.
-- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation.
-- **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows.
+- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests.
+- **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows. The listener endpoint (`control_listener.py`) must utilize a `while True` loop to act as a persistent daemon.
 - **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes.
 - **Shell Injection Boundaries:** `eval` is utilized in `entrypoint.sh` strictly to parse quoted string flags passed dynamically via the `GP_ARGS` environment variable. This constitutes a trust boundary; the operator is responsible for sanitizing `GP_ARGS` at the orchestrator level.
+- **Cache Invalidation:** `server.py` injects MD5 cache-busting query strings directly into `index.html` at runtime. CSS and JS headers must be left as `immutable` to preserve bandwidth, as the injected hash implicitly guarantees cache breaking on new container releases.
 
 ## Handling Callbacks (`globalprotect://`)
 

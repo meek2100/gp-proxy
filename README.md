@@ -60,7 +60,6 @@ Run the container:
 ```bash
 docker-compose up -d
 
-
 ```
 
 ### 2. Set Up the Desktop Client
@@ -110,7 +109,6 @@ DNS Server:    192.168.1.50
 4. Uninstall
 5. Exit
 
-
 ```
 
 ### Environment Variables (Docker)
@@ -123,6 +121,15 @@ DNS Server:    192.168.1.50
 | `VPN_HIP_REPORT` | Enable Host Integrity Protocol (HIP) reporting.    | `false`    |
 | `VPN_OS`         | Spoof client OS (`Linux`, `Windows`, `Mac`).       | `Linux`    |
 | `LOG_LEVEL`      | Logging verbosity (`INFO`, `DEBUG`, `TRACE`).      | `INFO`     |
+
+---
+
+## 🔒 Security Considerations
+
+**Token Storage in the Desktop App:**
+If you configure an `API_TOKEN` to lock down your Docker container, the Desktop Companion App (`gp-client-proxy`) will prompt you for this token during setup. The app stores the proxy URL and your session token in plaintext within the OS's standard user configuration directory (e.g., `%APPDATA%\gpproxy\client\proxy_url.txt` on Windows, or `~/.config/gpproxy/client/proxy_url.txt` on macOS/Linux).
+
+It relies on the inherent OS-level file permissions to protect this file from other users on the system. Security-conscious users operating in shared environments should ensure appropriate directory permissions are set, or provide the token dynamically via environment variables if strict zero-footprint operation is required.
 
 ---
 
@@ -139,14 +146,12 @@ DNS Server:    192.168.1.50
 cd apps/gp-client-proxy
 cargo build --release
 
-
 ```
 
 **Build Docker Image:**
 
 ```bash
 docker build -t global-protect-proxy .
-
 
 ```
 
@@ -167,7 +172,6 @@ This agent runs inside the Docker container and is responsible for maintaining t
 - `entrypoint.sh`: The supervisor. It manages network interfaces (`iptables`, `tun0`), starts the SOCKS proxy (`microsocks`), and monitors process health.
 - `server.py`: A Python-based HTTP control server (Port 8001). It serves the Web UI and listens for commands.
 - `gpclient`: The underlying OpenConnect wrapper that speaks the proprietary GP protocol.
-
 - **Responsibilities:**
 - Maintains the tunnel interface.
 - Performs Network Address Translation (NAT) for Gateway mode.

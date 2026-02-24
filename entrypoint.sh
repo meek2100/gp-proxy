@@ -252,7 +252,12 @@ check_services() {
         if ! pgrep -f "gpservice" >/dev/null; then
             log "ERROR" "CRITICAL: gpservice died while VPN was active."
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
-            ps aux >&2
+            # Prevent plaintext credentials from dumping to the log
+            if [[ -n "$GOST_AUTH" ]]; then
+                ps aux | sed "s/${GOST_AUTH}/***REDACTED***/g" >&2
+            else
+                ps aux >&2
+            fi
             log "ERROR" "--- DUMPING LOGS (Last 50 lines) ---"
             tail -n 50 "$SERVICE_LOG" >&2
         fi
@@ -349,8 +354,8 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
         log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
         IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
         for subnet in "${SUBNETS[@]}"; do
-            # Secure CIDR Validation
-            if [[ "$subnet" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+            # Secure CIDR Validation enforcing 0-255 octets and 0-32 prefix
+            if [[ "$subnet" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$ ]]; then
                 iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
             else
                 log "ERROR" "Invalid subnet CIDR format ignored: $subnet"
@@ -399,6 +404,7 @@ if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
 fi
 
+# Note: Ensure these remain pointed to /opt/gp-proxy/
 runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
