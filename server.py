@@ -78,7 +78,7 @@ class StateManager:
         self._last_state: str | None = None
 
         # Caching mechanisms to optimize I/O
-        self._log_mtime: float = -1.0
+        self._log_mtime_ns: int = -1
         self._log_size: int = -1
         self._cached_analysis: LogAnalysis = {
             "state": "idle",
@@ -121,11 +121,11 @@ class StateManager:
         with self._lock:
             try:
                 st = log_path.stat()
-                if st.st_mtime == self._log_mtime and st.st_size == self._log_size:
+                if st.st_mtime_ns == self._log_mtime_ns and st.st_size == self._log_size:
                     return self._cached_analysis, self._cached_log
 
                 # Capture signature parameters for validation post-read
-                current_mtime = st.st_mtime
+                current_mtime_ns = st.st_mtime_ns
                 current_size = st.st_size
 
             except FileNotFoundError:
@@ -138,8 +138,8 @@ class StateManager:
                     "error": None,
                     "sso_url": "",
                 }, ""
-            except Exception as e:
-                logger.exception(f"Log stat error: {e}")
+            except Exception:
+                logger.exception("Log stat error")
                 return self._cached_analysis, self._cached_log
 
         # Phase 2: Perform heavy disk I/O and text processing outside the lock to prevent polling bottlenecks
@@ -159,8 +159,8 @@ class StateManager:
 
                 clean_lines: list[str] = [strip_ansi(line).strip() for line in lines]
                 analysis = analyze_log_lines(clean_lines, log_content)
-        except Exception as e:
-            logger.exception(f"Log parse error: {e}")
+        except Exception:
+            logger.exception("Log parse error")
             with self._lock:
                 return self._cached_analysis, self._cached_log
 
@@ -169,8 +169,8 @@ class StateManager:
             try:
                 # Validate the file didn't shift beneath us to close the TOCTOU window
                 st_verify = log_path.stat()
-                if st_verify.st_mtime == current_mtime and st_verify.st_size == current_size:
-                    self._log_mtime = current_mtime
+                if st_verify.st_mtime_ns == current_mtime_ns and st_verify.st_size == current_size:
+                    self._log_mtime_ns = current_mtime_ns
                     self._log_size = current_size
                     self._cached_analysis = analysis
                     self._cached_log = log_content
@@ -242,8 +242,8 @@ class Beacon(threading.Thread):
                         }
                     )
                     self.sock.sendto(response.encode("utf-8"), addr)
-            except Exception as e:
-                logger.error(f"Beacon error: {e}")
+            except Exception:
+                logger.exception("Beacon error")
 
 
 # --- Logging Setup ---
@@ -272,7 +272,15 @@ def strip_ansi(text: str) -> str:
 
 
 def _extract_gateways(clean_lines: list[str]) -> list[str]:
-    """Forward scans the logs to gather all available gateway options."""
+    """
+    Scans the provided log lines forward chronologically to extract all available gateway connection options.
+
+    Parameters:
+        clean_lines (list[str]): A list of log lines stripped of ANSI characters.
+
+    Returns:
+        list[str]: A sorted list of unique gateway option strings.
+    """
     input_options: list[str] = []
     seen: set[str] = set()
     for scan_line in clean_lines:
@@ -286,7 +294,16 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
 
 
 def _extract_sso_url(full_log_content: str, port: int) -> str:
-    """Extracts the most recent valid SSO URL from the full log content."""
+    """
+    Parses the complete log string to extract the most recent valid SAML SSO callback URL.
+
+    Parameters:
+        full_log_content (str): The entire readable log context as a string.
+        port (int): The local proxy port to filter out to avoid self-referential links.
+
+    Returns:
+        str: The most recent SSO URL found, or an empty string if none exist.
+    """
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if found_urls:
         local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
@@ -296,8 +313,16 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
 
 def _evaluate_line_state(line: str, clean_lines: list[str], analysis_acc: LogAnalysis) -> bool:
     """
-    Evaluates a single chronological log line and mutates the state dictionary directly.
-    Returns True if state found.
+    Evaluates a single chronological log line to determine if it defines the current VPN connection phase.
+    Mutates the passed dictionary directly.
+
+    Parameters:
+        line (str): The individual line of text to evaluate.
+        clean_lines (list[str]): The entire array of lines used for context gathering (e.g. fetching gateways).
+        analysis_acc (LogAnalysis): The accumulator dictionary describing the current GUI payload.
+
+    Returns:
+        bool: True if a definitive state was matched and applied, False otherwise.
     """
     if "Connected" in line and "to" in line:
         analysis_acc["state"] = "connected"
@@ -425,8 +450,8 @@ def init_runtime_dir() -> None:
             RUNTIME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
         else:
             RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.exception(f"Failed to initialize runtime dir: {e}")
+    except OSError:
+        logger.exception("Failed to initialize runtime dir")
 
 
 def send_ipc_message(port: int, data: str) -> bool:
@@ -461,7 +486,13 @@ def _kill_and_poll() -> None:
     """
     if sys.platform == "win32":
         taskkill: str | None = shutil.which("taskkill")
-        if taskkill is not None:
+        if taskkill is None:
+            taskkill = os.environ.get("WINDIR", "C:\\Windows") + "\\System32\\taskkill.exe"
+
+        if os.path.exists(taskkill):
+            # DEV NOTE: taskkill /F is used as a fire-and-forget dev fallback on win32.
+            # There is no polling for process termination on Windows, which introduces
+            # a potential race condition here, but this is acceptable for local testing.
             subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
             subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
         return
@@ -544,8 +575,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Handle incoming HTTP GET requests for status, log download, and static file serving.
         """
-        # Security Guard: Explicitly block serving python source files if present
-        if self.path.endswith(".py"):
+        # Security Guard: Explicitly block serving python source files and other sensitive extensions
+        if self.path.lower().endswith((".py", ".pyc", ".pyo", ".env", ".sh")):
             self.send_error(403, "Forbidden")
             return
 
@@ -582,7 +613,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if CLIENT_LOG.exists():
                     with open(CLIENT_LOG, "rb") as f:
                         shutil.copyfileobj(f, self.wfile)
-            except Exception:
+            except OSError:
                 logger.debug("Error while streaming logs to client (connection may have closed)")
             return
 
@@ -689,24 +720,39 @@ class VPNServer(socketserver.ThreadingTCPServer):
 
 if __name__ == "__main__":
     target_dir: Path = Path("/var/www/html")
-    if target_dir.exists() and target_dir.is_dir():
-        os.chdir(target_dir)
-    else:
-        # Fallback for local Windows development environments
-        local_web_dir = Path(__file__).parent / "web"
-        if local_web_dir.exists() and local_web_dir.is_dir():
-            os.chdir(local_web_dir)
+
+    try:
+        if target_dir.exists() and target_dir.is_dir():
+            os.chdir(target_dir)
         else:
-            os.chdir(Path(__file__).parent)
+            # Fallback for local Windows development environments
+            local_web_dir = Path(__file__).parent / "web"
+            if local_web_dir.exists() and local_web_dir.is_dir():
+                os.chdir(local_web_dir)
+            else:
+                os.chdir(Path(__file__).parent)
+    except PermissionError:
+        logger.exception("Permission denied changing to target web directory.")
+        sys.exit(1)
 
     init_runtime_dir()
 
     # Dynamic cache busting for the frontend GUI.
-    # Modifying index.html directly guarantees browsers pull fresh immutable assets exactly on new container releases.
+    # Modifying index.html directly guarantees browsers pull fresh immutable assets exactly on new content changes.
     try:
         index_path = Path("index.html")
+        css_path = Path("index.css")
+        js_path = Path("index.js")
+
         if index_path.exists():
-            build_hash = hashlib.md5(str(time.time()).encode(), usedforsecurity=False).hexdigest()[:8]
+            content_sig = (css_path.read_bytes() if css_path.exists() else b"") + (
+                js_path.read_bytes() if js_path.exists() else b""
+            )
+            if content_sig:
+                build_hash = hashlib.md5(content_sig, usedforsecurity=False).hexdigest()[:8]
+            else:
+                build_hash = hashlib.md5(str(time.time()).encode(), usedforsecurity=False).hexdigest()[:8]
+
             content = index_path.read_text("utf-8")
             content = re.sub(r'href="index\.css(\?v=[a-zA-Z0-9]+)?"', f'href="index.css?v={build_hash}"', content)
             content = re.sub(r'src="index\.js(\?v=[a-zA-Z0-9]+)?"', f'src="index.js?v={build_hash}"', content)

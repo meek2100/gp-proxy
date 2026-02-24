@@ -285,7 +285,7 @@ check_services() {
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
             # Safely escape credentials and redact from the process dump
             if [[ -n "$GOST_AUTH" ]]; then
-                ESCAPED_AUTH=$(printf "%s" "$GOST_AUTH" | sed 's/[\/&]/\\&/g')
+                ESCAPED_AUTH=$(printf "%s" "$GOST_AUTH" | sed 's/[\/&\\]/\\&/g')
                 ps aux | sed "s/${ESCAPED_AUTH}/***REDACTED***/g" >&2
             else
                 ps aux >&2

@@ -1,7 +1,12 @@
 # File: stdin_proxy.py
+import logging
 import os
 import socket
 import sys
+
+# Configure standard logging to match the project's formatting requirements
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -17,22 +22,35 @@ def main() -> None:
         None: Exits cleanly when the socket is closed or the process terminates.
     """
     port: int = int(os.getenv("IPC_STDIN_PORT") or "32802")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("127.0.0.1", port))
-        s.listen(1)
-        while True:
-            try:
-                c: socket.socket
-                c, _ = s.accept()
-                with c:
-                    data: bytes = c.recv(4096)
-                    if data:
-                        sys.stdout.buffer.write(data)
-                        sys.stdout.buffer.flush()
-            except Exception:
-                # Exit cleanly if the process is terminated or the pipe breaks
-                break
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", port))
+            s.listen(1)
+
+            while True:
+                try:
+                    c: socket.socket
+                    c, _ = s.accept()
+                    c.settimeout(5.0)  # Prevent zombie connections from dead senders
+                    with c:
+                        data: bytes = c.recv(4096)
+                        if data:
+                            sys.stdout.buffer.write(data)
+                            sys.stdout.buffer.flush()
+                except OSError as exc:
+                    # Log transient socket errors and continue the daemon loop
+                    logger.exception(f"Socket error during accept/recv: {exc}")
+                except KeyboardInterrupt:
+                    # Honor intentional shutdowns cleanly
+                    sys.exit(0)
+                except SystemExit:
+                    # Honor intentional shutdowns cleanly
+                    sys.exit(0)
+    except OSError as e:
+        # Only crash on unrecoverable initialization errors (e.g., port conflict)
+        logger.error(f"Fatal bind error on port {port}: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

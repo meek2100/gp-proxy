@@ -3,7 +3,6 @@ import os
 import select
 import socket
 import sys
-from typing import Any
 
 
 def main() -> None:
@@ -29,11 +28,12 @@ def main() -> None:
             while True:
                 try:
                     # Non-blocking wait for 2 seconds to ensure interruptibility during teardown
-                    r: list[Any]
+                    r: list[socket.socket]
                     r, _, _ = select.select([s], [], [], 2.0)
                     if r:
                         c: socket.socket
                         c, _ = s.accept()
+                        c.settimeout(5.0)  # Prevent zombie connections from dead senders
                         with c:
                             data: bytes = c.recv(1024)
                             if data:
