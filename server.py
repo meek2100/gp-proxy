@@ -193,7 +193,8 @@ def get_best_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
-            return str(s.getsockname()[0])
+            ip, _ = s.getsockname()
+            return str(ip)
     except OSError:
         return "127.0.0.1"
 
@@ -457,7 +458,8 @@ def init_runtime_dir() -> None:
 def send_ipc_message(port: int, data: str) -> bool:
     """
     Perform a cross-platform socket connection to dispatch an IPC payload to the supervisor loop.
-    Replaces POSIX FIFOs to guarantee out-of-container testing compatibility on Windows.
+    Utilizes local TCP sockets as the primary production IPC strategy, ensuring robust compatibility
+    across containerized and native execution environments.
 
     Parameters:
         port (int): The local TCP port of the target IPC proxy.
@@ -482,7 +484,6 @@ def _kill_and_poll() -> None:
     Terminates active OpenConnect processes and actively polls until they exit
     to prevent race conditions when generating new VPN sessions.
     Strictly typed to prevent Subprocess NoneType execution crashes.
-    Includes native support for Windows execution environments.
     """
     if sys.platform == "win32":
         taskkill: str | None = shutil.which("taskkill")
@@ -490,11 +491,20 @@ def _kill_and_poll() -> None:
             taskkill = os.environ.get("WINDIR", "C:\\Windows") + "\\System32\\taskkill.exe"
 
         if os.path.exists(taskkill):
-            # DEV NOTE: taskkill /F is used as a fire-and-forget dev fallback on win32.
-            # There is no polling for process termination on Windows, which introduces
-            # a potential race condition here, but this is acceptable for local testing.
             subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
             subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+
+            # Active polling loop for Windows production environment
+            for _ in range(50):
+                res1: subprocess.CompletedProcess[bytes] = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True
+                )
+                res2: subprocess.CompletedProcess[bytes] = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True
+                )
+                if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
+                    break
+                time.sleep(0.1)
         return
 
     sudo: str | None = shutil.which("sudo")
@@ -508,12 +518,8 @@ def _kill_and_poll() -> None:
         if pgrep is not None:
             for _ in range(50):
                 # Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
-                res1: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    [sudo, pgrep, "gpclient"], stdout=subprocess.DEVNULL
-                )
-                res2: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    [sudo, pgrep, "gpservice"], stdout=subprocess.DEVNULL
-                )
+                res1 = subprocess.run([sudo, pgrep, "gpclient"], stdout=subprocess.DEVNULL)
+                res2 = subprocess.run([sudo, pgrep, "gpservice"], stdout=subprocess.DEVNULL)
                 if res1.returncode != 0 and res2.returncode != 0:
                     break
                 time.sleep(0.1)

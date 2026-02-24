@@ -30,7 +30,6 @@ def main() -> None:
 
             while True:
                 try:
-                    c: socket.socket
                     c, _ = s.accept()
                     c.settimeout(5.0)  # Prevent zombie connections from dead senders
                     with c:
@@ -42,9 +41,6 @@ def main() -> None:
                     # Log transient socket errors and continue the daemon loop
                     logger.exception(f"Socket error during accept/recv: {exc}")
                 except KeyboardInterrupt:
-                    # Honor intentional shutdowns cleanly
-                    sys.exit(0)
-                except SystemExit:
                     # Honor intentional shutdowns cleanly
                     sys.exit(0)
     except OSError as e:
