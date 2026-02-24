@@ -252,9 +252,10 @@ check_services() {
         if ! pgrep -f "gpservice" >/dev/null; then
             log "ERROR" "CRITICAL: gpservice died while VPN was active."
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
-            # Prevent plaintext credentials from dumping to the log
+            # Safely escape credentials and redact from the process dump
             if [[ -n "$GOST_AUTH" ]]; then
-                ps aux | sed "s/${GOST_AUTH}/***REDACTED***/g" >&2
+                ESCAPED_AUTH=$(printf "%s" "$GOST_AUTH" | sed 's/[\/&]/\\&/g')
+                ps aux | sed "s/${ESCAPED_AUTH}/***REDACTED***/g" >&2
             else
                 ps aux >&2
             fi
@@ -345,6 +346,7 @@ iptables -t nat -F
 iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
 
 if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
+    # Dynamically enable IP forwarding for routing functionality
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]]; then
         echo 1 >/proc/sys/net/ipv4/ip_forward
     fi
@@ -353,7 +355,11 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     if [[ -n "$ALLOWED_SUBNETS" ]]; then
         log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
         IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
-        for subnet in "${SUBNETS[@]}"; do
+        for subnet_raw in "${SUBNETS[@]}"; do
+            # Trim whitespace to prevent regex mismatch
+            subnet="$(echo "$subnet_raw" | xargs)"
+            [[ -z "$subnet" ]] && continue
+
             # Secure CIDR Validation enforcing 0-255 octets and 0-32 prefix
             if [[ "$subnet" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$ ]]; then
                 iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
@@ -367,6 +373,11 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     fi
 
     iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+elif [[ "$VPN_MODE" == "socks" ]]; then
+    # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]]; then
+        echo 0 >/proc/sys/net/ipv4/ip_forward
+    fi
 fi
 
 if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
@@ -404,7 +415,6 @@ if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
 fi
 
-# Note: Ensure these remain pointed to /opt/gp-proxy/
 runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
