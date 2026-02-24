@@ -3,6 +3,7 @@ import os
 import select
 import socket
 import sys
+from typing import Any
 
 
 def main() -> None:
@@ -18,7 +19,7 @@ def main() -> None:
     Returns:
         None: Outputs received commands to stdout until process termination.
     """
-    port: int = int(os.getenv("IPC_CONTROL_PORT", "32801"))
+    port: int = int(os.getenv("IPC_CONTROL_PORT") or "32801")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -28,7 +29,7 @@ def main() -> None:
             while True:
                 try:
                     # Non-blocking wait for 2 seconds to ensure interruptibility during teardown
-                    r: list[socket.socket]
+                    r: list[Any]
                     r, _, _ = select.select([s], [], [], 2.0)
                     if r:
                         c: socket.socket

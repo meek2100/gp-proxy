@@ -21,8 +21,8 @@ from typing import Any, TypedDict
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
 RUNTIME_DIR: Path = Path("/tmp/gp-runtime")
-IPC_STDIN_PORT: int = int(os.getenv("IPC_STDIN_PORT", "32802"))
-IPC_CONTROL_PORT: int = int(os.getenv("IPC_CONTROL_PORT", "32801"))
+IPC_STDIN_PORT: int = int(os.getenv("IPC_STDIN_PORT") or "32802")
+IPC_CONTROL_PORT: int = int(os.getenv("IPC_CONTROL_PORT") or "32801")
 MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
 CLIENT_LOG: Path = Path("/tmp/gp-logs/gp-client.log")
 SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
@@ -649,6 +649,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Handle incoming HTTP POST requests for connection control routing.
         Validates the authorization token before routing to explicit handlers.
         Globally enforces payload size limits.
+
+        Supported Endpoints:
+            - /connect: Initiates a new VPN connection. Requires no payload.
+            - /disconnect: Terminates active VPN client processes. Requires no payload.
+            - /submit: Forwards authentication tokens or form inputs to the VPN client.
+              Requires a form-encoded payload containing 'callback_url' or 'user_input'.
         """
         if not self._is_authorized():
             self.send_error(401, "Unauthorized")
@@ -700,7 +706,7 @@ if __name__ == "__main__":
     try:
         index_path = Path("index.html")
         if index_path.exists():
-            build_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+            build_hash = hashlib.md5(str(time.time()).encode(), usedforsecurity=False).hexdigest()[:8]
             content = index_path.read_text("utf-8")
             content = re.sub(r'href="index\.css(\?v=[a-zA-Z0-9]+)?"', f'href="index.css?v={build_hash}"', content)
             content = re.sub(r'src="index\.js(\?v=[a-zA-Z0-9]+)?"', f'src="index.js?v={build_hash}"', content)

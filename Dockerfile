@@ -97,19 +97,15 @@ RUN setcap 'cap_net_admin,cap_net_bind_service+ep' /usr/bin/gpservice && \
     ldconfig
 
 # 10. Setup App Environment
-# We isolate the backend python scripts in /opt/gp-proxy to prevent source code leakage via the web root
 RUN mkdir -p /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus && \
     chown -R gpuser:gpuser /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus
 
-# Copy the entire frontend web directory
-COPY web/ /var/www/html/
+# Copy the frontend web directory and python backend with correct user permissions
+COPY --chown=gpuser:gpuser web/ /var/www/html/
+COPY --chown=gpuser:gpuser server.py control_listener.py stdin_proxy.py /opt/gp-proxy/
 
-# Copy the python backend to the isolated directory
-COPY server.py control_listener.py stdin_proxy.py /opt/gp-proxy/
-
-# Ensure proper execution rights and ownership for the background services
-RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py && \
-    chown gpuser:gpuser /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py
+# Ensure proper execution rights
+RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
