@@ -10,9 +10,13 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
 
 **Strict linting and formatting are enforced via CI and Pre-commit hooks.** Any code changes must adhere to these standards to pass the `lint` workflow.
 
-- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`. Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]` to satisfy Python 3.14 static type guarantees. All module level files must include descriptive docstrings.
+- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14.
+    - Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`.
+    - Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]`.
+    - **Exception Syntax Constraint:** Multi-target exceptions must strictly utilize the Python 3 tuple syntax `except (ValueError, KeyError, TypeError):`. The comma-separated Python 2 syntax will invoke an immediate container-crashing `SyntaxError`. **If the `ruff format` pre-commit hook aggressively strips these required parentheses, you must apply a `# fmt: skip` suppression comment directly at the end of the line being stripped to lock the syntax and pass `mypy` checks.**
+    - All module level files must include descriptive docstrings.
 - **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
-- **Shell:** Uses `shellcheck` (gcc format).
+- **Shell:** Uses `shellcheck` (gcc format). **Do not use `xargs` to trim sensitive strings like API Tokens or Passwords, as it silently mangles internal spaces.**
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.
 - **YAML:** Uses `yamllint` (relaxed mode, max 120 chars).
 - **Docker:** Uses `hadolint` (ignores DL3008). Multi-arch support should be handled via dynamic arguments like `TARGETARCH` when downloading specific binaries.
@@ -89,6 +93,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ## Critical Implementation Details & Behaviors
 
 - **Status Polling JSON:** The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. The Rust client parses this field as `Option<String>`, and surfacing the actual API response via `.as_deref().unwrap_or(...)` prevents silent failure masking.
+- **Frontend Error State Recovery:** Handlers rendering `data.error` payloads to the screen must actively wipe the DOM content (e.g., `el.innerText = data.error || ""`) when an error resolves to `null`. Omitting the fallback leaves stale error text permanently ghosted on the GUI.
 - **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are compared against stringified array structures `JSON.stringify()` to ensure they are only fully rebuilt when types or options fundamentally change; otherwise, only text labels are updated.
 - **Frontend Network Resilience:** All UI actions that invoke API endpoints (`triggerConnect`, `handleFormSubmit`, etc.) must be wrapped in `try/catch/finally` blocks to ensure the frontend polling loop (`resetPoll`) resurrects if a network exception occurs. This prevents the UI from becoming permanently locked in a 'loading' state.
 - **Rust Connection Pooling:** The Host Agent must utilize a single, globally instantiated `ureq::Agent` for standard connections and a separate fast `ureq::Agent` for status polling. Do not instantiate new HTTP agents inside loops, as this discards TCP connection pooling and exhausts system ports.
@@ -100,7 +105,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 ## System Optimizations & Guardrails (DO NOT REMOVE)
 
-- **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states.
+- **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states. Elements managed dynamically (like `btn`) must employ optional chaining (`?.classList`) to prevent crashes during conditional rendering.
 - **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests. Additionally, the `get_best_ip()` routine caches the outbound local UDP IP string behind a 60-second TTL to avoid exhausting host system sockets during high-frequency API polling. It achieves this strictly by targeting an external IP (`8.8.8.8`) via UDP to guarantee correct gateway network resolution.
 - **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows. The listener endpoints (`control_listener.py` and `stdin_proxy.py`) must utilize a non-blocking `select.select` wait approach inside a `while True` loop to act as persistent daemons capable of receiving graceful interrupt signals.
 - **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes. Handlers must strictly filter standard HTTP errors (`ValueError`, `KeyError`, `TypeError`) before catching generic `Exception` objects to avoid masking underlying API implementation issues in `500` HTTP blocks.

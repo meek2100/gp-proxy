@@ -715,7 +715,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self.send_error(503, "Service not ready (IPC absent)")
             else:
                 self.send_error(400, "Empty input")
-        except ValueError, KeyError, TypeError:
+        except (ValueError, KeyError, TypeError):  # fmt: skip
             logger.warning("Invalid input format received")
             self.send_error(400, "Bad Request")
         except Exception:
@@ -740,9 +740,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         try:
             length: int = int(self.headers.get("Content-Length", 0))
-        except ValueError:
-            length = 0
-        except TypeError:
+        except (ValueError, TypeError):  # fmt: skip
             length = 0
 
         if length < 0:

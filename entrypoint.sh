@@ -28,7 +28,7 @@ get_env_value() {
 }
 
 # Helper: Strip quotes and trim whitespace
-# Warning: Uses xargs, which will strip inner quotes.
+# Warning: Uses xargs, which will strip inner quotes and spaces. Unsafe for passwords.
 clean_val() {
     local val="$1"
     val="${val%\"}"
@@ -39,7 +39,7 @@ clean_val() {
 }
 
 # Helper: Strip outer quotes and trim leading/trailing whitespace ONLY
-# Preserves inner quotes required for 'eval' parsing (e.g., GP_ARGS).
+# Preserves inner quotes and spaces required for 'eval' parsing and authentication secrets.
 clean_val_preserve_inner() {
     local val="$1"
     # Repeatedly strip matching outer quote pairs (" or ') in a loop
@@ -155,12 +155,12 @@ export ALLOWED_SUBNETS
 
 # 16. Gost Auth
 RAW_GOST_AUTH=$(get_env_value "GOST_AUTH" "gost_auth")
-GOST_AUTH=$(clean_val "$RAW_GOST_AUTH")
+GOST_AUTH=$(clean_val_preserve_inner "$RAW_GOST_AUTH")
 export GOST_AUTH
 
 # 17. API Token (Secure By Default)
 RAW_API_TOKEN=$(get_env_value "API_TOKEN" "api_token")
-API_TOKEN=$(clean_val "$RAW_API_TOKEN")
+API_TOKEN=$(clean_val_preserve_inner "$RAW_API_TOKEN")
 IS_GENERATED_TOKEN=false
 if [[ -z "$API_TOKEN" ]]; then
     API_TOKEN=$(openssl rand -hex 16)

@@ -251,9 +251,11 @@ async function restartAuth() {
  */
 function resetSSOButtonState(newUrl) {
     const btn = document.getElementById("sso-link");
-    btn.classList.remove("btn-disabled");
-    btn.innerText = "Open SSO Login";
-    btn.href = newUrl;
+    if (btn) {
+        btn.classList.remove("btn-disabled");
+        btn.innerText = "Open SSO Login";
+        btn.href = newUrl;
+    }
     document.getElementById("btn-restart-auth").classList.add("hidden");
 }
 
@@ -485,12 +487,16 @@ async function updateStatus() {
                 resetSSOButtonState(data.url);
             }
             const btn = document.getElementById("sso-link");
-            if (!btn.classList.contains("btn-disabled")) {
+            if (btn && !btn.classList.contains("btn-disabled")) {
                 btn.href = data.url;
             }
         }
 
-        if (data.error) document.getElementById("error-message").innerText = data.error;
+        const errorMsgEl = document.getElementById("error-message");
+        if (errorMsgEl) {
+            // Fix: ensures that previously displayed errors are cleared when resolved
+            errorMsgEl.innerText = data.error || "";
+        }
 
         if (data.state === "input") {
             const container = document.getElementById("dynamic-input-container");
