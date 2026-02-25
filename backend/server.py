@@ -1,4 +1,4 @@
-# File: server.py
+# File: backend/server.py
 """
 Container Agent - GP Proxy Web Interface and Control Server.
 
@@ -25,15 +25,22 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, TypedDict
 
+from utils import (
+    CLIENT_LOG,
+    IPC_CONTROL_PORT,
+    IPC_STDIN_PORT,
+    RUNTIME_DIR,
+    SERVICE_LOG,
+    send_ipc_message,
+    setup_logger,
+)
+
+logger: logging.Logger = setup_logger("server")
+
 # --- Configuration ---
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
-RUNTIME_DIR: Path = Path("/tmp/gp-runtime")
-IPC_STDIN_PORT: int = int(os.getenv("IPC_STDIN_PORT") or "32802")
-IPC_CONTROL_PORT: int = int(os.getenv("IPC_CONTROL_PORT") or "32801")
 MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
-CLIENT_LOG: Path = Path("/tmp/gp-logs/gp-client.log")
-SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
 
 # --- Pre-compiled Regex (Optimization) ---
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -277,18 +284,6 @@ class Beacon(threading.Thread):
                 logger.exception("Beacon error")
 
 
-# --- Logging Setup ---
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-    handlers=[
-        logging.FileHandler(SERVICE_LOG) if Path("/tmp/gp-logs").exists() else logging.StreamHandler(),
-    ],
-)
-logger: logging.Logger = logging.getLogger()
-
-
 def strip_ansi(text: str) -> str:
     """
     Remove ANSI escape sequences (colors, cursor movements, and line-control codes) from the given text.
@@ -485,82 +480,75 @@ def init_runtime_dir() -> None:
         logger.exception("Failed to initialize runtime dir")
 
 
-def send_ipc_message(port: int, data: str) -> bool:
-    """
-    Perform a cross-platform socket connection to dispatch an IPC payload to the supervisor loop.
-    Utilizes local TCP sockets as the primary production IPC strategy, ensuring robust compatibility
-    across containerized and native execution environments.
+def _kill_and_poll_windows() -> None:
+    """Handles process termination and polling gracefully for Windows environments."""
+    res1: subprocess.CompletedProcess[bytes]
+    res2: subprocess.CompletedProcess[bytes]
 
-    Parameters:
-        port (int): The local TCP port of the target IPC proxy.
-        data (str): UTF-8 text to write into the socket.
+    taskkill: str | None = shutil.which("taskkill")
+    if taskkill is None:
+        taskkill = str(Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe")
 
-    Returns:
-        bool: `True` if the data was written successfully, `False` if no listener was available.
-    """
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1.0)
-            s.connect(("127.0.0.1", port))
-            s.sendall(data.encode("utf-8"))
-    except OSError as e:
-        logger.warning(f"IPC connection failed on port {port}: {e}")
-        return False
-    else:
-        return True
+    if os.path.exists(taskkill):
+        subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+        subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+
+        # Active polling loop for Windows environment
+        for _ in range(50):
+            res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+            res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
+            if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
+                break
+            time.sleep(0.1)
+
+
+def _kill_and_poll_unix() -> None:
+    """Handles Unix process termination using safe sudo polling checks."""
+    res1: subprocess.CompletedProcess[bytes]
+    res2: subprocess.CompletedProcess[bytes]
+
+    sudo: str | None = shutil.which("sudo")
+    sudo_cmd: list[str] = []
+
+    if sudo is not None:
+        # Prevent indefinite hangs if sudo is installed but requires a password
+        probe: subprocess.CompletedProcess[bytes] = subprocess.run([sudo, "-n", "true"], capture_output=True)
+        if probe.returncode == 0:
+            sudo_cmd = [sudo]
+
+    pkill: str | None = shutil.which("pkill")
+
+    if pkill is not None:
+        subprocess.run([*sudo_cmd, pkill, "gpclient"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "gpservice"], stderr=subprocess.DEVNULL)
+
+        pgrep: str | None = shutil.which("pgrep")
+        if pgrep is not None:
+            for _ in range(50):
+                res1 = subprocess.run([*sudo_cmd, pgrep, "gpclient"], capture_output=True)
+                res2 = subprocess.run([*sudo_cmd, pgrep, "gpservice"], capture_output=True)
+                if res1.returncode != 0 and res2.returncode != 0:
+                    break
+                time.sleep(0.1)
+            else:
+                # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
+                subprocess.run([*sudo_cmd, pkill, "-9", "gpclient"], stderr=subprocess.DEVNULL)
+                subprocess.run([*sudo_cmd, pkill, "-9", "gpservice"], stderr=subprocess.DEVNULL)
+                time.sleep(0.5)
+        else:
+            time.sleep(1.0)
 
 
 def _kill_and_poll() -> None:
     """
     Terminates active OpenConnect processes and actively polls until they exit
     to prevent race conditions when generating new VPN sessions.
-    Strictly typed to prevent Subprocess NoneType execution crashes.
+    Dynamically routes to the correct OS implementation.
     """
-    # Declare strict types at the function scope to prevent mypy no-redef errors
-    res1: subprocess.CompletedProcess[bytes]
-    res2: subprocess.CompletedProcess[bytes]
-
     if sys.platform == "win32":
-        taskkill: str | None = shutil.which("taskkill")
-        if taskkill is None:
-            taskkill = str(Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe")
-
-        if os.path.exists(taskkill):
-            subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
-            subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
-
-            # Active polling loop for Windows production environment
-            for _ in range(50):
-                res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
-                res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
-                if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
-                    break
-                time.sleep(0.1)
-        return
-
-    sudo: str | None = shutil.which("sudo")
-    pkill: str | None = shutil.which("pkill")
-
-    if sudo is not None and pkill is not None:
-        subprocess.run([sudo, pkill, "gpclient"], stderr=subprocess.DEVNULL)
-        subprocess.run([sudo, pkill, "gpservice"], stderr=subprocess.DEVNULL)
-
-        pgrep: str | None = shutil.which("pgrep")
-        if pgrep is not None:
-            for _ in range(50):
-                # Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
-                res1 = subprocess.run([sudo, pgrep, "gpclient"], stdout=subprocess.DEVNULL)
-                res2 = subprocess.run([sudo, pgrep, "gpservice"], stdout=subprocess.DEVNULL)
-                if res1.returncode != 0 and res2.returncode != 0:
-                    break
-                time.sleep(0.1)
-            else:
-                # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
-                subprocess.run([sudo, pkill, "-9", "gpclient"], stderr=subprocess.DEVNULL)
-                subprocess.run([sudo, pkill, "-9", "gpservice"], stderr=subprocess.DEVNULL)
-                time.sleep(0.5)
-        else:
-            time.sleep(1.0)
+        _kill_and_poll_windows()
+    else:
+        _kill_and_poll_unix()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -592,6 +580,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """
         Log HTTP requests to the module logger. Avoids index errors on missing args.
+        Safe cast args[0] to string to prevent Python 3.14+ HTTPStatus enum crashes during syntax errors.
         """
         if args and "status.json" in str(args[0]):
             logger.debug("%s - - %s", self.client_address[0], format % args)
@@ -601,14 +590,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         """
         Inject optimal caching headers before completing the header block.
+        Safely retrieves the path to prevent crashes if the request line failed to parse.
         """
-        base_path: str = urllib.parse.urlparse(self.path).path
+        raw_path = getattr(self, "path", "")
+        base_path: str = urllib.parse.urlparse(raw_path).path
 
         if base_path in ["/", "/index.html", "/status.json"]:
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
-        elif base_path.endswith((".css", ".js", ".png", ".ico")):
+        elif base_path.endswith((".css", ".js", ".png", ".ico", ".svg", ".jpg")):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
 
         super().end_headers()
@@ -618,7 +609,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Handle incoming HTTP GET requests for status, log download, and static file serving.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
-        request_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lower()
+        request_path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, "path", "")).path).lower()
         if request_path.endswith((".py", ".pyc", ".pyo", ".env", ".sh")):
             self.send_error(403, "Forbidden")
             return
@@ -633,7 +624,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(get_vpn_state()).encode("utf-8"))
             return
 
-        if self.path == "/download_logs":
+        if getattr(self, "path", "") == "/download_logs":
             if not self._is_authorized():
                 self.send_error(401, "Unauthorized")
                 return
@@ -660,7 +651,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 logger.debug("Error while streaming logs to client (connection may have closed)")
             return
 
-        if self.path == "/":
+        if getattr(self, "path", "") == "/":
             self.path = "/index.html"
         return super().do_GET()
 
@@ -716,7 +707,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 self.send_error(400, "Empty input")
         except (ValueError, KeyError, TypeError):  # fmt: skip
-            logger.warning("Invalid input format received")
+            logger.warning("Invalid input format received", exc_info=True)
             self.send_error(400, "Bad Request")
         except Exception:
             logger.exception("Internal input processing error")
@@ -751,11 +742,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(413, "Payload Too Large")
             return
 
-        if self.path == "/connect":
+        request_path = getattr(self, "path", "")
+
+        if request_path == "/connect":
             self._handle_connect()
-        elif self.path == "/disconnect":
+        elif request_path == "/disconnect":
             self._handle_disconnect()
-        elif self.path == "/submit":
+        elif request_path == "/submit":
             self._handle_submit(length)
         else:
             self.send_error(404, "Endpoint not found")
@@ -775,11 +768,12 @@ if __name__ == "__main__":
             os.chdir(target_dir)
         else:
             # Fallback for local Windows development environments
-            local_web_dir = Path(__file__).parent / "web"
+            local_web_dir = (Path(__file__).parent.parent / "web").resolve()
             if local_web_dir.exists() and local_web_dir.is_dir():
                 os.chdir(local_web_dir)
             else:
-                os.chdir(Path(__file__).parent)
+                logger.error("Failed to locate web assets directory. Exiting to prevent source exposure.")
+                sys.exit(1)
     except PermissionError:
         logger.exception("Permission denied changing to target web directory.")
         sys.exit(1)
@@ -787,28 +781,35 @@ if __name__ == "__main__":
     init_runtime_dir()
 
     # Dynamic cache busting for the frontend GUI.
-    # Modifying index.html directly guarantees browsers pull fresh immutable assets exactly on new content changes.
+    # Exclusively updates index.html based on canonical static content hashing.
     try:
         index_path = Path("index.html")
-        css_path = Path("index.css")
-        js_path = Path("index.js")
 
         if index_path.exists():
-            content_sig = (css_path.read_bytes() if css_path.exists() else b"") + (
-                js_path.read_bytes() if js_path.exists() else b""
-            )
+            content_sig = b""
+            for ext in [".css", ".js", ".png", ".svg", ".ico", ".jpg"]:
+                for asset_file in sorted(Path(".").rglob(f"*{ext}")):
+                    if asset_file.is_file():
+                        content_sig += asset_file.read_bytes()
+
             if content_sig:
                 build_hash = hashlib.md5(content_sig, usedforsecurity=False).hexdigest()[:8]
             else:
                 build_hash = hashlib.md5(str(time.time()).encode(), usedforsecurity=False).hexdigest()[:8]
 
+            # Update HTML file references universally
             content = index_path.read_text("utf-8")
-            content = re.sub(r'href="index\.css(\?v=[a-zA-Z0-9]+)?"', f'href="index.css?v={build_hash}"', content)
-            content = re.sub(r'src="index\.js(\?v=[a-zA-Z0-9]+)?"', f'src="index.js?v={build_hash}"', content)
+            content = re.sub(
+                r'href="([^"]+\.(?:css|ico|svg|png|jpg))(\?v=[a-zA-Z0-9]+)?"', rf'href="\1?v={build_hash}"', content
+            )
+            content = re.sub(
+                r'src="([^"]+\.(?:js|png|jpg|svg|ico))(\?v=[a-zA-Z0-9]+)?"', rf'src="\1?v={build_hash}"', content
+            )
             index_path.write_text(content, "utf-8")
-            logger.info(f"Injected cache-busting hash {build_hash} into index.html")
-    except Exception as e:
-        logger.exception(f"Failed to apply cache busting to HTML: {e}. Browsers may serve stale CSS/JS.")
+
+            logger.info(f"Injected cache-busting hash {build_hash} into static assets")
+    except Exception:
+        logger.exception("Failed to apply cache busting to HTML. Browsers may serve stale assets.")
 
     beacon: Beacon = Beacon()
     beacon.start()

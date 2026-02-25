@@ -1,4 +1,4 @@
-# File: stdin_proxy.py
+# File: backend/stdin_proxy.py
 """
 Container Agent - Standard Input Proxy.
 
@@ -9,14 +9,13 @@ stream and injects it securely into the running VPN client's stdin.
 """
 
 import logging
-import os
 import select
 import socket
 import sys
 
-# Configure standard logging to match the project's formatting requirements
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger: logging.Logger = logging.getLogger(__name__)
+from utils import IPC_STDIN_PORT, setup_logger
+
+logger: logging.Logger = setup_logger("stdin_proxy")
 
 
 def main() -> None:
@@ -26,11 +25,10 @@ def main() -> None:
     Returns:
         None: Exits cleanly when the socket is closed or the process terminates.
     """
-    port: int = int(os.getenv("IPC_STDIN_PORT") or "32802")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("127.0.0.1", port))
+            s.bind(("127.0.0.1", IPC_STDIN_PORT))
             s.listen(1)
 
             while True:
@@ -56,7 +54,7 @@ def main() -> None:
                     sys.exit(0)
     except OSError:
         # Only crash on unrecoverable initialization errors (e.g., port conflict)
-        logger.exception(f"Fatal bind error on port {port}")
+        logger.exception(f"Fatal bind error on port {IPC_STDIN_PORT}")
         sys.exit(1)
 
 
