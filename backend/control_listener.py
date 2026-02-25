@@ -20,35 +20,37 @@ logger: logging.Logger = setup_logger("control_listener")
 
 def _process_connection(c: socket.socket) -> None:
     """
-    Reads from the client socket buffer, splitting on newlines to ensure
-    complete commands are forwarded to stdout.
+    Reads from the client socket buffer into a bytearray, splitting on newlines
+    to ensure complete commands are forwarded to stdout without mangling
+    multi-byte UTF-8 characters across network chunk boundaries.
     """
-    buffer: str = ""
+    buffer = bytearray()
     while True:
         data: bytes = c.recv(1024)
         if not data:
             break
-        try:
-            buffer += data.decode("utf-8")
-            if "\n" in buffer:
-                lines: list[str] = buffer.split("\n")
-                # Process all fully delimited commands
-                for line in lines[:-1]:
-                    cleaned: str = line.strip()
-                    if cleaned:
-                        sys.stdout.write(cleaned + "\n")
-                        sys.stdout.flush()
-                # Keep the remainder fragment in the buffer
-                buffer = lines[-1]
-        except UnicodeDecodeError as exc:
-            logger.error(f"Malformed input ignored: {exc}")
-            break
+
+        buffer.extend(data)
+
+        while b"\n" in buffer:
+            line_bytes, buffer = buffer.split(b"\n", 1)
+            try:
+                cleaned: str = line_bytes.decode("utf-8").strip()
+                if cleaned:
+                    sys.stdout.write(cleaned + "\n")
+                    sys.stdout.flush()
+            except UnicodeDecodeError as exc:
+                logger.error(f"Malformed input ignored: {exc}")
 
     # Process any remaining buffer content after the connection cleanly closes
-    cleaned_rem: str = buffer.strip()
-    if cleaned_rem:
-        sys.stdout.write(cleaned_rem + "\n")
-        sys.stdout.flush()
+    if buffer:
+        try:
+            cleaned_rem: str = buffer.decode("utf-8").strip()
+            if cleaned_rem:
+                sys.stdout.write(cleaned_rem + "\n")
+                sys.stdout.flush()
+        except UnicodeDecodeError as exc:
+            logger.error(f"Malformed trailing input ignored: {exc}")
 
 
 def _run_server_loop(s: socket.socket) -> None:

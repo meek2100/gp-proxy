@@ -484,9 +484,8 @@ def _kill_and_poll() -> None:
     """
     Terminates active OpenConnect processes and actively polls until they exit
     to prevent race conditions when generating new VPN sessions.
-    Strictly typed to prevent Subprocess NoneType execution crashes.
+    Dynamically escalates privileges based on container constraints.
     """
-    # Declare strict types at the function scope to prevent mypy no-redef errors
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
 
@@ -509,25 +508,26 @@ def _kill_and_poll() -> None:
         return
 
     sudo: str | None = shutil.which("sudo")
+    sudo_cmd: list[str] = [sudo] if sudo is not None else []
     pkill: str | None = shutil.which("pkill")
 
-    if sudo is not None and pkill is not None:
-        subprocess.run([sudo, pkill, "gpclient"], stderr=subprocess.DEVNULL)
-        subprocess.run([sudo, pkill, "gpservice"], stderr=subprocess.DEVNULL)
+    if pkill is not None:
+        subprocess.run([*sudo_cmd, pkill, "gpclient"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "gpservice"], stderr=subprocess.DEVNULL)
 
         pgrep: str | None = shutil.which("pgrep")
         if pgrep is not None:
             for _ in range(50):
-                # Strict Python 3.14 types - Subprocess run output is implicitly bytes without text=True
-                res1 = subprocess.run([sudo, pgrep, "gpclient"], stdout=subprocess.DEVNULL)
-                res2 = subprocess.run([sudo, pgrep, "gpservice"], stdout=subprocess.DEVNULL)
+                # Using capture_output strictly to satisfy Mypy annotations for CompletedProcess[bytes]
+                res1 = subprocess.run([*sudo_cmd, pgrep, "gpclient"], capture_output=True)
+                res2 = subprocess.run([*sudo_cmd, pgrep, "gpservice"], capture_output=True)
                 if res1.returncode != 0 and res2.returncode != 0:
                     break
                 time.sleep(0.1)
             else:
                 # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
-                subprocess.run([sudo, pkill, "-9", "gpclient"], stderr=subprocess.DEVNULL)
-                subprocess.run([sudo, pkill, "-9", "gpservice"], stderr=subprocess.DEVNULL)
+                subprocess.run([*sudo_cmd, pkill, "-9", "gpclient"], stderr=subprocess.DEVNULL)
+                subprocess.run([*sudo_cmd, pkill, "-9", "gpservice"], stderr=subprocess.DEVNULL)
                 time.sleep(0.5)
         else:
             time.sleep(1.0)
@@ -747,11 +747,11 @@ if __name__ == "__main__":
         else:
             # Fallback for local Windows development environments
             # Adjusted path handling to account for the new backend/ directory position
-            local_web_dir = Path(__file__).parent.parent / "web"
+            local_web_dir = (Path(__file__).parent.parent / "web").resolve()
             if local_web_dir.exists() and local_web_dir.is_dir():
                 os.chdir(local_web_dir)
             else:
-                os.chdir(Path(__file__).parent.parent)
+                os.chdir(Path(__file__).parent.parent.resolve())
     except PermissionError:
         logger.exception("Permission denied changing to target web directory.")
         sys.exit(1)
