@@ -35,9 +35,13 @@ const BINARY_NAME: &str = "gp-client-proxy";
 struct ServerStatus {
     state: String,    // idle, connecting, auth, connected, error
     vpn_mode: String, // standard, gateway, socks
-    // 'url' field removed as it is unused in the Rust client (handled by JS dashboard)
+
+    // Properly deserialized as null when no error is present due to Python server returning `None` instead of `""`
     #[allow(dead_code)]
     error: Option<String>,
+
+    #[serde(default)]
+    socks_auth_enabled: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -46,24 +50,47 @@ struct DiscoveryResponse {
     port: u16,
 }
 
+#[derive(Clone, Debug)]
+struct ProxyConfig {
+    base_url: String,
+    token: String,
+}
+
+impl ProxyConfig {
+    /// Generates the authenticated browser URL to pass the zero-touch token to the frontend
+    fn browser_url(&self) -> String {
+        if self.token.is_empty() {
+            self.base_url.clone()
+        } else {
+            format!("{}/?token={}", self.base_url, encode_token(&self.token))
+        }
+    }
+}
+
+/// Helper function to safely percent-encode the token without requiring additional dependencies
+fn encode_token(token: &str) -> String {
+    token
+        .as_bytes()
+        .iter()
+        .map(|&b| match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
+
+/// Helper function to uniformly inject the Authorization header if a token is present
+fn with_auth<T>(req: ureq::RequestBuilder<T>, token: &str) -> ureq::RequestBuilder<T> {
+    if token.is_empty() {
+        req
+    } else {
+        req.header("Authorization", &format!("Bearer {}", token))
+    }
+}
+
 /// Program entry point that dispatches between the protocol handler, uninstaller, and interactive dashboard.
-///
-/// On startup it initializes logging and then selects one of three modes based on command-line arguments:
-/// - If the first argument begins with the `globalprotect://` scheme, the link handler is invoked and the process exits.
-/// - If the first argument equals `--uninstall`, the uninstall flow is executed and the program exits.
-/// - Otherwise, the interactive dashboard/launcher is started.
-///
-/// # Returns
-///
-/// `Ok(())` on successful completion of the selected mode; an `Err` if an operation fails.
-///
-/// # Examples
-///
-/// ```
-/// // Calling the application entry point; in real use this is invoked by the runtime.
-/// // This example demonstrates invocation only and does not assert side effects.
-/// let _ = crate::main();
-/// ```
 fn main() -> Result<()> {
     env_logger::init();
     let args: Vec<String> = env::args().collect();
@@ -90,23 +117,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// --- HELPER: Configured HTTP Agent ---
-/// Create a preconfigured HTTP agent with a 10-second global timeout.
-///
-/// This returns a `ureq::Agent` configured with a global request timeout of 10 seconds,
-/// suitable for performing HTTP requests with a consistent timeout policy.
-///
-/// # Examples
-///
-/// ```
-/// let agent = get_agent();
-/// let resp = agent.get("[http://example.invalid/](http://example.invalid/)").call();
-/// // `resp` will be an error if the request fails or times out.
-/// assert!(resp.is_err());
-/// ```
+// --- HTTP AGENTS ---
+
+/// Create a preconfigured HTTP agent with a 10-second global timeout for standard actions.
 fn get_agent() -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+/// Create a preconfigured HTTP agent with a fast 2-second global timeout specifically for the status polling loop.
+/// This prevents the CLI loop from hanging entirely if the backend blocks unexpectedly.
+fn get_fast_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(2)))
         .build();
     ureq::Agent::new_with_config(config)
 }
@@ -116,64 +141,41 @@ fn get_agent() -> ureq::Agent {
 // =============================================================================
 
 /// Displays the interactive dashboard and launcher for the GP Client Proxy.
-///
-/// On first run (no saved configuration) this will start the setup wizard instead of entering the dashboard.
-/// In the dashboard the user can view server and connection status and choose to open the web dashboard,
-/// connect or disconnect the VPN, re-run setup/discovery, uninstall, or exit.
-///
-/// # Returns
-///
-/// `Ok(())` when the dashboard loop exits normally (for example, when the user selects Exit or after uninstall),
-/// `Err` if an I/O or operational error occurs while running the dashboard.
-///
-/// # Examples
-///
-/// ```no_run
-/// // Starts the interactive dashboard; this will block until the user exits or the process performs an uninstall.
-/// let _ = run_dashboard();
-/// ```
 fn run_dashboard() -> Result<()> {
-    // 1. First Run Check & Initialization
-    // We attempt to load the config once before entering the loop.
-    // If it fails, we trigger the setup wizard (which exits upon completion).
-    let mut config_url = match load_config() {
-        Ok(url) => url,
+    let mut config = match load_config() {
+        Ok(c) => c,
         Err(_) => {
             println!("No configuration found. Starting Setup...");
             return run_setup_wizard();
         }
     };
 
-    // 2. Main Loop
+    let agent = get_agent();
+    let fast_agent = get_fast_agent();
+
     loop {
         clear_screen();
         print_header();
 
-        // Attempt to reload config to pick up external changes
-        // If it fails, we log the warning but KEEP the last known valid URL.
         match load_config() {
-            Ok(url) => config_url = url,
+            Ok(c) => config = c,
             Err(e) => {
-                eprintln!("Warning: Failed to reload config: {}", e);
-                // Fallback: preserve the existing 'config_url'
+                eprintln!("[WARNING] Failed to reload config: {}", e);
             }
         }
 
-        let status = fetch_status(&config_url);
+        let status = fetch_status(&config, &fast_agent);
 
-        // Display Status
         match &status {
             Ok(s) => {
-                println!("SERVER:    Online ({})", config_url);
+                println!("SERVER:    Online ({})", config.base_url);
                 println!("STATUS:    {}", s.state.to_uppercase());
                 println!("MODE:      {}", s.vpn_mode.to_uppercase());
 
-                // --- Connection Info Block ---
                 if s.state == "connected" {
-                    println!("\n[!] CONNECTION DETAILS");
-
-                    // Extract IP from URL (http://1.2.3.4:8001 -> 1.2.3.4)
-                    let host_ip = config_url
+                    println!("\n[i] CONNECTION DETAILS");
+                    let host_ip = config
+                        .base_url
                         .trim_start_matches("http://")
                         .trim_start_matches("https://")
                         .split(':')
@@ -181,7 +183,12 @@ fn run_dashboard() -> Result<()> {
                         .unwrap_or("Unknown");
 
                     if s.vpn_mode == "socks" || s.vpn_mode == "standard" {
-                        println!("SOCKS5 Proxy:  {}:1080 (No Auth)", host_ip);
+                        let auth_str = if s.socks_auth_enabled {
+                            "(Auth Enabled)"
+                        } else {
+                            "(No Auth)"
+                        };
+                        println!("SOCKS5 Proxy:  {}:1080 {}", host_ip, auth_str);
                     }
                     if s.vpn_mode == "gateway" || s.vpn_mode == "standard" {
                         println!("Gateway IP:    {}", host_ip);
@@ -190,13 +197,11 @@ fn run_dashboard() -> Result<()> {
                 }
             }
             Err(_) => {
-                println!("SERVER:    Unreachable ({})", config_url);
-                println!("STATUS:    OFFLINE");
+                println!("SERVER:    Unreachable ({})", config.base_url);
+                println!("STATUS:    OFFLINE (Or Unauthorized)");
             }
         }
         println!("----------------------------------------");
-
-        // Menu Options
         println!("1. Open Web Dashboard (Browser)");
 
         if let Ok(s) = &status {
@@ -221,46 +226,37 @@ fn run_dashboard() -> Result<()> {
 
         match input.trim() {
             "1" => {
-                let _ = webbrowser::open(&config_url);
+                let _ = webbrowser::open(&config.browser_url());
             }
             "2" => {
                 if let Ok(s) = &status {
                     if s.state == "connected" {
-                        // DISCONNECT ACTION
                         println!("Disconnecting...");
-                        // Use get_agent() for timeout protection
-                        if let Err(e) = get_agent()
-                            .post(&format!("{}/disconnect", config_url))
-                            .send_empty()
-                        {
+                        let req = agent.post(&format!("{}/disconnect", config.base_url));
+                        if let Err(e) = with_auth(req, &config.token).send_empty() {
                             println!("Error disconnecting: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
                             thread::sleep(Duration::from_secs(1));
                         }
                     } else {
-                        // CONNECT ACTION
                         println!("Initiating Connection...");
-                        if let Err(e) = get_agent()
-                            .post(&format!("{}/connect", config_url))
-                            .send_empty()
-                        {
+                        let req = agent.post(&format!("{}/connect", config.base_url));
+                        if let Err(e) = with_auth(req, &config.token).send_empty() {
                             println!("Error initiating connection: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
                             println!("Launching Browser for Auth...");
-                            let _ = webbrowser::open(&config_url);
-                            poll_for_success(&config_url);
+                            let _ = webbrowser::open(&config.browser_url());
+                            poll_for_success(&config, &fast_agent);
                         }
                     }
                 }
             }
             "3" => {
                 run_setup_wizard()?;
-                // If setup finishes successfully, we should try to reload the config immediately
-                // so the next loop iteration uses the new URL.
-                if let Ok(url) = load_config() {
-                    config_url = url;
+                if let Ok(c) = load_config() {
+                    config = c;
                 }
             }
             "4" => {
@@ -273,35 +269,24 @@ fn run_dashboard() -> Result<()> {
     }
 }
 
-/// Polls the proxy server's status endpoint until the VPN becomes connected, reports an error, or times out.
-///
-/// Repeatedly fetches the server status at `base_url` and prints progress to stdout. Stops when the server reports `connected`, when the server reports `error` (printing the error), or after 60 seconds (printing a timeout message). Prompts the user to press Enter when an error or timeout occurs.
-///
-/// # Parameters
-///
-/// - `base_url`: Base HTTP URL of the proxy server (for example `"http://127.0.0.1:8001"`).
-///
-/// # Examples
-///
-/// ```
-/// // This will poll the status endpoint at the provided base URL until success, error, or timeout.
-/// poll_for_success("[http://127.0.0.1:8001](http://127.0.0.1:8001)");
-/// ```
-fn poll_for_success(base_url: &str) {
+/// Polls the proxy server's status endpoint using `get_fast_agent` until connected, error, or timeout.
+fn poll_for_success(config: &ProxyConfig, agent: &ureq::Agent) {
     println!("\nWaiting for connection (Press Ctrl+C to cancel)...");
     let start = Instant::now();
 
-    // Poll for 60 seconds max
     while start.elapsed().as_secs() < 60 {
-        if let Ok(s) = fetch_status(base_url) {
+        if let Ok(s) = fetch_status(config, agent) {
             if s.state == "connected" {
-                println!("\n✅ SUCCESS! VPN is Connected.");
+                println!("\n[SUCCESS] VPN is Connected.");
                 println!("You may close this window or return to menu.");
                 thread::sleep(Duration::from_secs(2));
                 return;
             }
             if s.state == "error" {
-                println!("\n❌ Connection Failed: {:?}", s.error.unwrap_or_default());
+                println!(
+                    "\n[ERROR] Connection Failed: {}",
+                    s.error.as_deref().unwrap_or("Unknown error occurred")
+                );
                 wait_for_enter();
                 return;
             }
@@ -314,24 +299,10 @@ fn poll_for_success(base_url: &str) {
     wait_for_enter();
 }
 
-/// Fetches the proxy server's status from its `/status.json` endpoint.
-///
-/// `base_url` is the base URL of the GP Proxy server (for example `http://192.168.1.10:8001`).
-///
-/// # Returns
-///
-/// The parsed `ServerStatus` returned by the server.
-///
-/// # Examples
-///
-/// ```no_run
-/// let status = fetch_status("[http://127.0.0.1:8001](http://127.0.0.1:8001)").unwrap();
-/// println!("state = {:?}", status.state);
-/// ```
-fn fetch_status(base_url: &str) -> Result<ServerStatus> {
-    // Use configured agent with timeout
-    let resp: ServerStatus = get_agent()
-        .get(&format!("{}/status.json", base_url))
+/// Fetches the proxy server's status using a fast-timeout HTTP agent.
+fn fetch_status(config: &ProxyConfig, agent: &ureq::Agent) -> Result<ServerStatus> {
+    let req = agent.get(&format!("{}/status.json", config.base_url));
+    let resp: ServerStatus = with_auth(req, &config.token)
         .call()?
         .body_mut()
         .read_json()?;
@@ -352,29 +323,6 @@ fn print_header() {
 // SETUP LOGIC
 // =============================================================================
 
-/// Runs the interactive setup wizard for the GP Client Proxy.
-///
-/// The wizard attempts to discover a local GP Proxy server on the network, prompts the user to
-/// accept a discovered URL or enter one manually, saves the chosen proxy URL to the local
-/// configuration, tries to register the OS URL handler for the `globalprotect://` scheme, and
-/// launches the web dashboard while polling the server for a connection status.
-///
-/// # Errors
-///
-/// Returns an error if I/O, network discovery, configuration save, or other underlying operations
-/// fail.
-///
-/// # Examples
-///
-/// ```no_run
-/// use anyhow::Result;
-///
-/// fn main() -> Result<()> {
-///     // Launch the interactive setup wizard (may prompt the user).
-///     run_setup_wizard()?;
-///     Ok(())
-/// }
-/// ```
 fn run_setup_wizard() -> Result<()> {
     clear_screen();
     print_header();
@@ -382,18 +330,16 @@ fn run_setup_wizard() -> Result<()> {
 
     let mut found_url = String::new();
 
-    // 1. Auto-Discovery
     match try_discover() {
         Ok(resp) => {
-            println!("✅ FOUND SERVER: {}:{}", resp.ip, resp.port);
+            println!("[SUCCESS] FOUND SERVER: {}:{}", resp.ip, resp.port);
             found_url = format!("http://{}:{}", resp.ip, resp.port);
         }
         Err(_) => {
-            println!("❌ No server found automatically.");
+            println!("[ERROR] No server found automatically.");
         }
     }
 
-    // 2. Confirm / Manual Entry
     println!(
         "\nPress [Enter] to use: {}",
         if found_url.is_empty() {
@@ -416,7 +362,7 @@ fn run_setup_wizard() -> Result<()> {
 
     let final_url = if input.is_empty() {
         if found_url.is_empty() {
-            println!("Error: IP required.");
+            println!("[ERROR] IP required.");
             wait_for_enter();
             return Ok(());
         }
@@ -424,65 +370,57 @@ fn run_setup_wizard() -> Result<()> {
     } else if input.contains("://") {
         input.to_string()
     } else {
-        format!("http://{}:8001", input)
+        // Attempt basic HTTPS inference if a standard TLS port is supplied
+        if input.ends_with(":443") || input.ends_with(":8443") {
+            format!("https://{}", input)
+        } else {
+            format!("http://{}:8001", input)
+        }
     };
 
-    // 3. Save
-    println!("Saving configuration...");
-    save_config(&final_url)?;
+    println!("\nDoes the server require an API Token?");
+    println!("(Leave blank if your container is deployed for open LAN access)");
+    print!("Token > ");
+    io::stdout().flush()?;
+    let mut token_input = String::new();
+    io::stdin().read_line(&mut token_input)?;
+    let final_token = token_input.trim().to_string();
 
-    // 4. Register OS Handler
+    let config = ProxyConfig {
+        base_url: final_url,
+        token: final_token,
+    };
+
+    println!("Saving configuration...");
+    save_config(&config)?;
+
     println!("Registering System Link Handler...");
     if let Err(e) = install_handler() {
-        println!("⚠️ Warning: Failed to register handler: {}", e);
+        println!("[WARNING] Failed to register handler: {}", e);
         println!("(You may need to run as Administrator/Root)");
         wait_for_enter();
     } else {
-        println!("✅ System Handler Registered.");
+        println!("[SUCCESS] System Handler Registered.");
     }
 
-    // 5. Test / First Launch
     println!("\nSetup Complete!");
     println!("Launching Web Dashboard...");
-    let _ = webbrowser::open(&final_url);
-    poll_for_success(&final_url);
+    let _ = webbrowser::open(&config.browser_url());
+
+    let fast_agent = get_fast_agent();
+    poll_for_success(&config, &fast_agent);
 
     Ok(())
 }
 
-// =============================================================================
-// LINK HANDLER LOGIC (Background Mode)
-// =============================================================================
-
-/// Submits a callback URL to the configured GP Client Proxy server's /submit endpoint.
-///
-/// Reads the proxy base URL from the saved configuration and posts a form with
-/// `callback_url` set to the provided `url`. Returns success only if the server
-/// responds with HTTP 200.
-///
-/// # Errors
-///
-/// Returns an error if the configuration cannot be loaded, the HTTP request
-/// fails, or the server responds with a non-200 status.
-///
-/// # Examples
-///
-/// ```no_run
-/// # use anyhow::Result;
-/// # fn example() -> Result<()> {
-/// handle_link("globalprotect://example/callback")?;
-/// # Ok(())
-/// # }
-/// ```
 fn handle_link(url: &str) -> Result<()> {
-    let proxy_base = load_config()?;
-    let target_endpoint = format!("{}/submit", proxy_base.trim_end_matches('/'));
+    let config = load_config()?;
+    let target_endpoint = format!("{}/submit", config.base_url.trim_end_matches('/'));
 
-    // Use get_agent() for timeout protection
-    let resp = get_agent()
-        .post(&target_endpoint)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .send_form([("callback_url", url)])?;
+    let agent = get_agent();
+    let req = agent.post(&target_endpoint);
+
+    let resp = with_auth(req, &config.token).send_form([("callback_url", url)])?;
 
     if resp.status() != 200 {
         anyhow::bail!("Server Error: {}", resp.status());
@@ -490,31 +428,12 @@ fn handle_link(url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Prints a prompt and waits for the user to press Enter.
-///
-/// # Examples
-///
-/// ```no_run
-/// // Displays a prompt and blocks until the user presses Enter.
-/// wait_for_enter();
-/// ```
 fn wait_for_enter() {
     print!("Press Enter to continue...");
     io::stdout().flush().unwrap();
     let _ = io::stdin().read_line(&mut String::new());
 }
 
-// --- DISCOVERY ---
-/// Discovers a GP Proxy server on the local network using a UDP broadcast.
-///
-/// Sends a discovery broadcast and parses the first valid JSON reply into a `DiscoveryResponse`.
-///
-/// # Examples
-///
-/// ```no_run
-/// let resp = try_discover().expect("discovery failed");
-/// println!("Found proxy at {}:{}", resp.ip, resp.port);
-/// ```
 fn try_discover() -> Result<DiscoveryResponse> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;
@@ -534,7 +453,6 @@ fn try_discover() -> Result<DiscoveryResponse> {
     Ok(response)
 }
 
-// --- CONFIG ---
 fn get_config_path() -> Result<PathBuf> {
     let proj_dirs = ProjectDirs::from("com", "gpproxy", "client").context("No config dir")?;
     let config_dir = proj_dirs.config_dir();
@@ -543,17 +461,35 @@ fn get_config_path() -> Result<PathBuf> {
     }
     Ok(config_dir.join(CONFIG_FILE_NAME))
 }
-fn load_config() -> Result<String> {
+
+fn load_config() -> Result<ProxyConfig> {
     let path = get_config_path()?;
     if !path.exists() {
         anyhow::bail!("No config");
     }
-    Ok(fs::read_to_string(path)?.trim().to_string())
+    let content = fs::read_to_string(path)?;
+    let mut lines = content.lines();
+
+    let base_url = lines.next().unwrap_or("").trim().to_string();
+    if base_url.is_empty() {
+        anyhow::bail!("Invalid config: Missing URL");
+    }
+
+    let token = lines.next().unwrap_or("").trim().to_string();
+
+    Ok(ProxyConfig { base_url, token })
 }
-fn save_config(url: &str) -> Result<()> {
-    fs::write(get_config_path()?, url)?;
+
+fn save_config(config: &ProxyConfig) -> Result<()> {
+    let content = if config.token.is_empty() {
+        format!("{}\n", config.base_url)
+    } else {
+        format!("{}\n{}\n", config.base_url, config.token)
+    };
+    fs::write(get_config_path()?, content)?;
     Ok(())
 }
+
 fn remove_config() -> Result<()> {
     let path = get_config_path()?;
     if path.exists() {
@@ -565,34 +501,16 @@ fn remove_config() -> Result<()> {
 fn uninstall_process() -> Result<()> {
     println!("Removing...");
     if let Err(e) = uninstall_handler() {
-        eprintln!("Warning: Handler removal failed: {}", e);
+        eprintln!("[WARNING] Handler removal failed: {}", e);
     }
     if let Err(e) = remove_config() {
-        eprintln!("Warning: Config removal failed: {}", e);
+        eprintln!("[WARNING] Config removal failed: {}", e);
     }
     println!("Done.");
     wait_for_enter();
     Ok(())
 }
 
-// --- OS SPECIFIC INSTALLERS ---
-
-/// Registers the application as the `globalprotect:` URL protocol handler in the current user's registry.
-///
-/// On success the registry key `HKCU\Software\Classes\globalprotect` is created/updated so that
-/// opening `globalprotect://...` invokes the current executable with the URL as the first argument.
-///
-/// # Errors
-///
-/// Returns an error if the current executable path cannot be determined or if any registry operation fails.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(target_os = "windows")] {
-/// let _ = gp_client_proxy::install_handler();
-/// # }
-/// ```
 #[cfg(target_os = "windows")]
 fn install_handler() -> Result<()> {
     use winreg::enums::*;
@@ -633,16 +551,14 @@ fn install_handler() -> Result<()> {
     let exe_path = env::current_exe()?;
     let dirs = directories::BaseDirs::new().context("No home dir")?;
 
-    // Icon
     let icon_dir = dirs.data_local_dir().join("icons/hicolor/512x512/apps");
     if !icon_dir.exists() {
         fs::create_dir_all(&icon_dir)?;
     }
     fs::write(icon_dir.join("gp-client-proxy.png"), ICON_PNG)?;
 
-    // Desktop Entry
     let desktop_file = format!(
-        "[Desktop Entry]\nType=Application\nName={}\nExec={} %u\nIcon=gp-client-proxy\nStartupNotify=false\nMimeType=x-scheme-handler/{};\n",
+        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" %u\nIcon=gp-client-proxy\nStartupNotify=false\nMimeType=x-scheme-handler/{};\n",
         APP_NAME, exe_path.to_string_lossy(), PROTOCOL_SCHEME
     );
     let apps_dir = dirs.data_local_dir().join("applications");
@@ -683,21 +599,6 @@ fn uninstall_handler() -> Result<()> {
     Ok(())
 }
 
-/// Installs a macOS app bundle for the application and registers it as a URL handler for the `globalprotect` scheme.
-///
-/// Creates an application bundle at `~/Applications/GP Client Proxy.app`, copies the current executable and bundled icon into the bundle, writes an `Info.plist` declaring the `globalprotect` URL type, and registers the bundle with LaunchServices so the system recognizes the URL scheme handler.
-///
-/// # Errors
-///
-/// Returns an error if the current executable or home directory cannot be determined, file operations fail, or LaunchServices registration (`lsregister`) exits with a non-zero status.
-///
-/// # Examples
-///
-/// ```no_run
-/// # #[cfg(target_os = "macos")] {
-/// let _ = gp_client_proxy::install_handler();
-/// # }
-/// ```
 #[cfg(target_os = "macos")]
 fn install_handler() -> Result<()> {
     let exe_path = env::current_exe()?;
@@ -735,7 +636,6 @@ fn install_handler() -> Result<()> {
     .arg(&app_path)
     .status()?;
 
-    // Fix: Propagate error instead of silent fail
     if !status.success() {
         anyhow::bail!("lsregister failed with exit code: {:?}", status.code());
     }
@@ -743,17 +643,7 @@ fn install_handler() -> Result<()> {
 }
 
 /// Unregisters and removes the installed macOS app bundle at `~/Applications/GP Client Proxy.app`.
-///
-/// Attempts to unregister the app with LaunchServices before deleting the app bundle. If the
-/// app bundle is not present, the function prints a message and returns `Ok(())`. Any filesystem
-/// or process errors encountered during removal are returned as an error.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// // On macOS, remove the installed app bundle (may require appropriate permissions).
-/// uninstall_handler().expect("failed to uninstall app");
-/// ```
+/// Strictly requires unregistration success before file deletion to prevent OS scheme handler corruption.
 #[cfg(target_os = "macos")]
 fn uninstall_handler() -> Result<()> {
     let dirs = directories::UserDirs::new().context("No home dir")?;
@@ -762,16 +652,15 @@ fn uninstall_handler() -> Result<()> {
         .join(format!("Applications/{}.app", APP_NAME));
 
     if app_path.exists() {
-        // Fix: Explicitly unregister BEFORE deletion
         let status = Command::new(
             "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
         )
         .arg("-u")
         .arg(&app_path)
-        .status();
+        .status()?;
 
-        if let Err(e) = status {
-            eprintln!("Warning: Failed to unregister app: {}", e);
+        if !status.success() {
+            anyhow::bail!("lsregister unregistration failed with exit code: {:?}. Aborting deletion to prevent orphaned handlers.", status.code());
         }
 
         fs::remove_dir_all(&app_path)?;

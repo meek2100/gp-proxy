@@ -21,6 +21,9 @@ __pycache__
 venv
 env
 *.egg-info
+.ruff_cache
+.mypy_cache
+.pytest_cache
 
 # Rust
 target/

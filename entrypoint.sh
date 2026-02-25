@@ -13,13 +13,13 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 get_env_value() {
     local val=""
     for key in "$@"; do
-        if [ -n "${!key}" ]; then
+        if [[ -n "${!key}" ]]; then
             val="${!key}"
             break
         fi
         local match_line
         match_line=$(env | grep -i "^${key}=" | head -n 1)
-        if [ -n "$match_line" ]; then
+        if [[ -n "$match_line" ]]; then
             val="${match_line#*=}"
             break
         fi
@@ -28,6 +28,7 @@ get_env_value() {
 }
 
 # Helper: Strip quotes and trim whitespace
+# Warning: Uses xargs, which will strip inner quotes.
 clean_val() {
     local val="$1"
     val="${val%\"}"
@@ -37,20 +38,31 @@ clean_val() {
     echo "$val" | xargs
 }
 
+# Helper: Strip outer quotes and trim leading/trailing whitespace ONLY
+# Preserves inner quotes required for 'eval' parsing (e.g., GP_ARGS).
+clean_val_preserve_inner() {
+    local val="$1"
+    # Repeatedly strip matching outer quote pairs (" or ') in a loop
+    while [[ ${#val} -ge 2 ]] && { [[ "${val:0:1}" == '"' && "${val: -1}" == '"' ]] || [[ "${val:0:1}" == "'" && "${val: -1}" == "'" ]]; }; do
+        val="${val:1:-1}"
+    done
+    echo "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
 # --- Resolve & Normalize Variables ---
 
 # 1. LOG_LEVEL
 RAW_LOG_LEVEL=$(get_env_value "LOG_LEVEL" "log_level")
 CLEAN_LOG_LEVEL=$(clean_val "$RAW_LOG_LEVEL")
 LOG_LEVEL="${CLEAN_LOG_LEVEL^^}"
-[ -z "$LOG_LEVEL" ] && LOG_LEVEL="INFO"
+[[ -z "$LOG_LEVEL" ]] && LOG_LEVEL="INFO"
 export LOG_LEVEL
 
 # 2. VPN_MODE
 RAW_VPN_MODE=$(get_env_value "VPN_MODE" "vpn_mode")
 CLEAN_VPN_MODE=$(clean_val "$RAW_VPN_MODE")
 VPN_MODE="${CLEAN_VPN_MODE,,}"
-[ -z "$VPN_MODE" ] && VPN_MODE="standard"
+[[ -z "$VPN_MODE" ]] && VPN_MODE="standard"
 export VPN_MODE
 
 # 3. VPN_PORTAL (Required)
@@ -71,7 +83,7 @@ export DNS_SERVERS
 
 # 6. GP_ARGS (Custom)
 RAW_GP_ARGS=$(get_env_value "GP_ARGS" "gp_args")
-GP_ARGS=$(clean_val "$RAW_GP_ARGS")
+GP_ARGS=$(clean_val_preserve_inner "$RAW_GP_ARGS")
 export GP_ARGS
 
 # 7. TIMEZONE
@@ -136,6 +148,26 @@ else
 fi
 export VPN_DISABLE_IPV6
 
+# 15. Allowed Subnets
+RAW_SUBNETS=$(get_env_value "ALLOWED_SUBNETS" "allowed_subnets")
+ALLOWED_SUBNETS=$(clean_val "$RAW_SUBNETS")
+export ALLOWED_SUBNETS
+
+# 16. Gost Auth
+RAW_GOST_AUTH=$(get_env_value "GOST_AUTH" "gost_auth")
+GOST_AUTH=$(clean_val "$RAW_GOST_AUTH")
+export GOST_AUTH
+
+# 17. API Token (Secure By Default)
+RAW_API_TOKEN=$(get_env_value "API_TOKEN" "api_token")
+API_TOKEN=$(clean_val "$RAW_API_TOKEN")
+IS_GENERATED_TOKEN=false
+if [[ -z "$API_TOKEN" ]]; then
+    API_TOKEN=$(openssl rand -hex 16)
+    IS_GENERATED_TOKEN=true
+fi
+export API_TOKEN
+
 # ==============================================================================
 # 2. RUNTIME SETUP
 # ==============================================================================
@@ -144,14 +176,12 @@ RUNTIME_DIR="/tmp/gp-runtime"
 CLIENT_LOG="/tmp/gp-logs/gp-client.log"
 SERVICE_LOG="/tmp/gp-logs/gp-service.log"
 MODE_FILE="$RUNTIME_DIR/gp-mode"
-PIPE_STDIN="$RUNTIME_DIR/gp-stdin"
-PIPE_CONTROL="$RUNTIME_DIR/gp-control"
 
 # Disable ANSI colors in Rust binaries
 export RUST_LOG_STYLE=never
 
 # Apply Timezone
-if [ -f "/usr/share/zoneinfo/$TZ" ]; then
+if [[ -f "/usr/share/zoneinfo/$TZ" ]]; then
     ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime && echo "$TZ" >/etc/timezone
 fi
 
@@ -167,7 +197,7 @@ log() {
         *) [[ "$level" == "INFO" || "$level" == "WARN" || "$level" == "ERROR" ]] && should_log=true ;;
     esac
 
-    if [ "$should_log" = true ]; then
+    if [[ "$should_log" == true ]]; then
         local timestamp
         timestamp=$(date +'%Y-%m-%dT%H:%M:%SZ')
         echo "[$timestamp] [$level] $msg" >>"$SERVICE_LOG"
@@ -177,9 +207,9 @@ log() {
 
 # --- VERBOSITY MAPPING ---
 GP_VERBOSITY=""
-if [ "$LOG_LEVEL" == "DEBUG" ]; then
+if [[ "$LOG_LEVEL" == "DEBUG" ]]; then
     GP_VERBOSITY="-v"
-elif [ "$LOG_LEVEL" == "TRACE" ]; then
+elif [[ "$LOG_LEVEL" == "TRACE" ]]; then
     GP_VERBOSITY="-vv"
 fi
 
@@ -191,11 +221,20 @@ log "INFO" "Mode:        $VPN_MODE"
 log "INFO" "Log Level:   $LOG_LEVEL"
 log "INFO" "Verbosity:   ${GP_VERBOSITY:-None}"
 log "INFO" "Portal:      ${VPN_PORTAL:-[Not Set]}"
-if [ -n "$VPN_GATEWAY" ]; then
+if [[ -n "$VPN_GATEWAY" ]]; then
     log "INFO" "Gateway:     $VPN_GATEWAY"
 fi
-if [ -n "$DNS_SERVERS" ]; then
+if [[ -n "$DNS_SERVERS" ]]; then
     log "INFO" "Custom DNS:  $DNS_SERVERS"
+fi
+
+if [[ "$IS_GENERATED_TOKEN" == true ]]; then
+    log "WARN" "------------------------------------------"
+    log "WARN" " NO API_TOKEN PROVIDED IN ENVIRONMENT!    "
+    log "WARN" " SECURE-BY-DEFAULT POSTURE IS ACTIVE.     "
+    log "WARN" " Auto-generated Token: ${API_TOKEN:0:4}...${API_TOKEN: -4} (use 'docker exec <container_id> printenv API_TOKEN' to retrieve)"
+else
+    log "INFO" "API Token:   [Provided via Environment]"
 fi
 log "INFO" "------------------------------------------"
 
@@ -213,10 +252,10 @@ trap cleanup SIGTERM SIGINT
 check_log_size() {
     local max_size=10485760
     for logfile in "$CLIENT_LOG" "$SERVICE_LOG"; do
-        if [ -f "$logfile" ]; then
+        if [[ -f "$logfile" ]]; then
             local size
             size=$(stat -c%s "$logfile")
-            if [ "$size" -gt "$max_size" ]; then
+            if [[ "$size" -gt "$max_size" ]]; then
                 echo "[$(date)] Log truncated due to size limit." >"$logfile"
             fi
         fi
@@ -230,7 +269,12 @@ check_services() {
         exit 1
     fi
 
-    # Check gost proxy status if it should be running
+    # Liveness check for control listener to prevent pipe deadlocks
+    if ! pgrep -f control_listener.py >/dev/null; then
+        log "ERROR" "CRITICAL: Control listener died. Restarting..."
+        runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
+    fi
+
     if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
         if ! pgrep -x gost >/dev/null; then
             log "ERROR" "CRITICAL: gost SOCKS proxy died unexpectedly."
@@ -241,11 +285,17 @@ check_services() {
     local mode
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
-    if [ "$mode" == "active" ]; then
+    if [[ "$mode" == "active" ]]; then
         if ! pgrep -f "gpservice" >/dev/null; then
             log "ERROR" "CRITICAL: gpservice died while VPN was active."
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
-            ps aux >&2
+            # Safely escape credentials and redact from the process dump
+            if [[ -n "$GOST_AUTH" ]]; then
+                ESCAPED_AUTH=$(printf "%s" "$GOST_AUTH" | sed 's/[\/&\\]/\\&/g')
+                ps aux | sed "s/${ESCAPED_AUTH}/***REDACTED***/g" >&2
+            else
+                ps aux >&2
+            fi
             log "ERROR" "--- DUMPING LOGS (Last 50 lines) ---"
             tail -n 50 "$SERVICE_LOG" >&2
         fi
@@ -257,7 +307,7 @@ dns_watchdog() {
     local last_dns=""
     while true; do
         local current_dns=""
-        if [ -f /etc/resolv.conf ]; then
+        if [[ -f /etc/resolv.conf ]]; then
             while read -r line; do
                 if [[ "$line" =~ ^nameserver\ +([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
                     local ip="${BASH_REMATCH[1]}"
@@ -269,16 +319,18 @@ dns_watchdog() {
             done </etc/resolv.conf
         fi
 
-        if [ -n "$current_dns" ] && [ "$current_dns" != "$last_dns" ]; then
+        if [[ -n "$current_dns" ]] && [[ "$current_dns" != "$last_dns" ]]; then
             if [[ "$current_dns" != "8.8.8.8" && "$current_dns" != "1.1.1.1" ]]; then
-                log "INFO" "VPN DNS Detected: $current_dns. Enabling Forwarding..."
-                if [ -n "$last_dns" ]; then
-                    iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
-                    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
+                if [[ "$VPN_MODE" != "socks" ]]; then
+                    log "INFO" "VPN DNS Detected: $current_dns. Enabling Forwarding..."
+                    if [[ -n "$last_dns" ]]; then
+                        iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
+                        iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
+                    fi
+                    iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$current_dns"
+                    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$current_dns"
+                    last_dns="$current_dns"
                 fi
-                iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$current_dns"
-                iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$current_dns"
-                last_dns="$current_dns"
             fi
         fi
         sleep 5
@@ -286,8 +338,8 @@ dns_watchdog() {
 }
 
 # --- 1. SETUP ---
-if [ -n "$PUID" ]; then usermod -u "$PUID" gpuser; fi
-if [ -n "$PGID" ]; then groupmod -g "$PGID" gpuser; fi
+if [[ -n "$PUID" ]]; then usermod -u "$PUID" gpuser; fi
+if [[ -n "$PGID" ]]; then groupmod -g "$PGID" gpuser; fi
 
 # --- 2. NETWORK & MODE DETECTION ---
 log "INFO" "Inspecting network environment..."
@@ -299,8 +351,8 @@ else
     log "DEBUG" "Network detection: Standard/Bridge interface detected."
 fi
 
-if [ "$VPN_MODE" == "gateway" ] || [ "$VPN_MODE" == "standard" ]; then
-    if [ "$IS_MACVLAN" = false ]; then
+if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
+    if [[ "$IS_MACVLAN" == false ]]; then
         log "WARN" "Configuration Mismatch: '$VPN_MODE' mode requested but no Macvlan interface found."
         log "WARN" "Gateway features require a direct routable IP (Macvlan)."
         log "WARN" ">>> REVERTING TO 'socks' MODE to ensure functionality. <<<"
@@ -310,17 +362,19 @@ fi
 
 # --- 3. DNS CONFIGURATION ---
 DNS_TO_APPLY=""
-if [ -n "$DNS_SERVERS" ]; then
+if [[ -n "$DNS_SERVERS" ]]; then
     DNS_TO_APPLY="$DNS_SERVERS"
-elif [ "$IS_MACVLAN" = true ]; then
+elif [[ "$IS_MACVLAN" == true ]]; then
     log "INFO" "Macvlan detected. Applying fallback defaults."
     DNS_TO_APPLY="8.8.8.8 1.1.1.1"
 fi
 
-if [ -n "$DNS_TO_APPLY" ]; then
+if [[ -n "$DNS_TO_APPLY" ]]; then
     log "INFO" "Overwriting /etc/resolv.conf"
     echo "options ndots:0" >/etc/resolv.conf
-    for ip in $DNS_TO_APPLY; do
+    # Using read -ra to safely split by spaces to appease shellcheck SC2086
+    read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
+    for ip in "${DNS_ARRAY[@]}"; do
         echo "nameserver $ip" >>/etc/resolv.conf
     done
 fi
@@ -330,16 +384,42 @@ iptables -F
 iptables -t nat -F
 iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
 
-if [ "$VPN_MODE" = "gateway" ] || [ "$VPN_MODE" = "standard" ]; then
-    if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]; then
+if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
+    # Dynamically enable IP forwarding for routing functionality
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]]; then
         echo 1 >/proc/sys/net/ipv4/ip_forward
     fi
     iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
-    iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+
+    if [[ -n "$ALLOWED_SUBNETS" ]]; then
+        log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
+        IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
+        for subnet_raw in "${SUBNETS[@]}"; do
+            # Trim whitespace to prevent regex mismatch
+            subnet="$(echo "$subnet_raw" | xargs)"
+            [[ -z "$subnet" ]] && continue
+
+            # Secure CIDR Validation enforcing 0-255 octets and 0-32 prefix
+            if [[ "$subnet" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$ ]]; then
+                iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
+            else
+                log "ERROR" "Invalid subnet CIDR format ignored: $subnet"
+            fi
+        done
+        iptables -A FORWARD -o tun0 -j DROP
+    else
+        iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+    fi
+
     iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+elif [[ "$VPN_MODE" == "socks" ]]; then
+    # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]]; then
+        echo 0 >/proc/sys/net/ipv4/ip_forward
+    fi
 fi
 
-if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
+if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
     iptables -A INPUT -p udp --dport 1080 -j ACCEPT
 fi
@@ -347,10 +427,11 @@ fi
 # --- 5. INIT ENVIRONMENT ---
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR" /tmp/gp-logs
-chmod 700 "$RUNTIME_DIR"
 
-mkfifo "$PIPE_STDIN" "$PIPE_CONTROL"
+# Harden permissions immediately to prevent logs from being broadly readable
+chmod 700 "$RUNTIME_DIR" /tmp/gp-logs
 touch "$CLIENT_LOG" "$SERVICE_LOG"
+chmod 600 "$CLIENT_LOG" "$SERVICE_LOG"
 
 chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$RUNTIME_DIR"
 
@@ -361,21 +442,36 @@ chmod 644 "$MODE_FILE"
 log "INFO" "Starting Services..."
 dns_watchdog &
 
-if [ "$VPN_MODE" = "socks" ] || [ "$VPN_MODE" = "standard" ]; then
-    # GOST natively handles both TCP and UDP on the specified SOCKS5 port
-    # Enable UDP relay explicitly; gost v3 disables it by default
-    # Output is captured in the service log for debugging
-    runuser -u gpuser -- gost -L=socks5://:1080?udp=true >>"$SERVICE_LOG" 2>&1 &
+# Setup persistent control pipe to eliminate Python interpreter startup overhead in the polling loop
+# Note: The FIFO is intentionally created and opened as root before chown so child processes
+# inherit the already-open fd 3. The chown ensures later path-based opens use gpuser.
+mkfifo "$RUNTIME_DIR/gp_control_pipe"
+exec 3<>"$RUNTIME_DIR/gp_control_pipe"
+chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
+
+if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
+    gost_args="-L=socks5://:1080?udp=true"
+    if [[ -n "$GOST_AUTH" ]]; then
+        if [[ "$GOST_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
+            log "INFO" "SOCKS5 Authentication Enabled."
+            gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
+        else
+            log "ERROR" "GOST_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
+            GOST_AUTH=""
+        fi
+    fi
+    runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
 fi
 
-# Pass configuration to Server
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" \
-    python3 -u /var/www/html/server.py >>"$SERVICE_LOG" 2>&1 &
+# Ensure API_TOKEN and GOST_AUTH states are definitively passed down to the server context
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" GOST_AUTH="$GOST_AUTH" \
+    python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
-# FIX: Stream logs to Docker stdout in background
+# Start persistent control listener directly bound to the pipe descriptor
+runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
+
 tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
-# Grace period
 sleep 3
 
 # --- 7. MAIN LOOP ---
@@ -383,11 +479,14 @@ while true; do
     check_services
     check_log_size
 
-    if read -r -t 2 _ <"$PIPE_CONTROL"; then
+    # Listen on local TCP socket via persistent background pipe (2-second timeout)
+    CMD=""
+    read -r -t 2 CMD <&3 || true
+    if [[ "$CMD" == "START" ]]; then
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 
-        # 1. Start gpservice (On-Demand)
+        # 1. Start gpservice
         log "INFO" "Starting gpservice..."
         runuser -u gpuser -- bash -c "
             /usr/bin/gpservice 2>&1 | \
@@ -397,48 +496,52 @@ while true; do
 
         sleep 2
 
-        # 2. Start gpclient
-        runuser -u gpuser -- bash -c "
-            > \"$CLIENT_LOG\"
-            exec 3<> \"$PIPE_STDIN\"
+        # 2. Start gpclient using environment variables to avoid outer shell interpolation
+        # shellcheck disable=SC2016
+        runuser -u gpuser -- env VPN_PORTAL="$VPN_PORTAL" VPN_GATEWAY="$VPN_GATEWAY" \
+            VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
+            VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
+            GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
+            bash -c '
+            set -o pipefail
+            > "$CLIENT_LOG"
 
-            # Build Arguments Array
-            declare -a args
-            args=(sudo gpclient $GP_VERBOSITY --fix-openssl connect \"$VPN_PORTAL\" --browser remote)
+            declare -a args=(sudo gpclient)
 
-            # Gateway Logic
-            if [ -n \"$VPN_GATEWAY\" ]; then
-                args+=(--gateway \"$VPN_GATEWAY\")
+            [[ -n "$GP_VERBOSITY" ]] && args+=("$GP_VERBOSITY")
+            args+=(--fix-openssl connect "$VPN_PORTAL" --browser remote)
+
+            if [[ -n "$VPN_GATEWAY" ]]; then
+                args+=("--gateway" "$VPN_GATEWAY")
             else
                 args+=(--as-gateway)
             fi
 
-            # Optional Configuration
-            [ \"$VPN_HIP_REPORT\" == \"true\" ]   && args+=(--hip)
-            [ \"$VPN_NO_DTLS\" == \"true\" ]      && args+=(--no-dtls)
-            [ \"$VPN_DISABLE_IPV6\" == \"true\" ] && args+=(--disable-ipv6)
+            [[ "$VPN_HIP_REPORT" == "true" ]]   && args+=(--hip)
+            [[ "$VPN_NO_DTLS" == "true" ]]      && args+=(--no-dtls)
+            [[ "$VPN_DISABLE_IPV6" == "true" ]] && args+=(--disable-ipv6)
 
-            [ -n \"$VPN_OS\" ]             && args+=(--os \"$VPN_OS\")
-            [ -n \"$VPN_OS_VERSION\" ]     && args+=(--os-version \"$VPN_OS_VERSION\")
-            [ -n \"$VPN_CLIENT_VERSION\" ] && args+=(--client-version \"$VPN_CLIENT_VERSION\")
+            [[ -n "$VPN_OS" ]]             && args+=(--os "$VPN_OS")
+            [[ -n "$VPN_OS_VERSION" ]]     && args+=(--os-version "$VPN_OS_VERSION")
+            [[ -n "$VPN_CLIENT_VERSION" ]] && args+=(--client-version "$VPN_CLIENT_VERSION")
 
-            # Custom Arguments (handle word splitting for flags)
-            if [ -n \"\$GP_ARGS\" ]; then
-                # Option B: Use eval to parse quoted arguments correctly (e.g. --os \"Windows 10\")
-                # SECURITY NOTE: This uses eval on env var content. Ensure GP_ARGS is trusted.
-                eval \"set -- \$GP_ARGS\"
-                for arg in \"\$@\"; do
-                    args+=(\"\$arg\")
-                done
+            if [[ -n "$GP_ARGS" ]]; then
+                # Trust boundary: GP_ARGS is operator-controlled. Reject dangerous shell metacharacters before eval.
+                if [[ "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\] ]]; then
+                    echo "[Entrypoint] CRITICAL: Unsafe shell metacharacters detected. GP_ARGS rejected." >> "$SERVICE_LOG"
+                else
+                    eval "set -- $GP_ARGS"
+                    for arg in "$@"; do
+                        args+=("$arg")
+                    done
+                fi
             fi
 
-            # Serialize array to safe string for 'script -c' using shell escaping
-            # This prevents injection from env vars into the script execution shell
-            SAFE_CMD=\$(printf \"%q \" \"\${args[@]}\")
+            SAFE_CMD=$(printf "%q " "${args[@]}")
 
-            echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"$SERVICE_LOG\"
-            script -q -c \"\$SAFE_CMD\" /dev/null <&3 >> \"$CLIENT_LOG\" 2>&1
-        "
+            echo "[Entrypoint] Executing: $SAFE_CMD" >> "$SERVICE_LOG"
+            python3 /opt/gp-proxy/stdin_proxy.py | script -q -c "$SAFE_CMD" /dev/null >> "$CLIENT_LOG" 2>&1
+        '
 
         # 3. Cleanup after disconnect
         log "WARN" "gpclient exited. Cleaning up services..."
