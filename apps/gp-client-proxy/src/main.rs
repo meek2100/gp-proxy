@@ -66,7 +66,19 @@ struct ProxyConfig {
 }
 
 impl ProxyConfig {
-    /// Generates the authenticated browser URL to pass the token to the frontend (if legacy API_TOKEN is used)
+    /// Builds the frontend URL and appends the legacy API token as a `token` query parameter when configured.
+    ///
+    /// If the config has an empty token (TOFU mode), returns the base URL unchanged; otherwise returns the base URL with `/?token=<encoded-token>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg_with_token = ProxyConfig { base_url: "https://example.com".into(), token: "s3cr3t".into(), private_key: None };
+    /// assert!(cfg_with_token.browser_url().starts_with("https://example.com/?token="));
+    ///
+    /// let cfg_no_token = ProxyConfig { base_url: "https://example.com".into(), token: "".into(), private_key: None };
+    /// assert_eq!(cfg_no_token.browser_url(), "https://example.com");
+    /// ```
     fn browser_url(&self) -> String {
         if self.token.is_empty() {
             // When using TOFU, the web interface utilizes a securely injected ephemeral token.
@@ -77,7 +89,17 @@ impl ProxyConfig {
     }
 }
 
-/// Helper function to safely percent-encode the token without requiring additional dependencies
+/// Percent-encodes a token for safe inclusion in URLs, preserving unreserved characters.
+///
+/// The returned string encodes every byte outside ASCII letters, digits, and the characters
+/// `-`, `_`, `.`, and `~` as `%` followed by two uppercase hex digits.
+///
+/// # Examples
+///
+/// ```
+/// let s = encode_token("user:pass@host");
+/// assert_eq!(s, "user%3Apass%40host");
+/// ```
 fn encode_token(token: &str) -> String {
     token
         .as_bytes()
@@ -91,7 +113,32 @@ fn encode_token(token: &str) -> String {
         .collect()
 }
 
-/// Helper function to uniformly inject the Authorization header OR the Ed25519 signature payload
+/// Adds authentication headers to a ureq request according to the provided ProxyConfig.
+///
+/// If `config.token` is non-empty, sets `Authorization: Bearer <token>`. Otherwise, if
+/// `config.private_key` is present, signs the string `"<timestamp>:<path>"` using Ed25519
+/// and sets `X-Timestamp` (seconds since UNIX epoch) and `X-Signature` (base64 of the signature).
+/// If neither token nor private key is available, returns the original request unchanged.
+///
+/// # Parameters
+/// - `req` — the request builder to augment.
+/// - `config` — proxy configuration that may contain a legacy token or an Ed25519 private key.
+/// - `path` — request path used when constructing the signed message (for example `"/connect"`).
+///
+/// # Returns
+/// The request builder with authentication headers applied when possible.
+///
+/// # Examples
+///
+/// ```
+/// # use crate::ProxyConfig;
+/// # fn example() {
+/// let cfg = ProxyConfig { base_url: "http://localhost".into(), token: "token123".into(), private_key: None };
+/// let req = ureq::get("http://localhost/status.json");
+/// let authed = with_auth(req, &cfg, "/status.json");
+/// let _resp = authed.call().ok();
+/// # }
+/// ```
 fn with_auth<T>(
     req: ureq::RequestBuilder<T>,
     config: &ProxyConfig,
@@ -328,7 +375,20 @@ fn poll_for_success(config: &ProxyConfig, agent: &ureq::Agent) {
     wait_for_enter();
 }
 
-/// Fetches the proxy server's status using a fast-timeout HTTP agent.
+/// Fetches the proxy server status by requesting `<base_url>/status.json` and parsing the response.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # fn try_main(config: &crate::ProxyConfig, agent: &ureq::Agent) -> Result<()> {
+/// let status = crate::fetch_status(config, agent)?;
+/// # Ok(()) }
+/// ```
+///
+/// # Returns
+///
+/// The parsed `ServerStatus` on success.
 fn fetch_status(config: &ProxyConfig, agent: &ureq::Agent) -> Result<ServerStatus> {
     let req = agent.get(&format!("{}/status.json", config.base_url));
     let resp: ServerStatus = with_auth(req, config, "/status.json")
@@ -352,6 +412,24 @@ fn print_header() {
 // SETUP LOGIC
 // =============================================================================
 
+/// Runs an interactive setup wizard to configure and pair with a GP Proxy Server.
+///
+/// The wizard attempts automatic network discovery, prompts the user to confirm or enter a server URL,
+/// and offers either a manual API token or Trust-On-First-Use (TOFU) pairing using an Ed25519 identity.
+/// On successful configuration it persists the ProxyConfig, tries to register a system URL handler,
+/// opens the web dashboard in the default browser, and polls the server for a successful connection.
+///
+/// # Errors
+///
+/// Returns an `Err` if an I/O error, configuration persistence failure, or network error occurs during
+/// discovery, pairing, or saving the configuration.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// // Run the interactive setup wizard (will prompt on stdin/stdout).
+/// let _ = run_setup_wizard();
+/// ```
 fn run_setup_wizard() -> Result<()> {
     clear_screen();
     print_header();
@@ -480,6 +558,26 @@ fn run_setup_wizard() -> Result<()> {
     Ok(())
 }
 
+/// Send the given callback URL to the configured proxy server's /submit endpoint.
+///
+/// Loads the local ProxyConfig, posts a form with `callback_url` to `<base_url>/submit` using
+/// the configured authentication (Bearer token or TOFU signing), and returns an error if the
+/// server responds with a non-200 status or if loading/sending fails.
+///
+/// # Arguments
+///
+/// * `url` - The callback URL received from the OS protocol handler to forward to the server.
+///
+/// # Returns
+///
+/// `Ok(())` on success, otherwise an `anyhow::Error` describing the failure.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// // Forward a protocol callback URL to the configured server.
+/// handle_link("globalprotect://open?token=abc123").unwrap();
+/// ```
 fn handle_link(url: &str) -> Result<()> {
     let config = load_config()?;
     let target_endpoint = format!("{}/submit", config.base_url.trim_end_matches('/'));
@@ -529,6 +627,37 @@ fn get_config_path() -> Result<PathBuf> {
     Ok(config_dir.join(CONFIG_FILE_NAME))
 }
 
+/// Loads the saved proxy configuration from the application's config file.
+///
+/// Expects the config file to contain:
+/// 1) A base URL on the first line (required).
+/// 2) An API token on the second line (may be empty).
+/// 3) An optional base64-encoded 32-byte Ed25519 private key on the third line (may be empty).
+///
+/// # Returns
+///
+/// A `ProxyConfig` populated from the file: `base_url`, `token`, and `private_key` (as `Some([u8;32])` if present and valid, otherwise `None`).
+///
+/// # Errors
+///
+/// Returns an error if the config file is missing, unreadable, or the first line (base URL) is empty.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Write a config manually to the configured path (example only; avoid overwriting a real config).
+/// use std::fs;
+/// use std::io::Write;
+/// let path = crate::get_config_path().unwrap();
+/// let mut file = fs::File::create(&path).unwrap();
+/// writeln!(file, "http://localhost:8001").unwrap();
+/// writeln!(file, "my-token").unwrap();
+/// // optional third line can be a base64 32-byte private key or empty
+///
+/// let cfg = crate::load_config().unwrap();
+/// assert_eq!(cfg.base_url, "http://localhost:8001");
+/// assert_eq!(cfg.token, "my-token");
+/// ```
 fn load_config() -> Result<ProxyConfig> {
     let path = get_config_path()?;
     if !path.exists() {
@@ -565,6 +694,30 @@ fn load_config() -> Result<ProxyConfig> {
     })
 }
 
+/// Persist the given ProxyConfig to the user's configuration file.
+///
+/// Writes the config as plain text where the first line is the base URL,
+/// the second line is the token (may be empty), and the optional third line
+/// is the base64-encoded 32-byte private key.
+///
+/// # Errors
+///
+/// Returns an error if the configuration path cannot be determined or if
+/// writing the file fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::error::Error;
+///
+/// // Construct a config and persist it
+/// let cfg = ProxyConfig {
+///     base_url: "http://127.0.0.1:8001".into(),
+///     token: "mytoken".into(),
+///     private_key: None,
+/// };
+/// save_config(&cfg).expect("failed to save config");
+/// ```
 fn save_config(config: &ProxyConfig) -> Result<()> {
     let mut content = format!("{}\n{}\n", config.base_url, config.token);
     if let Some(pk) = &config.private_key {

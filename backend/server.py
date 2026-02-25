@@ -272,8 +272,9 @@ class Beacon(threading.Thread):
 
     def run(self) -> None:
         """
-        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the best IP, server port,
-        and hostname.
+        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the agent's IP, HTTP port, and hostname.
+        
+        When a "GP_DISCOVER" message is received, sends a UTF-8 JSON response with keys "ip", "port", and "hostname". Runs indefinitely and logs unexpected errors.
         """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
@@ -569,12 +570,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _is_authorized(self) -> bool:
         """
-        Validates the request against the local Ephemeral Session Token, the optional API_TOKEN,
-        or a valid Trust-On-First-Use (TOFU) Ed25519 signature from a paired Rust client.
-        Uses hmac.compare_digest for timing-safe string comparisons.
-
+        Determine whether the incoming HTTP request is authorized for protected endpoints.
+        
+        Accepts one of: the Ephemeral GUI bearer token, an API token from the API_TOKEN environment variable, or a TOFU Ed25519 signature from a previously paired client. For TOFU authentication the request must include X-Signature (base64) and X-Timestamp headers; the signature is verified over the message "{timestamp}:{path}" and the timestamp must be within 60 seconds of server time to limit replay attacks.
+        
         Returns:
-            bool: `True` if authorized, `False` otherwise.
+            `true` if the request is authorized, `false` otherwise.
         """
         # 1. Bearer Token Check (Ephemeral GUI or Manual Override API_TOKEN)
         auth_header = self.headers.get("Authorization", "")
@@ -607,8 +608,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """
-        Log HTTP requests to the module logger. Avoids index errors on missing args.
-        Safe cast args[0] to string to prevent Python 3.14+ HTTPStatus enum crashes during syntax errors.
+        Log HTTP requests to the module logger, using debug level for requests to "status.json".
+        
+        Safely formats the message even if no args are provided and casts the first arg to string to avoid crashes with HTTPStatus enum values on newer Python versions.
+        
+        Parameters:
+        	format (str): Format string for the log message.
+        	*args (Any): Positional values to be interpolated into `format`.
         """
         if args and "status.json" in str(args[0]):
             logger.debug("%s - - %s", self.client_address[0], format % args)
@@ -634,7 +640,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: C901
         """
-        Handle incoming HTTP GET requests for status, log download, and static file serving.
+        Handle HTTP GET requests for the web UI and API endpoints.
+        
+        Processes requests for:
+        - /status.json: returns current VPN state as JSON (requires authorization; responds 401 if unauthorized).
+        - /download_logs: streams combined service and client logs as a text attachment (requires authorization and debug/trace log level; responds 401 or 403 as appropriate).
+        - /: serves index.html.
+        Blocks direct access to sensitive file types (.py, .pyc, .pyo, .env, .sh) and otherwise delegates to the base handler for static files.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
         request_path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, "path", "")).path).lower()
@@ -685,8 +697,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _handle_pair(self, length: int) -> None:
         """
-        Handle the Trust-On-First-Use (TOFU) public key pairing request from the Rust client.
-        Prevents pairing if already paired or if manual API_TOKEN locking is engaged.
+        Handle a TOFU Ed25519 public key pairing request from a Rust client.
+        
+        Accepts a JSON payload in the request body containing a base64-encoded "public_key",
+        stores the decoded key as the module-level paired Ed25519 public key, and responds with
+        HTTP 200 and "OK" on success. Pairing is rejected with HTTP 403 if an API token is
+        configured (pairing disabled) or if a key is already paired. Missing or invalid payloads
+        result in HTTP 400.
+        
+        Parameters:
+        	length (int): Number of bytes to read from the request body (Content-Length).
         """
         global _paired_pubkey
         if os.getenv("API_TOKEN"):
@@ -717,8 +737,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _handle_connect(self) -> None:
         """
-        Handle an HTTP request to initiate a VPN connection.
-        Ensures existing processes are dead before writing to the control IPC.
+        Initiate a VPN connection by terminating any running VPN processes and requesting a start via the control IPC.
+        
+        Terminates existing VPN-related processes, sends a "START" command to the control IPC, and writes an HTTP response reflecting the outcome:
+        - Responds 200 with body "OK" when the start command was accepted.
+        - Responds 503 with an explanatory message when the control IPC is unavailable.
         """
         logger.info("User requested Connection")
         _kill_and_poll()
@@ -775,16 +798,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """
-        Handle incoming HTTP POST requests for connection control routing.
-        Validates the authorization token before routing to explicit handlers.
-        Globally enforces payload size limits.
-
-        Supported Endpoints:
-            - /api/pair: Initiates TOFU Ed25519 pairing. (Unauthenticated)
-            - /connect: Initiates a new VPN connection. Requires no payload.
-            - /disconnect: Terminates active VPN client processes. Requires no payload.
-            - /submit: Forwards authentication tokens or form inputs to the VPN client.
-              Requires a form-encoded payload containing 'callback_url' or 'user_input'.
+        Route POST requests for VPN control, enforcing payload size limits and authorization before dispatching to endpoint handlers.
+        
+        Supports the following endpoints:
+        - /api/pair: Accepts TOFU Ed25519 pairing requests; allowed without prior authorization.
+        - /connect: Starts a VPN connection; requires authorization.
+        - /disconnect: Stops the VPN client processes; requires authorization.
+        - /submit: Forwards form-encoded input (expects 'callback_url' or 'user_input') to the VPN client; requires authorization.
+        
+        Behavior:
+        - Validates Content-Length and rejects requests larger than 8192 bytes (413) or negative lengths (400).
+        - Returns 401 for unauthorized requests (except /api/pair) and 404 for unknown endpoints.
         """
         request_path = getattr(self, "path", "")
 
