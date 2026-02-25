@@ -1,4 +1,12 @@
 # File: server.py
+"""
+Container Agent - GP Proxy Web Interface and Control Server.
+
+Hosts the primary user-facing web dashboard and API endpoints for managing the VPN lifecycle.
+Manages thread-safe log parsing for state detection, enforces Bearer token authentication,
+and orchestrates inter-process communication (IPC) with the background OpenConnect processes.
+"""
+
 import hashlib
 import hmac
 import http.server
@@ -191,7 +199,8 @@ _best_ip_lock: threading.Lock = threading.Lock()
 def get_best_ip() -> str:
     """
     Selects the container's primary outbound IP address.
-    Attempts to determine the best local IPv4 address by creating a UDP socket.
+    Attempts to determine the best local IPv4 address by creating a UDP socket
+    and targeting a reliable external IP to force routing selection.
     Caches the result to avoid repeated socket creation during frequent polling.
 
     Returns:
@@ -207,7 +216,8 @@ def get_best_ip() -> str:
 
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("10.255.255.255", 1))
+                # Target Google DNS to ensure the OS default gateway route is selected
+                s.connect(("8.8.8.8", 80))
                 ip = str(s.getsockname()[0])
         except OSError:
             _best_ip_cache = "127.0.0.1"
@@ -269,7 +279,7 @@ class Beacon(threading.Thread):
 
 # --- Logging Setup ---
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "DEBUG").upper(),
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="[%(asctime)s] [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%SZ",
     handlers=[
@@ -513,7 +523,7 @@ def _kill_and_poll() -> None:
     if sys.platform == "win32":
         taskkill: str | None = shutil.which("taskkill")
         if taskkill is None:
-            taskkill = os.environ.get("WINDIR", "C:\\Windows") + "\\System32\\taskkill.exe"
+            taskkill = str(Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe")
 
         if os.path.exists(taskkill):
             subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
@@ -685,10 +695,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Handle form-encoded submissions containing either a callback URL or user-provided input.
         Forwards the payload to the service input IPC. Prevents memory exhaustion attacks.
-        Safely falls back on dictionary access to prevent IndexError on empty bodies.
+        Safely utilizes strict parsing to prevent dictionary inference errors.
         """
         try:
-            data: dict[str, list[str]] = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+            raw_data: str = self.rfile.read(length).decode("utf-8")
+            data: dict[str, list[str]] = urllib.parse.parse_qs(raw_data, strict_parsing=True)
 
             if user_input_list := (data.get("callback_url") or data.get("user_input") or []):
                 user_input: str = user_input_list[0]
@@ -704,8 +715,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self.send_error(503, "Service not ready (IPC absent)")
             else:
                 self.send_error(400, "Empty input")
+        except ValueError, KeyError, TypeError:
+            logger.warning("Invalid input format received")
+            self.send_error(400, "Bad Request")
         except Exception:
-            logger.exception("Input error")
+            logger.exception("Internal input processing error")
             self.send_error(500, "Internal server error")
 
     def do_POST(self) -> None:

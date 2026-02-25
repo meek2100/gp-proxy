@@ -10,7 +10,7 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
 
 **Strict linting and formatting are enforced via CI and Pre-commit hooks.** Any code changes must adhere to these standards to pass the `lint` workflow.
 
-- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`. Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]` to satisfy Python 3.14 static type guarantees.
+- **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14. Note: Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`. Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]` to satisfy Python 3.14 static type guarantees. All module level files must include descriptive docstrings.
 - **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
 - **Shell:** Uses `shellcheck` (gcc format).
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.
@@ -29,7 +29,7 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
 - **Source Code Isolation:** Python backend scripts (`server.py`, `control_listener.py`, `stdin_proxy.py`) MUST reside in `/opt/gp-proxy/` and NOT in the `/var/www/html/` web root. This prevents accidental source code exposure via the `http.server.SimpleHTTPRequestHandler`.
 - **Timing-Safe Authentication:** Any token comparison logic (such as checking `API_TOKEN` in HTTP headers) must strictly utilize `hmac.compare_digest()` to prevent timing attacks.
 - **Web Server (`server.py`):**
-    - Runs on Port 8001.
+    - Runs on Port 8001. Fallback default log level is strictly `INFO`.
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
@@ -74,7 +74,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ### Container (Server)
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`.
-- **`server.py`:** Python Control Server. Handles optional `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.8+ Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management (`_kill_and_poll`) dynamically detects the host OS (`sys.platform == "win32"`) to utilize `taskkill`, enabling full native Windows development and testing outside the container.
+- **`server.py`:** Python Control Server. Handles optional `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.8+ Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management (`_kill_and_poll`) dynamically detects the host OS (`sys.platform == "win32"`) to utilize `taskkill`, enabling full native Windows development and testing outside the container via cross-platform path mapping (`pathlib`).
 - **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py` alongside dynamic MD5 cache-busting hashes applied at container startup. Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
 
 ### Host (Client)
@@ -101,9 +101,9 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ## System Optimizations & Guardrails (DO NOT REMOVE)
 
 - **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states.
-- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests. Additionally, the `get_best_ip()` routine caches the outbound local UDP IP string behind a 60-second TTL to avoid exhausting host system sockets during high-frequency API polling.
+- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests. Additionally, the `get_best_ip()` routine caches the outbound local UDP IP string behind a 60-second TTL to avoid exhausting host system sockets during high-frequency API polling. It achieves this strictly by targeting an external IP (`8.8.8.8`) via UDP to guarantee correct gateway network resolution.
 - **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows. The listener endpoints (`control_listener.py` and `stdin_proxy.py`) must utilize a non-blocking `select.select` wait approach inside a `while True` loop to act as persistent daemons capable of receiving graceful interrupt signals.
-- **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes.
+- **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes. Handlers must strictly filter standard HTTP errors (`ValueError`, `KeyError`, `TypeError`) before catching generic `Exception` objects to avoid masking underlying API implementation issues in `500` HTTP blocks.
 - **Shell Injection Boundaries:** `eval` is utilized in `entrypoint.sh` strictly to parse quoted string flags passed dynamically via the `GP_ARGS` environment variable. This constitutes a trust boundary; the operator is responsible for sanitizing `GP_ARGS` at the orchestrator level.
 - **Cache Invalidation:** `server.py` injects MD5 cache-busting query strings directly into `index.html` at runtime. CSS and JS headers must be left as `immutable` to preserve bandwidth, as the injected hash implicitly guarantees cache breaking on new container releases.
 

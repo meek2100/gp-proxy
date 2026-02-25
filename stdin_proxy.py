@@ -1,4 +1,13 @@
 # File: stdin_proxy.py
+"""
+Container Agent - Standard Input Proxy.
+
+Bridges the Python HTTP server and the OpenConnect subprocess. It listens on a local
+TCP port for sensitive authentication payloads (like passwords or SAML callbacks) submitted
+via the web UI, and pipes them directly into stdout. The bash entrypoint captures this
+stream and injects it securely into the running VPN client's stdin.
+"""
+
 import logging
 import os
 import select
@@ -13,11 +22,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 def main() -> None:
     """
     Proxies incoming TCP socket payloads directly to standard output.
-
-    This script acts as a bridge between the Python HTTP server and the
-    OpenConnect subprocess. It listens on a local TCP port and pipes any
-    received data (like passwords or 2FA codes) directly into stdout, which
-    the bash entrypoint captures and pipes into the VPN client.
 
     Returns:
         None: Exits cleanly when the socket is closed or the process terminates.
@@ -35,7 +39,7 @@ def main() -> None:
                     r: list[socket.socket]
                     r, _, _ = select.select([s], [], [], 2.0)
                     if r:
-                        c, _ = s.accept()
+                        c, _addr = s.accept()
                         c.settimeout(5.0)  # Prevent zombie connections from dead senders
                         with c:
                             while True:
