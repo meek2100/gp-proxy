@@ -1,4 +1,13 @@
 # File: control_listener.py
+"""
+Container Agent - Control IPC Listener.
+
+Acts as a persistent background daemon that receives control commands (like START/STOP)
+over a local TCP socket from the Python HTTP server (`server.py`) and pipes them to stdout.
+The `entrypoint.sh` supervisor loop polls this output to orchestrate the OpenConnect process
+lifecycle safely outside the web server's execution context.
+"""
+
 import os
 import select
 import socket
@@ -49,7 +58,7 @@ def _run_server_loop(s: socket.socket) -> None:
             r: list[socket.socket]
             r, _, _ = select.select([s], [], [], 2.0)
             if r:
-                c, _ = s.accept()
+                c, _addr = s.accept()
                 c.settimeout(5.0)  # Prevent zombie connections from dead senders
                 with c:
                     _process_connection(c)
