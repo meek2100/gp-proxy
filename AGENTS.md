@@ -14,7 +14,7 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
     - Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`.
     - Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]`.
     - **Exception Syntax Constraint:** Multi-target exceptions must strictly utilize the Python 3 tuple syntax `except (ValueError, KeyError, TypeError):`. The comma-separated Python 2 syntax will invoke an immediate container-crashing `SyntaxError`. **If the `ruff format` pre-commit hook aggressively strips these required parentheses, you must apply a `# fmt: skip` suppression comment directly at the end of the line being stripped to lock the syntax and pass `mypy` checks.**
-    - All module level files must include descriptive docstrings.
+    - All module-level files must include descriptive docstrings.
 - **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
 - **Shell:** Uses `shellcheck` (gcc format). **Do not use `xargs` to trim sensitive strings like API Tokens or Passwords, as it silently mangles internal spaces.**
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.

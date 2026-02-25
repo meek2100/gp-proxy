@@ -256,7 +256,10 @@ function resetSSOButtonState(newUrl) {
         btn.innerText = "Open SSO Login";
         btn.href = newUrl;
     }
-    document.getElementById("btn-restart-auth").classList.add("hidden");
+    const restartBtn = document.getElementById("btn-restart-auth");
+    if (restartBtn) {
+        restartBtn.classList.add("hidden");
+    }
 }
 
 /**
