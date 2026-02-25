@@ -48,9 +48,6 @@ def main() -> None:
                 except KeyboardInterrupt:
                     # Honor intentional shutdowns cleanly
                     sys.exit(0)
-                except SystemExit:
-                    # Honor intentional shutdowns cleanly
-                    sys.exit(0)
     except OSError:
         # Only crash on unrecoverable initialization errors (e.g., port conflict)
         logger.exception(f"Fatal bind error on port {port}")

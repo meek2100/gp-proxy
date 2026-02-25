@@ -497,41 +497,41 @@ while true; do
             VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
             VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
-            bash -c "
+            bash -c '
             set -o pipefail
-            > \"$CLIENT_LOG\"
+            > "$CLIENT_LOG"
 
             declare -a args=(sudo gpclient)
 
-            [[ -n \"\$GP_VERBOSITY\" ]] && args+=(\"\$GP_VERBOSITY\")
-            args+=(--fix-openssl connect \"\$VPN_PORTAL\" --browser remote)
+            [[ -n "$GP_VERBOSITY" ]] && args+=("$GP_VERBOSITY")
+            args+=(--fix-openssl connect "$VPN_PORTAL" --browser remote)
 
-            if [[ -n \"\$VPN_GATEWAY\" ]]; then
-                args+=(--gateway \"\$VPN_GATEWAY\")
+            if [[ -n "$VPN_GATEWAY" ]]; then
+                args+=("--gateway" "$VPN_GATEWAY")
             else
                 args+=(--as-gateway)
             fi
 
-            [[ \"\$VPN_HIP_REPORT\" == \"true\" ]]   && args+=(--hip)
-            [[ \"\$VPN_NO_DTLS\" == \"true\" ]]      && args+=(--no-dtls)
-            [[ \"\$VPN_DISABLE_IPV6\" == \"true\" ]] && args+=(--disable-ipv6)
+            [[ "$VPN_HIP_REPORT" == "true" ]]   && args+=(--hip)
+            [[ "$VPN_NO_DTLS" == "true" ]]      && args+=(--no-dtls)
+            [[ "$VPN_DISABLE_IPV6" == "true" ]] && args+=(--disable-ipv6)
 
-            [[ -n \"\$VPN_OS\" ]]             && args+=(--os \"\$VPN_OS\")
-            [[ -n \"\$VPN_OS_VERSION\" ]]     && args+=(--os-version \"\$VPN_OS_VERSION\")
-            [[ -n \"\$VPN_CLIENT_VERSION\" ]] && args+=(--client-version \"\$VPN_CLIENT_VERSION\")
+            [[ -n "$VPN_OS" ]]             && args+=(--os "$VPN_OS")
+            [[ -n "$VPN_OS_VERSION" ]]     && args+=(--os-version "$VPN_OS_VERSION")
+            [[ -n "$VPN_CLIENT_VERSION" ]] && args+=(--client-version "$VPN_CLIENT_VERSION")
 
-            if [[ -n \"\$GP_ARGS\" ]]; then
-                eval \"set -- \$GP_ARGS\"
-                for arg in \"\$@\"; do
-                    args+=(\"\$arg\")
+            if [[ -n "$GP_ARGS" ]]; then
+                eval "set -- $GP_ARGS"
+                for arg in "$@"; do
+                    args+=("$arg")
                 done
             fi
 
-            SAFE_CMD=\$(printf \"%q \" \"\${args[@]}\")
+            SAFE_CMD=$(printf "%q " "${args[@]}")
 
-            echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"\$SERVICE_LOG\"
-            python3 /opt/gp-proxy/stdin_proxy.py | script -q -c \"\$SAFE_CMD\" /dev/null >> \"\$CLIENT_LOG\" 2>&1
-        "
+            echo "[Entrypoint] Executing: $SAFE_CMD" >> "$SERVICE_LOG"
+            python3 /opt/gp-proxy/stdin_proxy.py | script -q -c "$SAFE_CMD" /dev/null >> "$CLIENT_LOG" 2>&1
+        '
 
         # 3. Cleanup after disconnect
         log "WARN" "gpclient exited. Cleaning up services..."
