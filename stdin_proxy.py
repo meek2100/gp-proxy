@@ -38,8 +38,10 @@ def main() -> None:
                         c, _ = s.accept()
                         c.settimeout(5.0)  # Prevent zombie connections from dead senders
                         with c:
-                            data: bytes = c.recv(4096)
-                            if data:
+                            while True:
+                                data: bytes = c.recv(4096)
+                                if not data:
+                                    break
                                 sys.stdout.buffer.write(data)
                                 sys.stdout.buffer.flush()
                 except OSError:
