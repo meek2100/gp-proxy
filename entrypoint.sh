@@ -232,7 +232,7 @@ if [[ "$IS_GENERATED_TOKEN" == true ]]; then
     log "WARN" "------------------------------------------"
     log "WARN" " NO API_TOKEN PROVIDED IN ENVIRONMENT!    "
     log "WARN" " SECURE-BY-DEFAULT POSTURE IS ACTIVE.     "
-    log "WARN" " Auto-generated Token: $API_TOKEN"
+    log "WARN" " Auto-generated Token: ${API_TOKEN:0:4}...${API_TOKEN: -4} (use 'docker exec <container_id> printenv API_TOKEN' to retrieve)"
 else
     log "INFO" "API Token:   [Provided via Environment]"
 fi
@@ -267,6 +267,12 @@ check_services() {
     if ! pgrep -f server.py >/dev/null; then
         log "ERROR" "CRITICAL: Web UI (server.py) died."
         exit 1
+    fi
+
+    # Liveness check for control listener to prevent pipe deadlocks
+    if ! pgrep -f control_listener.py >/dev/null; then
+        log "ERROR" "CRITICAL: Control listener died. Restarting..."
+        runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
     fi
 
     if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
@@ -484,38 +490,34 @@ while true; do
 
         sleep 2
 
-        # 2. Start gpclient
-        runuser -u gpuser -- bash -c "
+        # 2. Start gpclient using environment variables to avoid outer shell interpolation
+        runuser -u gpuser -- env VPN_PORTAL="$VPN_PORTAL" VPN_GATEWAY="$VPN_GATEWAY" \
+            VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
+            VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
+            GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
+            bash -c "
             > \"$CLIENT_LOG\"
 
-            # Safely build arguments array to satisfy shellcheck
             declare -a args=(sudo gpclient)
 
-            if [[ -n \"$GP_VERBOSITY\" ]]; then
-                args+=(\"$GP_VERBOSITY\")
-            fi
+            [[ -n \"\$GP_VERBOSITY\" ]] && args+=(\"\$GP_VERBOSITY\")
+            args+=(--fix-openssl connect \"\$VPN_PORTAL\" --browser remote)
 
-            args+=(--fix-openssl connect \"$VPN_PORTAL\" --browser remote)
-
-            if [[ -n \"$VPN_GATEWAY\" ]]; then
-                args+=(--gateway \"$VPN_GATEWAY\")
+            if [[ -n \"\$VPN_GATEWAY\" ]]; then
+                args+=(--gateway \"\$VPN_GATEWAY\")
             else
                 args+=(--as-gateway)
             fi
 
-            [[ \"$VPN_HIP_REPORT\" == \"true\" ]]   && args+=(--hip)
-            [[ \"$VPN_NO_DTLS\" == \"true\" ]]      && args+=(--no-dtls)
-            [[ \"$VPN_DISABLE_IPV6\" == \"true\" ]] && args+=(--disable-ipv6)
+            [[ \"\$VPN_HIP_REPORT\" == \"true\" ]]   && args+=(--hip)
+            [[ \"\$VPN_NO_DTLS\" == \"true\" ]]      && args+=(--no-dtls)
+            [[ \"\$VPN_DISABLE_IPV6\" == \"true\" ]] && args+=(--disable-ipv6)
 
-            [[ -n \"$VPN_OS\" ]]             && args+=(--os \"$VPN_OS\")
-            [[ -n \"$VPN_OS_VERSION\" ]]     && args+=(--os-version \"$VPN_OS_VERSION\")
-            [[ -n \"$VPN_CLIENT_VERSION\" ]] && args+=(--client-version \"$VPN_CLIENT_VERSION\")
+            [[ -n \"\$VPN_OS\" ]]             && args+=(--os \"\$VPN_OS\")
+            [[ -n \"\$VPN_OS_VERSION\" ]]     && args+=(--os-version \"\$VPN_OS_VERSION\")
+            [[ -n \"\$VPN_CLIENT_VERSION\" ]] && args+=(--client-version \"\$VPN_CLIENT_VERSION\")
 
-            # TRUST BOUNDARY: GP_ARGS is operator-controlled via environment variable.
-            # eval is required here to safely parse quoted shell arguments (e.g., --os \"Windows 10\").
-            # Ensure GP_ARGS is properly sanitized within your deployment orchestrator.
             if [[ -n \"\$GP_ARGS\" ]]; then
-                log \"DEBUG\" \"raw GP_ARGS: \$GP_ARGS\"
                 eval \"set -- \$GP_ARGS\"
                 for arg in \"\$@\"; do
                     args+=(\"\$arg\")
@@ -524,8 +526,8 @@ while true; do
 
             SAFE_CMD=\$(printf \"%q \" \"\${args[@]}\")
 
-            echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"$SERVICE_LOG\"
-            python3 /opt/gp-proxy/stdin_proxy.py | script -q -c \"\$SAFE_CMD\" /dev/null >> \"$CLIENT_LOG\" 2>&1
+            echo \"[Entrypoint] Executing: \$SAFE_CMD\" >> \"\$SERVICE_LOG\"
+            python3 /opt/gp-proxy/stdin_proxy.py | script -q -c \"\$SAFE_CMD\" /dev/null >> \"\$CLIENT_LOG\" 2>&1
         "
 
         # 3. Cleanup after disconnect

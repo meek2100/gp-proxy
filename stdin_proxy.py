@@ -1,6 +1,7 @@
 # File: stdin_proxy.py
 import logging
 import os
+import select
 import socket
 import sys
 
@@ -30,22 +31,29 @@ def main() -> None:
 
             while True:
                 try:
-                    c, _ = s.accept()
-                    c.settimeout(5.0)  # Prevent zombie connections from dead senders
-                    with c:
-                        data: bytes = c.recv(4096)
-                        if data:
-                            sys.stdout.buffer.write(data)
-                            sys.stdout.buffer.flush()
-                except OSError as exc:
+                    # Non-blocking wait for 2 seconds to ensure interruptibility
+                    r: list[socket.socket]
+                    r, _, _ = select.select([s], [], [], 2.0)
+                    if r:
+                        c, _ = s.accept()
+                        c.settimeout(5.0)  # Prevent zombie connections from dead senders
+                        with c:
+                            data: bytes = c.recv(4096)
+                            if data:
+                                sys.stdout.buffer.write(data)
+                                sys.stdout.buffer.flush()
+                except OSError:
                     # Log transient socket errors and continue the daemon loop
-                    logger.exception(f"Socket error during accept/recv: {exc}")
+                    logger.exception("Socket error during accept/recv")
                 except KeyboardInterrupt:
                     # Honor intentional shutdowns cleanly
                     sys.exit(0)
-    except OSError as e:
+                except SystemExit:
+                    # Honor intentional shutdowns cleanly
+                    sys.exit(0)
+    except OSError:
         # Only crash on unrecoverable initialization errors (e.g., port conflict)
-        logger.error(f"Fatal bind error on port {port}: {e}")
+        logger.exception(f"Fatal bind error on port {port}")
         sys.exit(1)
 
 

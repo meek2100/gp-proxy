@@ -181,20 +181,35 @@ class StateManager:
 
 state_manager = StateManager()
 
+# --- Network IP Caching ---
+_best_ip_cache: str = "127.0.0.1"
+_best_ip_ts: float = 0.0
+_BEST_IP_TTL: float = 60.0
+
 
 def get_best_ip() -> str:
     """
     Selects the container's primary outbound IP address.
     Attempts to determine the best local IPv4 address by creating a UDP socket.
+    Caches the result to avoid repeated socket creation during frequent polling.
 
     Returns:
         str: The chosen IPv4 address as a string; "127.0.0.1" on failure.
     """
+    global _best_ip_cache, _best_ip_ts
+    now = time.monotonic()
+
+    # TTL Cache Check
+    if _best_ip_cache != "127.0.0.1" and (now - _best_ip_ts) < _BEST_IP_TTL:
+        return _best_ip_cache
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
-            ip, _ = s.getsockname()
-            return str(ip)
+            ip = str(s.getsockname()[0])
+            _best_ip_cache = ip
+            _best_ip_ts = now
+            return ip
     except OSError:
         return "127.0.0.1"
 
@@ -523,6 +538,11 @@ def _kill_and_poll() -> None:
                 if res1.returncode != 0 and res2.returncode != 0:
                     break
                 time.sleep(0.1)
+            else:
+                # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
+                subprocess.run([sudo, pkill, "-9", "gpclient"], stderr=subprocess.DEVNULL)
+                subprocess.run([sudo, pkill, "-9", "gpservice"], stderr=subprocess.DEVNULL)
+                time.sleep(0.5)
         else:
             time.sleep(1.0)
 
@@ -765,7 +785,7 @@ if __name__ == "__main__":
             index_path.write_text(content, "utf-8")
             logger.info(f"Injected cache-busting hash {build_hash} into index.html")
     except Exception as e:
-        logger.warning(f"Failed to apply cache busting to HTML: {e}")
+        logger.error(f"Failed to apply cache busting to HTML: {e}. Browsers may serve stale CSS/JS.")
 
     beacon: Beacon = Beacon()
     beacon.start()
