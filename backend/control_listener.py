@@ -39,8 +39,8 @@ def _process_connection(c: socket.socket) -> None:
                 if cleaned:
                     sys.stdout.write(cleaned + "\n")
                     sys.stdout.flush()
-            except UnicodeDecodeError as exc:
-                logger.exception(f"Malformed input ignored: {exc}")
+            except UnicodeDecodeError:
+                logger.exception("Malformed input ignored")
 
     # Process any remaining buffer content after the connection cleanly closes
     if buffer:
@@ -49,8 +49,8 @@ def _process_connection(c: socket.socket) -> None:
             if cleaned_rem:
                 sys.stdout.write(cleaned_rem + "\n")
                 sys.stdout.flush()
-        except UnicodeDecodeError as exc:
-            logger.exception(f"Malformed trailing input ignored: {exc}")
+        except UnicodeDecodeError:
+            logger.exception("Malformed trailing input ignored")
 
 
 def _run_server_loop(s: socket.socket) -> None:
@@ -88,7 +88,7 @@ def main() -> None:
             _run_server_loop(s)
     except OSError as e:
         # Only crash on unrecoverable initialization errors
-        logger.exception(f"Fatal error: {e}")
+        logger.error(f"Fatal error: {e}")
         sys.exit(1)
 
 

@@ -105,8 +105,8 @@ RUN mkdir -p /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus && \
 COPY --chown=gpuser:gpuser web/ /var/www/html/
 COPY --chown=gpuser:gpuser backend/ /opt/gp-proxy/
 
-# Ensure proper execution rights
-RUN chmod +x /opt/gp-proxy/*.py
+# Ensure proper execution rights limited strictly to daemon entrypoints
+RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

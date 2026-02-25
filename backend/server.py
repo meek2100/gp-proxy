@@ -480,39 +480,42 @@ def init_runtime_dir() -> None:
         logger.exception("Failed to initialize runtime dir")
 
 
-def _kill_and_poll() -> None:
-    """
-    Terminates active OpenConnect processes and actively polls until they exit
-    to prevent race conditions when generating new VPN sessions.
-    Dynamically escalates privileges based on container constraints.
-    """
+def _kill_and_poll_windows() -> None:
+    """Handles process termination and polling gracefully for Windows environments."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
 
-    if sys.platform == "win32":
-        taskkill: str | None = shutil.which("taskkill")
-        if taskkill is None:
-            taskkill = str(Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe")
+    taskkill: str | None = shutil.which("taskkill")
+    if taskkill is None:
+        taskkill = str(Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe")
 
-        if os.path.exists(taskkill):
-            subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
-            subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+    if os.path.exists(taskkill):
+        subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+        subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
 
-            # Active polling loop for Windows production environment
-            for _ in range(50):
-                res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
-                res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
-                if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
-                    break
-                time.sleep(0.1)
-        return
+        # Active polling loop for Windows environment
+        for _ in range(50):
+            res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+            res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
+            if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
+                break
+            time.sleep(0.1)
+
+
+def _kill_and_poll_unix() -> None:
+    """Handles Unix process termination using safe sudo polling checks."""
+    res1: subprocess.CompletedProcess[bytes]
+    res2: subprocess.CompletedProcess[bytes]
 
     sudo: str | None = shutil.which("sudo")
     sudo_cmd: list[str] = []
+
     if sudo is not None:
+        # Prevent indefinite hangs if sudo is installed but requires a password
         probe: subprocess.CompletedProcess[bytes] = subprocess.run([sudo, "-n", "true"], capture_output=True)
         if probe.returncode == 0:
             sudo_cmd = [sudo]
+
     pkill: str | None = shutil.which("pkill")
 
     if pkill is not None:
@@ -522,7 +525,6 @@ def _kill_and_poll() -> None:
         pgrep: str | None = shutil.which("pgrep")
         if pgrep is not None:
             for _ in range(50):
-                # Using capture_output strictly to satisfy Mypy annotations for CompletedProcess[bytes]
                 res1 = subprocess.run([*sudo_cmd, pgrep, "gpclient"], capture_output=True)
                 res2 = subprocess.run([*sudo_cmd, pgrep, "gpservice"], capture_output=True)
                 if res1.returncode != 0 and res2.returncode != 0:
@@ -535,6 +537,18 @@ def _kill_and_poll() -> None:
                 time.sleep(0.5)
         else:
             time.sleep(1.0)
+
+
+def _kill_and_poll() -> None:
+    """
+    Terminates active OpenConnect processes and actively polls until they exit
+    to prevent race conditions when generating new VPN sessions.
+    Dynamically routes to the correct OS implementation.
+    """
+    if sys.platform == "win32":
+        _kill_and_poll_windows()
+    else:
+        _kill_and_poll_unix()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -585,7 +599,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
-        elif base_path.endswith((".css", ".js", ".png", ".ico")):
+        elif base_path.endswith((".css", ".js", ".png", ".ico", ".svg", ".jpg")):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
 
         super().end_headers()
@@ -610,7 +624,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(get_vpn_state()).encode("utf-8"))
             return
 
-        if self.path == "/download_logs":
+        if getattr(self, "path", "") == "/download_logs":
             if not self._is_authorized():
                 self.send_error(401, "Unauthorized")
                 return
@@ -693,7 +707,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 self.send_error(400, "Empty input")
         except (ValueError, KeyError, TypeError):  # fmt: skip
-            logger.warning("Invalid input format received")
+            logger.warning("Invalid input format received", exc_info=True)
             self.send_error(400, "Bad Request")
         except Exception:
             logger.exception("Internal input processing error")
@@ -754,12 +768,12 @@ if __name__ == "__main__":
             os.chdir(target_dir)
         else:
             # Fallback for local Windows development environments
-            # Adjusted path handling to account for the new backend/ directory position
             local_web_dir = (Path(__file__).parent.parent / "web").resolve()
             if local_web_dir.exists() and local_web_dir.is_dir():
                 os.chdir(local_web_dir)
             else:
-                os.chdir(Path(__file__).parent.parent.resolve())
+                logger.error("Failed to locate web assets directory. Exiting to prevent source exposure.")
+                sys.exit(1)
     except PermissionError:
         logger.exception("Permission denied changing to target web directory.")
         sys.exit(1)
@@ -767,41 +781,35 @@ if __name__ == "__main__":
     init_runtime_dir()
 
     # Dynamic cache busting for the frontend GUI.
-    # Modifying the files directly guarantees browsers pull fresh immutable assets exactly on new content changes.
+    # Exclusively updates index.html based on canonical static content hashing.
     try:
         index_path = Path("index.html")
-        css_path = Path("index.css")
-        js_path = Path("index.js")
 
         if index_path.exists():
             content_sig = b""
-            for asset_glob in ["*.css", "*.js", "*.png", "*.svg", "*.ico", "*.jpg"]:
-                for asset_file in sorted(Path(".").glob(asset_glob)):
-                    content_sig += asset_file.read_bytes()
+            for ext in [".css", ".js", ".png", ".svg", ".ico", ".jpg"]:
+                for asset_file in sorted(Path(".").rglob(f"*{ext}")):
+                    if asset_file.is_file():
+                        content_sig += asset_file.read_bytes()
+
             if content_sig:
                 build_hash = hashlib.md5(content_sig, usedforsecurity=False).hexdigest()[:8]
             else:
                 build_hash = hashlib.md5(str(time.time()).encode(), usedforsecurity=False).hexdigest()[:8]
 
-            # 1. Update HTML file for all static assets
+            # Update HTML file references universally
             content = index_path.read_text("utf-8")
-            content = re.sub(r'href="([^"]+\.(?:css|ico))(\?v=[a-zA-Z0-9]+)?"', rf'href="\1?v={build_hash}"', content)
             content = re.sub(
-                r'src="([^"]+\.(?:js|png|jpg|svg))(\?v=[a-zA-Z0-9]+)?"', rf'src="\1?v={build_hash}"', content
+                r'href="([^"]+\.(?:css|ico|svg|png|jpg))(\?v=[a-zA-Z0-9]+)?"', rf'href="\1?v={build_hash}"', content
+            )
+            content = re.sub(
+                r'src="([^"]+\.(?:js|png|jpg|svg|ico))(\?v=[a-zA-Z0-9]+)?"', rf'src="\1?v={build_hash}"', content
             )
             index_path.write_text(content, "utf-8")
 
-            # 2. Update JS file for dynamic theme assets
-            if js_path.exists():
-                js_content = js_path.read_text("utf-8")
-                js_content = re.sub(
-                    r'(assets/[^"]+\.(?:png|ico|jpg|svg))(\?v=[a-zA-Z0-9]+)?', rf"\1?v={build_hash}", js_content
-                )
-                js_path.write_text(js_content, "utf-8")
-
             logger.info(f"Injected cache-busting hash {build_hash} into static assets")
     except Exception:
-        logger.exception("Failed to apply cache busting to HTML/JS. Browsers may serve stale assets.")
+        logger.exception("Failed to apply cache busting to HTML. Browsers may serve stale assets.")
 
     beacon: Beacon = Beacon()
     beacon.start()
