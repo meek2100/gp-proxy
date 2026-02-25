@@ -4,9 +4,11 @@ Container Agent - GP Proxy Web Interface and Control Server.
 
 Hosts the primary user-facing web dashboard and API endpoints for managing the VPN lifecycle.
 Manages thread-safe log parsing for state detection, enforces Bearer token authentication,
-and orchestrates inter-process communication (IPC) with the background OpenConnect processes.
+implements Trust On First Use (TOFU) Ed25519 pairing, and orchestrates inter-process communication
+(IPC) with the background OpenConnect processes.
 """
 
+import base64
 import hashlib
 import hmac
 import http.server
@@ -14,6 +16,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import socket
 import socketserver
@@ -25,6 +28,10 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, TypedDict
 
+from cryptography.exceptions import InvalidSignature  # pyright: ignore[reportUnknownVariableType]
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PublicKey,  # pyright: ignore[reportUnknownVariableType]
+)
 from utils import (
     CLIENT_LOG,
     IPC_CONTROL_PORT,
@@ -37,10 +44,18 @@ from utils import (
 
 logger: logging.Logger = setup_logger("server")
 
-# --- Configuration ---
+# --- Configuration & Security Globals ---
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
 MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
+
+# Ephemeral session token for local Web GUI authorization
+EPHEMERAL_TOKEN: str = secrets.token_urlsafe(32)
+
+# Paired Trust-On-First-Use (TOFU) Ed25519 Public Key and thread-safe lock
+_paired_pubkey: Ed25519PublicKey | None = None
+_pairing_lock: threading.Lock = threading.Lock()
+
 
 # --- Pre-compiled Regex (Optimization) ---
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -258,12 +273,11 @@ class Beacon(threading.Thread):
 
     def run(self) -> None:
         """
-        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the best IP, server port,
-        and hostname.
+        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the agent's IP,
+        HTTP port, and hostname.
 
-        Security Note: The API token is intentionally omitted from the broadcast payload to prevent
-        cleartext sniffing on untrusted LANs. If an API_TOKEN is configured, the Host Agent must be
-        pre-provisioned to use it.
+        When a "GP_DISCOVER" message is received, sends a UTF-8 JSON response with keys "ip", "port",
+        and "hostname". Runs indefinitely and logs unexpected errors.
         """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
@@ -559,28 +573,59 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _is_authorized(self) -> bool:
         """
-        Validates the request against the configured pre-shared API_TOKEN.
-        If no API_TOKEN environment variable is set, defaults to open access,
-        relying on network-level boundaries (e.g., Docker networks) for security.
-        Uses hmac.compare_digest for timing-safe string comparison.
+        Determine whether the incoming HTTP request is authorized for protected endpoints.
+
+        Accepts one of: the Ephemeral GUI bearer token, an API token from the API_TOKEN environment
+        variable, or a TOFU Ed25519 signature from a previously paired client. For TOFU authentication
+        the request must include X-Signature (base64) and X-Timestamp headers; the signature is verified
+        over the message "{timestamp}:{path}" and the timestamp must be within 60 seconds of server time
+        to limit replay attacks.
 
         Returns:
-            bool: `True` if authorized or no token is required, `False` otherwise.
+            `True` if the request is authorized, `False` otherwise.
         """
-        expected_token = os.getenv("API_TOKEN")
-
-        # If no token is configured, allow the request
-        if not expected_token:
-            return True
-
-        # If a token is configured, strictly enforce it safely
+        # 1. Bearer Token Check (Ephemeral GUI or Manual Override API_TOKEN)
         auth_header = self.headers.get("Authorization", "")
-        return hmac.compare_digest(auth_header, f"Bearer {expected_token}")
+        if auth_header:
+            if hmac.compare_digest(auth_header, f"Bearer {EPHEMERAL_TOKEN}"):
+                return True
+
+            expected_token = os.getenv("API_TOKEN")
+            if expected_token and hmac.compare_digest(auth_header, f"Bearer {expected_token}"):
+                return True
+
+        # 2. Ed25519 Cryptographic Signature Check (Paired Rust Client)
+        with _pairing_lock:
+            pubkey_snapshot = _paired_pubkey  # pyright: ignore[reportUnknownVariableType]
+
+        if pubkey_snapshot is not None:
+            sig_b64 = self.headers.get("X-Signature")
+            timestamp = self.headers.get("X-Timestamp")
+            if sig_b64 and timestamp:
+                try:
+                    ts = int(timestamp)
+                    # Enforce a tight 60-second window to mitigate replay attacks
+                    if abs(time.time() - ts) < 60:
+                        # Required Signature Payload Structure: "{timestamp}:{path}"
+                        message = f"{ts}:{getattr(self, 'path', '')}".encode()
+                        sig = base64.b64decode(sig_b64)
+                        pubkey_snapshot.verify(sig, message)  # pyright: ignore[reportUnknownMemberType]
+                        return True
+                except (ValueError, InvalidSignature, TypeError):  # fmt: skip
+                    pass
+
+        return False
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """
-        Log HTTP requests to the module logger. Avoids index errors on missing args.
-        Safe cast args[0] to string to prevent Python 3.14+ HTTPStatus enum crashes during syntax errors.
+        Log HTTP requests to the module logger, using debug level for requests to "status.json".
+
+        Safely formats the message even if no args are provided and casts the first arg to string
+        to avoid crashes with HTTPStatus enum values on newer Python versions.
+
+        Parameters:
+            format (str): Format string for the log message.
+            *args (Any): Positional values to be interpolated into `format`.
         """
         if args and "status.json" in str(args[0]):
             logger.debug("%s - - %s", self.client_address[0], format % args)
@@ -592,7 +637,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Inject optimal caching headers before completing the header block.
         Safely retrieves the path to prevent crashes if the request line failed to parse.
         """
-        raw_path = getattr(self, "path", "")
+        raw_path: str = str(getattr(self, "path", ""))
         base_path: str = urllib.parse.urlparse(raw_path).path
 
         if base_path in ["/", "/index.html", "/status.json"]:
@@ -606,7 +651,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: C901
         """
-        Handle incoming HTTP GET requests for status, log download, and static file serving.
+        Handle HTTP GET requests for the web UI and API endpoints.
+
+        Processes requests for:
+        - /status.json: returns current VPN state as JSON (requires authorization; responds 401 if unauthorized).
+        - /download_logs: streams combined service and client logs as a text attachment
+          (requires authorization and debug/trace log level; responds 401 or 403 as appropriate).
+        - /: serves index.html.
+        Blocks direct access to sensitive file types (.py, .pyc, .pyo, .env, .sh)
+        and otherwise delegates to the base handler for static files.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
         request_path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, "path", "")).path).lower()
@@ -624,7 +677,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(get_vpn_state()).encode("utf-8"))
             return
 
-        if getattr(self, "path", "") == "/download_logs":
+        if request_path == "/download_logs":
             if not self._is_authorized():
                 self.send_error(401, "Unauthorized")
                 return
@@ -651,14 +704,60 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 logger.debug("Error while streaming logs to client (connection may have closed)")
             return
 
-        if getattr(self, "path", "") == "/":
+        if request_path == "/":
             self.path = "/index.html"
         return super().do_GET()
 
+    def _handle_pair(self, length: int) -> None:
+        """
+        Handle a TOFU Ed25519 public key pairing request from a Rust client.
+
+        Accepts a JSON payload in the request body containing a base64-encoded "public_key",
+        stores the decoded key as the module-level paired Ed25519 public key, and responds with
+        HTTP 200 and "OK" on success. Pairing is rejected with HTTP 403 if an API token is
+        configured (pairing disabled) or if a key is already paired. Missing or invalid payloads
+        result in HTTP 400.
+
+        Parameters:
+            length (int): Number of bytes to read from the request body (Content-Length).
+        """
+        global _paired_pubkey
+        if os.getenv("API_TOKEN"):
+            self.send_error(403, "Pairing disabled: Manual API_TOKEN configured")
+            return
+
+        with _pairing_lock:
+            if _paired_pubkey is not None:
+                self.send_error(403, "Already paired. Trust On First Use (TOFU) locking active.")
+                return
+
+            try:
+                raw_data = self.rfile.read(length).decode("utf-8")
+                data = json.loads(raw_data)
+                pubkey_b64 = data.get("public_key")
+                if not pubkey_b64:
+                    self.send_error(400, "Missing public_key")
+                    return
+
+                pubkey_bytes = base64.b64decode(pubkey_b64)
+                _paired_pubkey = Ed25519PublicKey.from_public_bytes(pubkey_bytes)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+                logger.info("TOFU Pairing successful. Rust Host Agent trusted.")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+            except (ValueError, KeyError, TypeError) as e:  # fmt: skip
+                logger.warning(f"Pairing failed: {e}")
+                self.send_error(400, "Invalid pairing payload")
+
     def _handle_connect(self) -> None:
         """
-        Handle an HTTP request to initiate a VPN connection.
-        Ensures existing processes are dead before writing to the control IPC.
+        Initiate a VPN connection by terminating any running VPN processes and requesting a start via the control IPC.
+
+        Terminates existing VPN-related processes, sends a "START" command to the control IPC,
+        and writes an HTTP response reflecting the outcome:
+        - Responds 200 with body "OK" when the start command was accepted.
+        - Responds 503 with an explanatory message when the control IPC is unavailable.
         """
         logger.info("User requested Connection")
         _kill_and_poll()
@@ -715,34 +814,39 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """
-        Handle incoming HTTP POST requests for connection control routing.
-        Validates the authorization token before routing to explicit handlers.
-        Globally enforces payload size limits.
+        Route POST requests for VPN control, enforcing payload size limits and authorization before
+        dispatching to endpoint handlers.
 
-        Supported Endpoints:
-            - /connect: Initiates a new VPN connection. Requires no payload.
-            - /disconnect: Terminates active VPN client processes. Requires no payload.
-            - /submit: Forwards authentication tokens or form inputs to the VPN client.
-              Requires a form-encoded payload containing 'callback_url' or 'user_input'.
+        Supports the following endpoints:
+        - /api/pair: Accepts TOFU Ed25519 pairing requests; allowed without prior authorization.
+        - /connect: Starts a VPN connection; requires authorization.
+        - /disconnect: Stops the VPN client processes; requires authorization.
+        - /submit: Forwards form-encoded input (expects 'callback_url' or 'user_input') to the VPN client;
+          requires authorization.
+
+        Behavior:
+        - Validates Content-Length and rejects requests larger than 8192 bytes (413) or negative lengths (400).
+        - Returns 401 for unauthorized requests (except /api/pair) and 404 for unknown endpoints.
         """
-        if not self._is_authorized():
-            self.send_error(401, "Unauthorized")
-            return
+        request_path = getattr(self, "path", "")
 
         try:
             length: int = int(self.headers.get("Content-Length", 0))
         except (ValueError, TypeError):  # fmt: skip
             length = 0
 
-        if length < 0:
-            self.send_error(400, "Invalid Content-Length")
+        if length < 0 or length > 8192:
+            self.send_error(400 if length < 0 else 413, "Invalid Payload Size")
             return
 
-        if length > 8192:  # Prevent memory exhaustion (DOS)
-            self.send_error(413, "Payload Too Large")
+        # Explicitly allow unauthenticated pairing
+        if request_path == "/api/pair":
+            self._handle_pair(length)
             return
 
-        request_path = getattr(self, "path", "")
+        if not self._is_authorized():
+            self.send_error(401, "Unauthorized")
+            return
 
         if request_path == "/connect":
             self._handle_connect()
@@ -780,8 +884,7 @@ if __name__ == "__main__":
 
     init_runtime_dir()
 
-    # Dynamic cache busting for the frontend GUI.
-    # Exclusively updates index.html based on canonical static content hashing.
+    # Dynamic cache busting and ephemeral token injection for the frontend GUI.
     try:
         index_path = Path("index.html")
 
@@ -792,10 +895,11 @@ if __name__ == "__main__":
                     if asset_file.is_file():
                         content_sig += asset_file.read_bytes()
 
+            # Fix: Deterministic fallback to ensure reproducible cache busting hashes across restarts
             if content_sig:
                 build_hash = hashlib.md5(content_sig, usedforsecurity=False).hexdigest()[:8]
             else:
-                build_hash = hashlib.md5(str(time.time()).encode(), usedforsecurity=False).hexdigest()[:8]
+                build_hash = hashlib.md5(index_path.read_bytes(), usedforsecurity=False).hexdigest()[:8]
 
             # Update HTML file references universally
             content = index_path.read_text("utf-8")
@@ -805,11 +909,22 @@ if __name__ == "__main__":
             content = re.sub(
                 r'src="([^"]+\.(?:js|png|jpg|svg|ico))(\?v=[a-zA-Z0-9]+)?"', rf'src="\1?v={build_hash}"', content
             )
+
+            # Use Regex to dynamically inject the Ephemeral Token, replacing either the placeholder or old tokens
+            content = re.sub(
+                r'<meta name="session-token" content="[^"]+" */?>',
+                f'<meta name="session-token" content="{EPHEMERAL_TOKEN}" />',
+                content,
+            )
+
             index_path.write_text(content, "utf-8")
 
-            logger.info(f"Injected cache-busting hash {build_hash} into static assets")
+            logger.info(f"Injected cache-busting hash {build_hash} and Ephemeral UI Token into static assets")
     except Exception:
         logger.exception("Failed to apply cache busting to HTML. Browsers may serve stale assets.")
+
+    if not os.getenv("API_TOKEN") and _paired_pubkey is None:
+        logger.warning("No API_TOKEN set and no TOFU key paired. Awaiting POST /api/pair.")
 
     beacon: Beacon = Beacon()
     beacon.start()

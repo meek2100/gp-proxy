@@ -1,18 +1,31 @@
 // File: web/index.js
 
 // --- Authentication Token Handling ---
+let apiToken = localStorage.getItem("api_token");
+
+// Automatically load Ephemeral Session Token from meta tag injection to bypass legacy manual keys
+const metaToken = document.querySelector('meta[name="session-token"]')?.getAttribute("content");
+if (metaToken && metaToken !== "EPHEMERAL_TOKEN_PLACEHOLDER") {
+    apiToken = metaToken;
+}
+
 // Automatically extract token from URL if provided (e.g. ?token=secret) and store.
-// Syncs across tabs automatically via the storage event to maintain valid session states.
+// Syncs across tabs automatically via the storage event to maintain valid legacy session states.
 const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get("token");
 if (urlToken) {
     localStorage.setItem("api_token", urlToken);
+
+    // Safety check: Only override the active token if the secure meta injection is missing or uninitialized.
+    if (!metaToken || metaToken === "EPHEMERAL_TOKEN_PLACEHOLDER") {
+        apiToken = urlToken;
+    }
+
     window.history.replaceState({}, document.title, window.location.pathname);
 }
-let apiToken = localStorage.getItem("api_token");
 
 window.addEventListener("storage", (e) => {
-    if (e.key === "api_token") {
+    if (e.key === "api_token" && (!metaToken || metaToken === "EPHEMERAL_TOKEN_PLACEHOLDER")) {
         apiToken = e.newValue;
     }
 });
@@ -31,7 +44,7 @@ function getFetchOptions(method = "GET", body = null) {
         headers["Authorization"] = `Bearer ${apiToken}`;
     }
     const options = { method, headers };
-    if (body) {
+    if (body !== null && body !== undefined) {
         options.body = body;
     }
     return options;
@@ -400,7 +413,7 @@ async function updateStatus() {
         const res = await fetch("/status.json?t=" + Date.now(), getFetchOptions("GET"));
         if (!res.ok) {
             if (res.status === 401) {
-                setBadge("Unauthorized (Check API Token)", "error");
+                setBadge("Unauthorized (Check Key Exchange)", "error");
                 setView("error");
             } else {
                 throw new Error(`HTTP Error: ${res.status}`);

@@ -36,9 +36,12 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - Runs on Port 8001. Fallback default log level is strictly `INFO`.
     - **State Management:** Uses a thread-safe `StateManager` to handle concurrent access from the log analyzer and HTTP requests.
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
-    - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
-    - **Configurable Zero-Touch Security:** The server evaluates the `API_TOKEN` environment variable. If an `API_TOKEN` is provided, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers and enforce a **fail-closed** zero-trust model. If omitted, `entrypoint.sh` enforces a secure-by-default posture by auto-generating a random 16-byte token and printing it to the container logs.
-    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port to the Host Agent. For security against LAN sniffing, the `API_TOKEN` is intentionally omitted from the broadcast payload to prevent cleartext sniffing on untrusted LANs. Since `API_TOKEN` is enforced, the operator must pre-provision the Host Agent with the token.
+    - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, `/api/pair`, and `/submit`.
+    - **Configurable Zero-Touch Security:** The server employs a decoupled authentication model:
+        1. **Web GUI (Ephemeral Token):** To eliminate manual passwords for the local dashboard, the Python server generates an `EPHEMERAL_TOKEN` on startup and permanently injects it into a meta tag inside `index.html`. The frontend JavaScript automatically extracts this token and attaches it to its API `Authorization: Bearer <token>` requests.
+        2. **Host Agent (Ed25519 TOFU Pairing):** External clients achieve "Perfect Security" without user input by utilizing Trust On First Use (TOFU). The client automatically issues an unauthenticated `POST /api/pair` containing a Base64 Ed25519 Public Key. The server stores this key in memory and rejects future pairing attempts. All subsequent commands from the client must include an `X-Signature` header (signing `"{timestamp}:{path}"`) and an `X-Timestamp` header. The server verifies this signature to permit access.
+        3. **Manual Lockdown (`API_TOKEN`):** An operator can explicitly export `API_TOKEN` via Docker environments. When set, this completely disables the TOFU pairing mechanism and acts as a legacy override, requiring external clients to pass the static token via the Bearer header.
+    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port to the Host Agent. For security against LAN sniffing, credentials are intentionally omitted from the broadcast payload.
 
 ### 2. The Host Agent (The Manager)
 
@@ -50,14 +53,14 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 
 1.  **Dashboard Mode (Interactive):**
     - Launches when the user runs the executable.
-    - **Auto-Discovery:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically. Prompts the user to manually enter the `API_TOKEN` required by the container environment.
+    - **Auto-Discovery & Pairing:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically. On first run, it generates an Ed25519 keypair and issues `POST /api/pair` to securely lock the container identity. For subsequent queries, it signs a Unix timestamp and the URL path (e.g. `1710000000:/status.json`) and passes `X-Signature` and `X-Timestamp` HTTP headers to authorize itself.
     - **Management:** Displays real-time status (polled from `status.json`) and allows Connect/Disconnect actions.
-    - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required, injecting the token via `?token=...`.
+    - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required.
     - **Connection Info:** Displays the calculated Gateway IP and SOCKS port when connected.
 2.  **Handler Mode (Background):**
     - Triggered by the OS when a `globalprotect://` link is clicked.
     - Captures the callback URL.
-    - Forwards the URL to the Container Agent via `POST /submit`.
+    - Forwards the URL to the Container Agent via `POST /submit` (using its Ed25519 signed headers).
     - Exits immediately (fire-and-forget).
 
 ### 3. The Browser (The Auth Provider)
@@ -78,9 +81,9 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ### Container (Server)
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`.
-- **`backend/server.py`:** Python Control Server. Handles optional `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.8+ Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management dynamically delegates (`sys.platform == "win32"`) to explicit OS handlers, enabling native Windows development while securely isolating Unix orchestration constraints. Contains an explicit `str()` cast guard in `log_message` to prevent Python 3.14+ `HTTPStatus` enum objects from crashing the polling loop handler during syntax parsing errors.
+- **`backend/server.py`:** Python Control Server. Handles Trust-On-First-Use (TOFU) Ed25519 pairing, dynamic HTML cache busting, and ephemeral UI token injection. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management dynamically delegates (`sys.platform == "win32"`) to explicit OS handlers, enabling native Windows development while securely isolating Unix orchestration constraints. Contains an explicit `str()` cast guard in `log_message` to prevent Python 3.14+ `HTTPStatus` enum objects from crashing the polling loop handler during syntax parsing errors.
 - **`backend/utils.py`:** Shared Python utility library. Centralizes cross-process configuration constants (`IPC_CONTROL_PORT`, `IPC_STDIN_PORT`), normalizes the execution environment paths (`CLIENT_LOG`, `SERVICE_LOG`), standardizes the `logging` format outputs across all background daemons, and contains the cross-platform TCP socket transmission logic (`send_ipc_message`).
-- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py` alongside dynamic MD5 cache-busting hashes. Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
+- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. The server dynamically rewrites the `<meta name="session-token">` tag in `index.html` on startup so the JS layer automatically picks up authorized access.
 
 ### Host (Client)
 
@@ -88,31 +91,35 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
     - Uses `ureq` (3.x) for HTTP requests (`send_empty`, `read_json`).
     - Uses `serde` for JSON parsing.
     - Uses `webbrowser` to launch the Auth page.
-    - Implements the "Manager" TUI (Text User Interface).
+    - Implements the "Manager" TUI (Text User Interface) and Ed25519 TOFU pairing logic.
 - **`apps/gp-client-proxy/Cargo.toml`:** Dependency definitions.
 
 ## Critical Implementation Details & Behaviors
 
 - **Status Polling JSON:** The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. The Rust client parses this field as `Option<String>`, and surfacing the actual API response via `.as_deref().unwrap_or(...)` prevents silent failure masking.
 - **Frontend Error State Recovery:** Handlers rendering `data.error` payloads to the screen must actively wipe the DOM content (e.g., `el.innerText = data.error || ""`) when an error resolves to `null`. Omitting the fallback leaves stale error text permanently ghosted on the GUI.
-- **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are compared against stringified array structures `JSON.stringify()` to ensure they are only fully rebuilt when types or options fundamentally change; otherwise, only text labels are updated.
+- **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are compared against stringified array structures `JSON.stringify()` to ensure they are only rebuilt when types or options fundamentally change; otherwise, only text labels are updated.
 - **Frontend Network Resilience:** All UI actions that invoke API endpoints (`triggerConnect`, `handleFormSubmit`, etc.) must be wrapped in `try/catch/finally` blocks to ensure the frontend polling loop (`resetPoll`) resurrects if a network exception occurs. This prevents the UI from becoming permanently locked in a 'loading' state.
 - **Rust Connection Pooling:** The Host Agent must utilize a single, globally instantiated `ureq::Agent` for standard connections and a separate fast `ureq::Agent` for status polling. Do not instantiate new HTTP agents inside loops, as this discards TCP connection pooling and exhausts system ports.
 - **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. In addition, 401 exceptions forcefully command `resetPoll(5000)` to ensure background loop resurrection upon credential fixing.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`).
 - **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll_unix()` dynamically determines container privileges by executing a passwordless `sudo -n true` probe to invoke `pkill` and `pgrep` safely without indefinitely hanging the orchestrator. It relies on a blocking loop alongside `subprocess.run(..., capture_output=True)` to natively return byte streams that satisfy strict Mypy types, verifying that processes have exited before reinitializing logic. If processes refuse to terminate gracefully within the polling window, it automatically escalates to a `SIGKILL` (-9) payload to prevent zombie state races.
-- **API Security (`API_TOKEN`):** (formerly/aka `SESSION_TOKEN`) If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls.
 - **Dynamic SOCKS5 UI Rendering:** The backend dynamically evaluates the presence of `GOST_AUTH` and surfaces a `socks_auth_enabled` boolean in `/status.json`. The frontend must rely exclusively on this flag to update the SOCKS5 Authentication UI text (e.g., "See Env Config" vs "None"), avoiding hardcoded assumptions about the proxy's security state.
 
 ## System Optimizations & Guardrails (DO NOT REMOVE)
 
 - **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states. Elements managed dynamically (like `btn`) must employ optional chaining (`?.classList`) to prevent crashes during conditional rendering.
-- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests. Additionally, the `get_best_ip()` routine caches the outbound local UDP IP string behind a 60-second TTL to avoid exhausting host system sockets during high-frequency API polling. It achieves this strictly by targeting an external IP (`8.8.8.8`) via UDP to guarantee correct gateway network resolution.
+- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests. Additionally, the `get_best_ip()` routine caches the outbound local UDP IP string behind a 60-second TTL to avoid exhausting host system sockets during high-frequency API polling.
 - **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows. The listener endpoints (`control_listener.py` and `stdin_proxy.py`) must utilize a non-blocking `select.select` wait approach inside a `while True` loop to act as persistent daemons capable of receiving graceful interrupt signals. IPC byte streams must be buffered and split strictly on newlines (`\n`) prior to UTF-8 decoding to prevent multi-byte characters from being mangled across TCP chunk boundaries.
 - **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes. Handlers must strictly filter standard HTTP errors (`ValueError`, `KeyError`, `TypeError`) before catching generic `Exception` objects to avoid masking underlying API implementation issues in `500` HTTP blocks.
 - **Shell Injection Boundaries:** `eval` is utilized in `entrypoint.sh` strictly to parse quoted string flags passed dynamically via the `GP_ARGS` environment variable. This constitutes a trust boundary; the operator is responsible for sanitizing `GP_ARGS` at the orchestrator level.
 - **System Privileges:** Sudoers permissions inside the Dockerfile strictly utilize `Cmnd_Alias` to lock down `/usr/bin/pkill` and `/usr/bin/pgrep` to precise `gpclient` and `gpservice` arguments, preventing arbitrary process termination or systemic container disruption.
-- **Cache Invalidation:** The cache-busting mechanism hashes the canonical bytes of all static assets (`**/*.css`, `**/*.js`, etc.) to compute `build_hash`, and exclusively rewrites `index.html` to append `?v=<hash>` to asset URLs. This guarantees immutable caching strictly tied to physical content changes, eliminating recursive or unstable hashing loops.
+- **Atomic API State:** The nil-check (`_paired_pubkey is None`) **and** the assignment to `_paired_pubkey` must occur inside a single `with _pairing_lock:` acquisition. Splitting the guard across lock boundaries reopens the TOCTOU race this lock is intended to prevent. Reject any pairing request if `_paired_pubkey` is already set within the same critical section.
+- **TOFU Lifecycle & Restarts:** The Container Agent stores `_paired_pubkey` strictly in memory. If the container restarts, the key is lost, and the Host Agent will receive `401 Unauthorized` errors. This is a known limitation. To recover, the user must re-run the Host Agent setup wizard to wipe the local keypair and re-issue `POST /api/pair`.
+- **Idempotent Token Injection:** Operations that dynamically modify `index.html` on boot (like rewriting the `session-token` meta tag content) MUST use `re.sub` regex patterns rather than standard string `.replace()`. The payload must be idempotent, matching against previous tokens, to guarantee the file is successfully updated after container restarts.
+- **Deterministic Fallbacks:** When generating cache-busting `build_hash` identifiers, avoid stochastic elements like `time.time()`. If primary asset byte evaluation fails, fallback identifiers must remain deterministic to preserve immutable cache semantics across application restarts.
+- **URL Normalization & Cryptography:** Base URLs persisted in the Host Agent configuration must have trailing slashes aggressively trimmed `.trim_end_matches('/')` during serialization and deserialization. Failing to sanitize this produces `//` paths that break Ed25519 signature validation.
+- **Keystore Privileges:** Any Rust logic writing long-lived secret materials (like `private_key` fields) to disk MUST explicitly lock down filesystem privileges (e.g. `0o600` on UNIX). Do not rely on default OS masks.
 
 ## Handling Callbacks (`globalprotect://`)
 
@@ -120,8 +127,8 @@ The SAML flow often ends with a redirect to `globalprotect://...`.
 
 1.  **Browser Redirect:** The IDP redirects the browser to the custom protocol.
 2.  **OS Trigger:** The OS spawns `gp-client-proxy globalprotect://...`.
-3.  **Forwarding:** The Rust binary reads its config (`proxy_url.txt`), connects to the Docker container IP, injects the Bearer authorization header, and POSTs the payload to `/submit`.
-4.  **Processing:** `server.py` receives the payload and dispatches it over the local TCP socket `127.0.0.1:32802`.
+3.  **Forwarding:** The Rust binary connects to the Docker container IP, generates its Ed25519 authorization signature blocks, and POSTs the callback string payload to `/submit`.
+4.  **Processing:** `server.py` verifies the Ed25519 signature, unpacks the payload, and dispatches it over the local TCP socket `127.0.0.1:32802`.
 5.  **Execution:** The `stdin_proxy.py` daemon receives the socket buffer and writes it directly to the running `gpclient` standard input to complete the handshake.
 
 ## Future Improvements
