@@ -25,15 +25,22 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, TypedDict
 
+from utils import (
+    CLIENT_LOG,
+    IPC_CONTROL_PORT,
+    IPC_STDIN_PORT,
+    RUNTIME_DIR,
+    SERVICE_LOG,
+    send_ipc_message,
+    setup_logger,
+)
+
+logger: logging.Logger = setup_logger("server")
+
 # --- Configuration ---
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
-RUNTIME_DIR: Path = Path("/tmp/gp-runtime")
-IPC_STDIN_PORT: int = int(os.getenv("IPC_STDIN_PORT") or "32802")
-IPC_CONTROL_PORT: int = int(os.getenv("IPC_CONTROL_PORT") or "32801")
 MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
-CLIENT_LOG: Path = Path("/tmp/gp-logs/gp-client.log")
-SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
 
 # --- Pre-compiled Regex (Optimization) ---
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -277,18 +284,6 @@ class Beacon(threading.Thread):
                 logger.exception("Beacon error")
 
 
-# --- Logging Setup ---
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-    handlers=[
-        logging.FileHandler(SERVICE_LOG) if Path("/tmp/gp-logs").exists() else logging.StreamHandler(),
-    ],
-)
-logger: logging.Logger = logging.getLogger()
-
-
 def strip_ansi(text: str) -> str:
     """
     Remove ANSI escape sequences (colors, cursor movements, and line-control codes) from the given text.
@@ -483,31 +478,6 @@ def init_runtime_dir() -> None:
             RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
         logger.exception("Failed to initialize runtime dir")
-
-
-def send_ipc_message(port: int, data: str) -> bool:
-    """
-    Perform a cross-platform socket connection to dispatch an IPC payload to the supervisor loop.
-    Utilizes local TCP sockets as the primary production IPC strategy, ensuring robust compatibility
-    across containerized and native execution environments.
-
-    Parameters:
-        port (int): The local TCP port of the target IPC proxy.
-        data (str): UTF-8 text to write into the socket.
-
-    Returns:
-        bool: `True` if the data was written successfully, `False` if no listener was available.
-    """
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1.0)
-            s.connect(("127.0.0.1", port))
-            s.sendall(data.encode("utf-8"))
-    except OSError as e:
-        logger.warning(f"IPC connection failed on port {port}: {e}")
-        return False
-    else:
-        return True
 
 
 def _kill_and_poll() -> None:
@@ -776,11 +746,12 @@ if __name__ == "__main__":
             os.chdir(target_dir)
         else:
             # Fallback for local Windows development environments
-            local_web_dir = Path(__file__).parent / "web"
+            # Adjusted path handling to account for the new backend/ directory position
+            local_web_dir = Path(__file__).parent.parent / "web"
             if local_web_dir.exists() and local_web_dir.is_dir():
                 os.chdir(local_web_dir)
             else:
-                os.chdir(Path(__file__).parent)
+                os.chdir(Path(__file__).parent.parent)
     except PermissionError:
         logger.exception("Permission denied changing to target web directory.")
         sys.exit(1)

@@ -102,10 +102,10 @@ RUN mkdir -p /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus && \
 
 # Copy the frontend web directory and python backend with correct user permissions
 COPY --chown=gpuser:gpuser web/ /var/www/html/
-COPY --chown=gpuser:gpuser server.py control_listener.py stdin_proxy.py utils.py /opt/gp-proxy/
+COPY --chown=gpuser:gpuser backend/ /opt/gp-proxy/
 
 # Ensure proper execution rights
-RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py
+RUN chmod +x /opt/gp-proxy/*.py
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

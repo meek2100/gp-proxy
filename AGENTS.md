@@ -27,10 +27,10 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
 
 ### 1. The Container Agent (The Brain)
 
-**Location:** Inside Docker (`server.py`, `entrypoint.sh`)
+**Location:** Inside Docker (`backend/`, `entrypoint.sh`)
 **Role:** State Management & Networking
 
-- **Source Code Isolation:** Python backend scripts (`server.py`, `control_listener.py`, `stdin_proxy.py`) MUST reside in `/opt/gp-proxy/` and NOT in the `/var/www/html/` web root. This prevents accidental source code exposure via the `http.server.SimpleHTTPRequestHandler`.
+- **Source Code Isolation:** Python backend scripts (`server.py`, `control_listener.py`, `stdin_proxy.py`, `utils.py`) reside in the `backend/` directory during development and are deployed to `/opt/gp-proxy/`. They MUST NOT reside in the `/var/www/html/` web root. This prevents accidental source code exposure via the `http.server.SimpleHTTPRequestHandler`.
 - **Timing-Safe Authentication:** Any token comparison logic (such as checking `API_TOKEN` in HTTP headers) must strictly utilize `hmac.compare_digest()` to prevent timing attacks.
 - **Web Server (`server.py`):**
     - Runs on Port 8001. Fallback default log level is strictly `INFO`.
@@ -78,7 +78,8 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 ### Container (Server)
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`.
-- **`server.py`:** Python Control Server. Handles optional `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.8+ Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management (`_kill_and_poll`) dynamically detects the host OS (`sys.platform == "win32"`) to utilize `taskkill`, enabling full native Windows development and testing outside the container via cross-platform path mapping (`pathlib`). Contains an explicit `str()` cast guard in `log_message` to prevent Python 3.14+ `HTTPStatus` enum objects from crashing the polling loop handler during syntax parsing errors.
+- **`backend/server.py`:** Python Control Server. Handles optional `API_TOKEN` bearer auth logic, length-limited payload parsing, uses Python 3.8+ Walrus operators to securely map API elements, reads binary `CLIENT_LOG`, and hosts the UDP Beacon. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management (`_kill_and_poll`) dynamically detects the host OS (`sys.platform == "win32"`) to utilize `taskkill`, enabling full native Windows development and testing outside the container via cross-platform path mapping (`pathlib`). Contains an explicit `str()` cast guard in `log_message` to prevent Python 3.14+ `HTTPStatus` enum objects from crashing the polling loop handler during syntax parsing errors.
+- **`backend/utils.py`:** Shared Python utility library. Centralizes cross-process configuration constants (`IPC_CONTROL_PORT`, `IPC_STDIN_PORT`), normalizes the execution environment paths (`CLIENT_LOG`, `SERVICE_LOG`), standardizes the `logging` format outputs across all background daemons, and contains the cross-platform TCP socket transmission logic (`send_ipc_message`).
 - **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. Relies strictly on modern HTTP caching headers injected by `server.py` alongside dynamic MD5 cache-busting hashes applied across `.html` and `.js` files at container startup. This explicit regex replacement covers all static files (`.css`, `.js`, `.png`, `.jpg`, `.svg`, `.ico`) ensuring immutable caching works safely in tandem with dynamic frontend theme toggling. Supports parsing initial URL `?token=` parameters into local storage to transparently handle authorized environments.
 
 ### Host (Client)
