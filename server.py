@@ -185,6 +185,7 @@ state_manager = StateManager()
 _best_ip_cache: str = "127.0.0.1"
 _best_ip_ts: float = 0.0
 _BEST_IP_TTL: float = 60.0
+_best_ip_lock: threading.Lock = threading.Lock()
 
 
 def get_best_ip() -> str:
@@ -199,19 +200,22 @@ def get_best_ip() -> str:
     global _best_ip_cache, _best_ip_ts
     now = time.monotonic()
 
-    # TTL Cache Check
-    if _best_ip_cache != "127.0.0.1" and (now - _best_ip_ts) < _BEST_IP_TTL:
-        return _best_ip_cache
+    with _best_ip_lock:
+        # TTL Cache Check
+        if _best_ip_cache != "127.0.0.1" and (now - _best_ip_ts) < _BEST_IP_TTL:
+            return _best_ip_cache
 
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("10.255.255.255", 1))
-            ip = str(s.getsockname()[0])
-            _best_ip_cache = ip
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("10.255.255.255", 1))
+                ip = str(s.getsockname()[0])
+                _best_ip_cache = ip
+                _best_ip_ts = now
+                return ip
+        except OSError:
+            _best_ip_cache = "127.0.0.1"
             _best_ip_ts = now
-            return ip
-    except OSError:
-        return "127.0.0.1"
+            return "127.0.0.1"
 
 
 # --- UDP BEACON ---
@@ -500,6 +504,10 @@ def _kill_and_poll() -> None:
     to prevent race conditions when generating new VPN sessions.
     Strictly typed to prevent Subprocess NoneType execution crashes.
     """
+    # Declare strict types at the function scope to prevent mypy no-redef errors
+    res1: subprocess.CompletedProcess[bytes]
+    res2: subprocess.CompletedProcess[bytes]
+
     if sys.platform == "win32":
         taskkill: str | None = shutil.which("taskkill")
         if taskkill is None:
@@ -511,12 +519,8 @@ def _kill_and_poll() -> None:
 
             # Active polling loop for Windows production environment
             for _ in range(50):
-                res1: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    ["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True
-                )
-                res2: subprocess.CompletedProcess[bytes] = subprocess.run(
-                    ["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True
-                )
+                res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+                res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
                 if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
                     break
                 time.sleep(0.1)
@@ -785,7 +789,7 @@ if __name__ == "__main__":
             index_path.write_text(content, "utf-8")
             logger.info(f"Injected cache-busting hash {build_hash} into index.html")
     except Exception as e:
-        logger.error(f"Failed to apply cache busting to HTML: {e}. Browsers may serve stale CSS/JS.")
+        logger.exception(f"Failed to apply cache busting to HTML: {e}. Browsers may serve stale CSS/JS.")
 
     beacon: Beacon = Beacon()
     beacon.start()

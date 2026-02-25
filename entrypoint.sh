@@ -439,6 +439,8 @@ log "INFO" "Starting Services..."
 dns_watchdog &
 
 # Setup persistent control pipe to eliminate Python interpreter startup overhead in the polling loop
+# Note: The FIFO is intentionally created and opened as root before chown so child processes
+# inherit the already-open fd 3. The chown ensures later path-based opens use gpuser.
 mkfifo "$RUNTIME_DIR/gp_control_pipe"
 exec 3<>"$RUNTIME_DIR/gp_control_pipe"
 chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
@@ -496,6 +498,7 @@ while true; do
             VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
             bash -c "
+            set -o pipefail
             > \"$CLIENT_LOG\"
 
             declare -a args=(sudo gpclient)

@@ -34,7 +34,7 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
     - Parses logs (`gp-client.log`) to determine state (Idle, Connecting, Auth, Input, Connected, Error).
     - Exposes API endpoints: `/status.json` (polled), `/connect`, `/disconnect`, and `/submit` (auth tokens).
     - **Configurable Zero-Touch Security:** The server evaluates the `API_TOKEN` environment variable. If an `API_TOKEN` is provided, all control routes and status payloads strictly require `Authorization: Bearer <token>` headers and enforce a **fail-closed** zero-trust model. If omitted, `entrypoint.sh` enforces a secure-by-default posture by auto-generating a random 16-byte token and printing it to the container logs.
-    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port to the Host Agent. For security against LAN sniffing, the `SESSION_TOKEN` is strictly omitted. Since `API_TOKEN` is enforced, the operator must pre-provision the Host Agent with the token.
+    - **UDP Beacon:** Listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port to the Host Agent. For security against LAN sniffing, the `API_TOKEN` is strictly omitted. Since `API_TOKEN` is enforced, the operator must pre-provision the Host Agent with the token.
 
 ### 2. The Host Agent (The Manager)
 
@@ -95,7 +95,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. In addition, 401 exceptions forcefully command `resetPoll(5000)` to ensure background loop resurrection upon credential fixing.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`).
 - **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll` uses `pgrep` in a blocking loop to definitively verify that `gpclient` and `gpservice` have exited before reinitializing logic. If processes refuse to terminate gracefully within the polling window, it automatically escalates to a `SIGKILL` (-9) payload to prevent zombie state races.
-- **API Security (`SESSION_TOKEN`):** If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls.
+- **API Security (`API_TOKEN`):** (formerly/aka `SESSION_TOKEN`) If the backend demands a token, the frontend natively parses `?token=<secret>` strings on application load and injects the generated Bearer Token into all subsequent `fetch` calls.
 - **Dynamic SOCKS5 UI Rendering:** The backend dynamically evaluates the presence of `GOST_AUTH` and surfaces a `socks_auth_enabled` boolean in `/status.json`. The frontend must rely exclusively on this flag to update the SOCKS5 Authentication UI text (e.g., "See Env Config" vs "None"), avoiding hardcoded assumptions about the proxy's security state.
 
 ## System Optimizations & Guardrails (DO NOT REMOVE)
