@@ -508,7 +508,11 @@ def _kill_and_poll() -> None:
         return
 
     sudo: str | None = shutil.which("sudo")
-    sudo_cmd: list[str] = [sudo] if sudo is not None else []
+    sudo_cmd: list[str] = []
+    if sudo is not None:
+        probe: subprocess.CompletedProcess[bytes] = subprocess.run([sudo, "-n", "true"], capture_output=True)
+        if probe.returncode == 0:
+            sudo_cmd = [sudo]
     pkill: str | None = shutil.which("pkill")
 
     if pkill is not None:
@@ -572,8 +576,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         """
         Inject optimal caching headers before completing the header block.
+        Safely retrieves the path to prevent crashes if the request line failed to parse.
         """
-        base_path: str = urllib.parse.urlparse(self.path).path
+        raw_path = getattr(self, "path", "")
+        base_path: str = urllib.parse.urlparse(raw_path).path
 
         if base_path in ["/", "/index.html", "/status.json"]:
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -589,7 +595,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Handle incoming HTTP GET requests for status, log download, and static file serving.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
-        request_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lower()
+        request_path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, "path", "")).path).lower()
         if request_path.endswith((".py", ".pyc", ".pyo", ".env", ".sh")):
             self.send_error(403, "Forbidden")
             return
@@ -631,7 +637,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 logger.debug("Error while streaming logs to client (connection may have closed)")
             return
 
-        if self.path == "/":
+        if getattr(self, "path", "") == "/":
             self.path = "/index.html"
         return super().do_GET()
 
@@ -722,11 +728,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(413, "Payload Too Large")
             return
 
-        if self.path == "/connect":
+        request_path = getattr(self, "path", "")
+
+        if request_path == "/connect":
             self._handle_connect()
-        elif self.path == "/disconnect":
+        elif request_path == "/disconnect":
             self._handle_disconnect()
-        elif self.path == "/submit":
+        elif request_path == "/submit":
             self._handle_submit(length)
         else:
             self.send_error(404, "Endpoint not found")
@@ -766,9 +774,10 @@ if __name__ == "__main__":
         js_path = Path("index.js")
 
         if index_path.exists():
-            content_sig = (css_path.read_bytes() if css_path.exists() else b"") + (
-                js_path.read_bytes() if js_path.exists() else b""
-            )
+            content_sig = b""
+            for asset_glob in ["*.css", "*.js", "*.png", "*.svg", "*.ico", "*.jpg"]:
+                for asset_file in sorted(Path(".").glob(asset_glob)):
+                    content_sig += asset_file.read_bytes()
             if content_sig:
                 build_hash = hashlib.md5(content_sig, usedforsecurity=False).hexdigest()[:8]
             else:
