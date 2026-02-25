@@ -527,7 +527,7 @@ while true; do
 
             if [[ -n "$GP_ARGS" ]]; then
                 # Trust boundary: GP_ARGS is operator-controlled. Reject dangerous shell metacharacters before eval.
-                if [[ "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\*?\{\}] ]]; then
+                if [[ "$GP_ARGS" == *$'\n'* || "$GP_ARGS" == *$'\r'* || "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\*?\{\}] ]]; then
                     echo "[Entrypoint] CRITICAL: Unsafe shell metacharacters detected. GP_ARGS rejected." >> "$SERVICE_LOG"
                 else
                     eval "set -- $GP_ARGS"

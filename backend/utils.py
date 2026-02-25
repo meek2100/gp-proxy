@@ -23,9 +23,10 @@ def _parse_port(env_var: str, default: int) -> int:
     if not val:
         return default
     try:
-        return int(val)
+        port = int(val)
     except ValueError:
         return default
+    return port if 1 <= port <= 65535 else default
 
 
 IPC_CONTROL_PORT: int = _parse_port("IPC_CONTROL_PORT", 32801)

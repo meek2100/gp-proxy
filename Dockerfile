@@ -85,7 +85,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget \
 
 # 8. Setup User
 RUN useradd -m -s /bin/bash gpuser
-RUN echo "gpuser ALL=(root) NOPASSWD: /usr/bin/gpclient, /usr/bin/gpservice, /usr/bin/pkill, /usr/bin/pgrep" > /etc/sudoers.d/gpuser && \
+RUN printf '%s\n' \
+    "Cmnd_Alias GP_RUNTIME = /usr/bin/gpclient, /usr/bin/gpservice" \
+    "Cmnd_Alias GP_PROCCTL = /usr/bin/pkill -x gpclient, /usr/bin/pkill -x gpservice, /usr/bin/pkill -9 -x gpclient, /usr/bin/pkill -9 -x gpservice, /usr/bin/pgrep -x gpclient, /usr/bin/pgrep -x gpservice" \
+    "gpuser ALL=(root) NOPASSWD: GP_RUNTIME, GP_PROCCTL" \
+    > /etc/sudoers.d/gpuser && \
     chmod 0440 /etc/sudoers.d/gpuser && \
     visudo -cf /etc/sudoers.d/gpuser
 
