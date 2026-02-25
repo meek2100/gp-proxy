@@ -15,7 +15,12 @@ const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get("token");
 if (urlToken) {
     localStorage.setItem("api_token", urlToken);
-    apiToken = urlToken;
+
+    // Safety check: Only override the active token if the secure meta injection is missing or uninitialized.
+    if (!metaToken || metaToken === "EPHEMERAL_TOKEN_PLACEHOLDER") {
+        apiToken = urlToken;
+    }
+
     window.history.replaceState({}, document.title, window.location.pathname);
 }
 

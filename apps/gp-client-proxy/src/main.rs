@@ -507,9 +507,10 @@ fn run_setup_wizard() -> Result<()> {
             public_key: pubkey_b64,
         };
 
+        // Ensure slash is stripped for signature matching
         let agent = get_agent();
         let resp = agent
-            .post(&format!("{}/api/pair", final_url))
+            .post(&format!("{}/api/pair", final_url.trim_end_matches('/')))
             .send_json(&pair_req);
 
         match resp {
@@ -531,7 +532,7 @@ fn run_setup_wizard() -> Result<()> {
     }
 
     let config = ProxyConfig {
-        base_url: final_url,
+        base_url: final_url.trim_end_matches('/').to_string(),
         token: final_token,
         private_key: private_key_opt,
     };
@@ -580,7 +581,7 @@ fn run_setup_wizard() -> Result<()> {
 /// ```
 fn handle_link(url: &str) -> Result<()> {
     let config = load_config()?;
-    let target_endpoint = format!("{}/submit", config.base_url.trim_end_matches('/'));
+    let target_endpoint = format!("{}/submit", config.base_url);
 
     let agent = get_agent();
     let req = agent.post(&target_endpoint);
@@ -666,7 +667,14 @@ fn load_config() -> Result<ProxyConfig> {
     let content = fs::read_to_string(path)?;
     let mut lines = content.lines();
 
-    let base_url = lines.next().unwrap_or("").trim().to_string();
+    // Aggressively sanitize the base URL to prevent signature mismatches
+    let base_url = lines
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+
     if base_url.is_empty() {
         anyhow::bail!("Invalid config: Missing URL");
     }
@@ -724,7 +732,17 @@ fn save_config(config: &ProxyConfig) -> Result<()> {
         content.push_str(&general_purpose::STANDARD.encode(pk));
         content.push('\n');
     }
-    fs::write(get_config_path()?, content)?;
+
+    let path = get_config_path()?;
+    fs::write(&path, content)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Strict file lockdown to protect local private keys from adjacent processes
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    }
+
     Ok(())
 }
 
