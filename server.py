@@ -209,13 +209,14 @@ def get_best_ip() -> str:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("10.255.255.255", 1))
                 ip = str(s.getsockname()[0])
-                _best_ip_cache = ip
-                _best_ip_ts = now
-                return ip
         except OSError:
             _best_ip_cache = "127.0.0.1"
             _best_ip_ts = now
             return "127.0.0.1"
+        else:
+            _best_ip_cache = ip
+            _best_ip_ts = now
+            return ip
 
 
 # --- UDP BEACON ---
@@ -492,10 +493,11 @@ def send_ipc_message(port: int, data: str) -> bool:
             s.settimeout(1.0)
             s.connect(("127.0.0.1", port))
             s.sendall(data.encode("utf-8"))
-        return True
     except OSError as e:
         logger.warning(f"IPC connection failed on port {port}: {e}")
         return False
+    else:
+        return True
 
 
 def _kill_and_poll() -> None:

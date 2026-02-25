@@ -42,10 +42,10 @@ clean_val() {
 # Preserves inner quotes required for 'eval' parsing (e.g., GP_ARGS).
 clean_val_preserve_inner() {
     local val="$1"
-    val="${val%\"}"
-    val="${val#\"}"
-    val="${val%\'}"
-    val="${val#\'}"
+    # Repeatedly strip matching outer quote pairs (" or ') in a loop
+    while [[ ${#val} -ge 2 ]] && { [[ "${val:0:1}" == '"' && "${val: -1}" == '"' ]] || [[ "${val:0:1}" == "'" && "${val: -1}" == "'" ]]; }; do
+        val="${val:1:-1}"
+    done
     echo "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
