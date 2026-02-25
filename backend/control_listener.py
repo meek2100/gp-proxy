@@ -67,7 +67,7 @@ def _run_server_loop(s: socket.socket) -> None:
                 c.settimeout(5.0)  # Prevent zombie connections from dead senders
                 with c:
                     _process_connection(c)
-        except OSError as exc:
+        except (OSError, TimeoutError) as exc:  # fmt: skip
             # Log transient socket errors and continue the daemon loop
             logger.warning(f"Socket error: {exc}")
         except KeyboardInterrupt:

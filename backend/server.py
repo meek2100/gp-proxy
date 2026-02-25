@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, ClassVar, TypedDict
 
 from cryptography.exceptions import InvalidSignature  # pyright: ignore[reportUnknownVariableType]
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -483,11 +483,12 @@ def get_vpn_state() -> VPNState:
 def init_runtime_dir() -> None:
     """
     Create the secure runtime directory.
-    On non-Windows systems, creates RUNTIME_DIR with mode 0o700.
+    On non-Windows systems, creates RUNTIME_DIR with mode 0o700 and strictly enforces permissions.
     """
     try:
         if sys.platform != "win32":
             RUNTIME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+            RUNTIME_DIR.chmod(0o700)
         else:
             RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -517,7 +518,7 @@ def _kill_and_poll_windows() -> None:
 
 
 def _kill_and_poll_unix() -> None:
-    """Handles Unix process termination using safe sudo polling checks."""
+    """Handles Unix process termination using safe sudo polling checks, strictly avoiding unrelated processes."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
 
@@ -533,21 +534,21 @@ def _kill_and_poll_unix() -> None:
     pkill: str | None = shutil.which("pkill")
 
     if pkill is not None:
-        subprocess.run([*sudo_cmd, pkill, "gpclient"], stderr=subprocess.DEVNULL)
-        subprocess.run([*sudo_cmd, pkill, "gpservice"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "-x", "gpclient"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "-x", "gpservice"], stderr=subprocess.DEVNULL)
 
         pgrep: str | None = shutil.which("pgrep")
         if pgrep is not None:
             for _ in range(50):
-                res1 = subprocess.run([*sudo_cmd, pgrep, "gpclient"], capture_output=True)
-                res2 = subprocess.run([*sudo_cmd, pgrep, "gpservice"], capture_output=True)
+                res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
+                res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
                 if res1.returncode != 0 and res2.returncode != 0:
                     break
                 time.sleep(0.1)
             else:
                 # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
-                subprocess.run([*sudo_cmd, pkill, "-9", "gpclient"], stderr=subprocess.DEVNULL)
-                subprocess.run([*sudo_cmd, pkill, "-9", "gpservice"], stderr=subprocess.DEVNULL)
+                subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpclient"], stderr=subprocess.DEVNULL)
+                subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL)
                 time.sleep(0.5)
         else:
             time.sleep(1.0)
@@ -607,7 +608,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     # Enforce a tight 60-second window to mitigate replay attacks
                     if abs(time.time() - ts) < 60:
                         # Required Signature Payload Structure: "{timestamp}:{path}"
-                        message = f"{ts}:{getattr(self, 'path', '')}".encode()
+                        message = f"{ts}:{self.path}".encode()
                         sig = base64.b64decode(sig_b64)
                         pubkey_snapshot.verify(sig, message)  # pyright: ignore[reportUnknownMemberType]
                         return True
@@ -635,9 +636,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         """
         Inject optimal caching headers before completing the header block.
-        Safely retrieves the path to prevent crashes if the request line failed to parse.
         """
-        raw_path: str = str(getattr(self, "path", ""))
+        # Safely evaluate path in the event this is called prematurely during an HTTP error
+        raw_path: str = self.path if hasattr(self, "path") else ""
         base_path: str = urllib.parse.urlparse(raw_path).path
 
         if base_path in ["/", "/index.html", "/status.json"]:
@@ -662,7 +663,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         and otherwise delegates to the base handler for static files.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
-        request_path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, "path", "")).path).lower()
+        request_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lower()
         if request_path.endswith((".py", ".pyc", ".pyo", ".env", ".sh")):
             self.send_error(403, "Forbidden")
             return
@@ -828,7 +829,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         - Validates Content-Length and rejects requests larger than 8192 bytes (413) or negative lengths (400).
         - Returns 401 for unauthorized requests (except /api/pair) and 404 for unknown endpoints.
         """
-        request_path = getattr(self, "path", "")
+        request_path: str = self.path if hasattr(self, "path") else ""
 
         try:
             length: int = int(self.headers.get("Content-Length", 0))
@@ -861,7 +862,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 class VPNServer(socketserver.ThreadingTCPServer):
     """Custom ThreadingTCPServer that safely enables address reuse."""
 
-    allow_reuse_address: bool = True
+    allow_reuse_address: ClassVar[bool] = True  # type: ignore[misc] # pyright: ignore[reportIncompatibleVariableOverride]
 
 
 if __name__ == "__main__":

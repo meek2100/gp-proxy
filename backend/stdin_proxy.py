@@ -46,7 +46,7 @@ def main() -> None:
                                     break
                                 sys.stdout.buffer.write(data)
                                 sys.stdout.buffer.flush()
-                except OSError:
+                except (OSError, TimeoutError):  # fmt: skip
                     # Log transient socket errors and continue the daemon loop
                     logger.exception("Socket error during accept/recv")
                 except KeyboardInterrupt:

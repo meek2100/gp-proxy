@@ -16,9 +16,20 @@ RUNTIME_DIR: Path = Path("/tmp/gp-runtime")
 CLIENT_LOG: Path = Path("/tmp/gp-logs/gp-client.log")
 SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
 
+
 # --- IPC Port Configuration ---
-IPC_CONTROL_PORT: int = int(os.getenv("IPC_CONTROL_PORT") or "32801")
-IPC_STDIN_PORT: int = int(os.getenv("IPC_STDIN_PORT") or "32802")
+def _parse_port(env_var: str, default: int) -> int:
+    val = os.getenv(env_var, "").strip()
+    if not val:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+
+IPC_CONTROL_PORT: int = _parse_port("IPC_CONTROL_PORT", 32801)
+IPC_STDIN_PORT: int = _parse_port("IPC_STDIN_PORT", 32802)
 
 
 def setup_logger(name: str) -> logging.Logger:
@@ -38,7 +49,7 @@ def setup_logger(name: str) -> logging.Logger:
     logger: logging.Logger = logging.getLogger(name)
 
     # Prevent duplicate handlers if called multiple times in the same process
-    if not logger.hasHandlers():
+    if not logger.handlers:
         logger.setLevel(log_level)
         formatter: logging.Formatter = logging.Formatter(
             fmt="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ"

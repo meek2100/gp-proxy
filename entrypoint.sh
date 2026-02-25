@@ -27,15 +27,13 @@ get_env_value() {
     echo "$val"
 }
 
-# Helper: Strip quotes and trim whitespace
-# Warning: Uses xargs, which will strip inner quotes and spaces. Unsafe for passwords.
+# Helper: Strip quotes and trim whitespace safely without collapsing internal spaces
 clean_val() {
     local val="$1"
-    val="${val%\"}"
-    val="${val#\"}"
-    val="${val%\'}"
-    val="${val#\'}"
-    echo "$val" | xargs
+    # Remove all single and double quotes
+    val="${val//[\"\']/}"
+    # Safely trim leading and trailing spaces only
+    echo "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
 # Helper: Strip outer quotes and trim leading/trailing whitespace ONLY
@@ -78,7 +76,9 @@ export VPN_GATEWAY
 # 5. DNS_SERVERS
 RAW_DNS=$(get_env_value "DNS_SERVERS" "dns_servers" "VPN_DNS" "vpn_dns")
 CLEAN_DNS=$(clean_val "$RAW_DNS")
-DNS_SERVERS=$(echo "$CLEAN_DNS" | tr ',' ' ' | xargs)
+# Translate commas to spaces natively before stripping edge whitespace
+CLEAN_DNS="${CLEAN_DNS//,/ }"
+DNS_SERVERS=$(echo "$CLEAN_DNS" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 export DNS_SERVERS
 
 # 6. GP_ARGS (Custom)
@@ -236,8 +236,8 @@ log "INFO" "------------------------------------------"
 # --- GRACEFUL SHUTDOWN ---
 cleanup() {
     log "WARN" "Received Shutdown Signal"
-    sudo pkill gpclient || true
-    sudo pkill gpservice || true
+    sudo pkill -x gpclient || true
+    sudo pkill -x gpservice || true
     kill "$(jobs -p)" 2>/dev/null || true
     exit 0
 }
@@ -336,6 +336,11 @@ dns_watchdog() {
 if [[ -n "$PUID" ]]; then usermod -u "$PUID" gpuser; fi
 if [[ -n "$PGID" ]]; then groupmod -g "$PGID" gpuser; fi
 
+# Verify backend translation layer
+if ! command -v iptables &>/dev/null; then
+    log "WARN" "iptables command not found. Ensure iptables-nft translation is installed for correct container routing."
+fi
+
 # --- 2. NETWORK & MODE DETECTION ---
 log "INFO" "Inspecting network environment..."
 IS_MACVLAN=false
@@ -390,8 +395,8 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
         log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
         IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
         for subnet_raw in "${SUBNETS[@]}"; do
-            # Trim whitespace to prevent regex mismatch
-            subnet="$(echo "$subnet_raw" | xargs)"
+            # Trim whitespace safely
+            subnet="$(echo "$subnet_raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             [[ -z "$subnet" ]] && continue
 
             # Secure CIDR Validation enforcing 0-255 octets and 0-32 prefix
@@ -522,7 +527,7 @@ while true; do
 
             if [[ -n "$GP_ARGS" ]]; then
                 # Trust boundary: GP_ARGS is operator-controlled. Reject dangerous shell metacharacters before eval.
-                if [[ "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\] ]]; then
+                if [[ "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\*?\{\}] ]]; then
                     echo "[Entrypoint] CRITICAL: Unsafe shell metacharacters detected. GP_ARGS rejected." >> "$SERVICE_LOG"
                 else
                     eval "set -- $GP_ARGS"
@@ -541,7 +546,7 @@ while true; do
         # 3. Cleanup after disconnect
         log "WARN" "gpclient exited. Cleaning up services..."
         echo "idle" >"$MODE_FILE"
-        sudo pkill gpservice || true
+        sudo pkill -x gpservice || true
         log "INFO" "gpservice stopped. System Idle."
     fi
 done
