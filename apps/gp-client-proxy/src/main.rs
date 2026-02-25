@@ -152,7 +152,7 @@ fn with_auth<T>(
         let signing_key = SigningKey::from_bytes(key_bytes);
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let message = format!("{}:{}", ts, path);
@@ -734,14 +734,23 @@ fn save_config(config: &ProxyConfig) -> Result<()> {
     }
 
     let path = get_config_path()?;
-    fs::write(&path, content)?;
-
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        // Strict file lockdown to protect local private keys from adjacent processes
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)?;
+        f.write_all(content.as_bytes())?;
     }
+    #[cfg(not(unix))]
+    fs::write(&path, content)?;
+
+    #[cfg(all(not(unix)))]
+    {} // No permission tightening available on non-Unix
 
     Ok(())
 }

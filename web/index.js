@@ -14,10 +14,9 @@ if (metaToken && metaToken !== "EPHEMERAL_TOKEN_PLACEHOLDER") {
 const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get("token");
 if (urlToken) {
-    localStorage.setItem("api_token", urlToken);
-
-    // Safety check: Only override the active token if the secure meta injection is missing or uninitialized.
+    // Only persist and apply URL token when no secure meta injection is active
     if (!metaToken || metaToken === "EPHEMERAL_TOKEN_PLACEHOLDER") {
+        localStorage.setItem("api_token", urlToken);
         apiToken = urlToken;
     }
 
@@ -44,7 +43,7 @@ function getFetchOptions(method = "GET", body = null) {
         headers["Authorization"] = `Bearer ${apiToken}`;
     }
     const options = { method, headers };
-    if (body) {
+    if (body !== null && body !== undefined) {
         options.body = body;
     }
     return options;

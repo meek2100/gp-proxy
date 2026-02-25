@@ -273,9 +273,11 @@ class Beacon(threading.Thread):
 
     def run(self) -> None:
         """
-        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the agent's IP, HTTP port, and hostname.
+        Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the agent's IP,
+        HTTP port, and hostname.
 
-        When a "GP_DISCOVER" message is received, sends a UTF-8 JSON response with keys "ip", "port", and "hostname". Runs indefinitely and logs unexpected errors.
+        When a "GP_DISCOVER" message is received, sends a UTF-8 JSON response with keys "ip", "port",
+        and "hostname". Runs indefinitely and logs unexpected errors.
         """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
@@ -573,10 +575,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Determine whether the incoming HTTP request is authorized for protected endpoints.
 
-        Accepts one of: the Ephemeral GUI bearer token, an API token from the API_TOKEN environment variable, or a TOFU Ed25519 signature from a previously paired client. For TOFU authentication the request must include X-Signature (base64) and X-Timestamp headers; the signature is verified over the message "{timestamp}:{path}" and the timestamp must be within 60 seconds of server time to limit replay attacks.
+        Accepts one of: the Ephemeral GUI bearer token, an API token from the API_TOKEN environment
+        variable, or a TOFU Ed25519 signature from a previously paired client. For TOFU authentication
+        the request must include X-Signature (base64) and X-Timestamp headers; the signature is verified
+        over the message "{timestamp}:{path}" and the timestamp must be within 60 seconds of server time
+        to limit replay attacks.
 
         Returns:
-            `true` if the request is authorized, `false` otherwise.
+            `True` if the request is authorized, `False` otherwise.
         """
         # 1. Bearer Token Check (Ephemeral GUI or Manual Override API_TOKEN)
         auth_header = self.headers.get("Authorization", "")
@@ -611,7 +617,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Log HTTP requests to the module logger, using debug level for requests to "status.json".
 
-        Safely formats the message even if no args are provided and casts the first arg to string to avoid crashes with HTTPStatus enum values on newer Python versions.
+        Safely formats the message even if no args are provided and casts the first arg to string
+        to avoid crashes with HTTPStatus enum values on newer Python versions.
 
         Parameters:
             format (str): Format string for the log message.
@@ -645,9 +652,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         Processes requests for:
         - /status.json: returns current VPN state as JSON (requires authorization; responds 401 if unauthorized).
-        - /download_logs: streams combined service and client logs as a text attachment (requires authorization and debug/trace log level; responds 401 or 403 as appropriate).
+        - /download_logs: streams combined service and client logs as a text attachment
+          (requires authorization and debug/trace log level; responds 401 or 403 as appropriate).
         - /: serves index.html.
-        Blocks direct access to sensitive file types (.py, .pyc, .pyo, .env, .sh) and otherwise delegates to the base handler for static files.
+        Blocks direct access to sensitive file types (.py, .pyc, .pyo, .env, .sh)
+        and otherwise delegates to the base handler for static files.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
         request_path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, "path", "")).path).lower()
@@ -665,7 +674,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(get_vpn_state()).encode("utf-8"))
             return
 
-        if getattr(self, "path", "") == "/download_logs":
+        if request_path == "/download_logs":
             if not self._is_authorized():
                 self.send_error(401, "Unauthorized")
                 return
@@ -692,7 +701,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 logger.debug("Error while streaming logs to client (connection may have closed)")
             return
 
-        if getattr(self, "path", "") == "/":
+        if request_path == "/":
             self.path = "/index.html"
         return super().do_GET()
 
@@ -734,7 +743,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"OK")
-            except Exception as e:
+            except (ValueError, KeyError) as e:
                 logger.warning(f"Pairing failed: {e}")
                 self.send_error(400, "Invalid pairing payload")
 
@@ -742,7 +751,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Initiate a VPN connection by terminating any running VPN processes and requesting a start via the control IPC.
 
-        Terminates existing VPN-related processes, sends a "START" command to the control IPC, and writes an HTTP response reflecting the outcome:
+        Terminates existing VPN-related processes, sends a "START" command to the control IPC,
+        and writes an HTTP response reflecting the outcome:
         - Responds 200 with body "OK" when the start command was accepted.
         - Responds 503 with an explanatory message when the control IPC is unavailable.
         """
@@ -801,13 +811,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """
-        Route POST requests for VPN control, enforcing payload size limits and authorization before dispatching to endpoint handlers.
+        Route POST requests for VPN control, enforcing payload size limits and authorization before
+        dispatching to endpoint handlers.
 
         Supports the following endpoints:
         - /api/pair: Accepts TOFU Ed25519 pairing requests; allowed without prior authorization.
         - /connect: Starts a VPN connection; requires authorization.
         - /disconnect: Stops the VPN client processes; requires authorization.
-        - /submit: Forwards form-encoded input (expects 'callback_url' or 'user_input') to the VPN client; requires authorization.
+        - /submit: Forwards form-encoded input (expects 'callback_url' or 'user_input') to the VPN client;
+          requires authorization.
 
         Behavior:
         - Validates Content-Length and rejects requests larger than 8192 bytes (413) or negative lengths (400).
@@ -884,8 +896,7 @@ if __name__ == "__main__":
             if content_sig:
                 build_hash = hashlib.md5(content_sig, usedforsecurity=False).hexdigest()[:8]
             else:
-                canonical_bytes = content_sig or index_path.read_bytes()
-                build_hash = hashlib.md5(canonical_bytes, usedforsecurity=False).hexdigest()[:8]
+                build_hash = hashlib.md5(index_path.read_bytes(), usedforsecurity=False).hexdigest()[:8]
 
             # Update HTML file references universally
             content = index_path.read_text("utf-8")
