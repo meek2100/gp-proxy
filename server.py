@@ -592,6 +592,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """
         Log HTTP requests to the module logger. Avoids index errors on missing args.
+        Safe cast args[0] to string to prevent Python 3.14+ HTTPStatus enum crashes during syntax errors.
         """
         if args and "status.json" in str(args[0]):
             logger.debug("%s - - %s", self.client_address[0], format % args)
@@ -787,7 +788,7 @@ if __name__ == "__main__":
     init_runtime_dir()
 
     # Dynamic cache busting for the frontend GUI.
-    # Modifying index.html directly guarantees browsers pull fresh immutable assets exactly on new content changes.
+    # Modifying the files directly guarantees browsers pull fresh immutable assets exactly on new content changes.
     try:
         index_path = Path("index.html")
         css_path = Path("index.css")
@@ -802,13 +803,25 @@ if __name__ == "__main__":
             else:
                 build_hash = hashlib.md5(str(time.time()).encode(), usedforsecurity=False).hexdigest()[:8]
 
+            # 1. Update HTML file for all static assets
             content = index_path.read_text("utf-8")
-            content = re.sub(r'href="index\.css(\?v=[a-zA-Z0-9]+)?"', f'href="index.css?v={build_hash}"', content)
-            content = re.sub(r'src="index\.js(\?v=[a-zA-Z0-9]+)?"', f'src="index.js?v={build_hash}"', content)
+            content = re.sub(r'href="([^"]+\.(?:css|ico))(\?v=[a-zA-Z0-9]+)?"', rf'href="\1?v={build_hash}"', content)
+            content = re.sub(
+                r'src="([^"]+\.(?:js|png|jpg|svg))(\?v=[a-zA-Z0-9]+)?"', rf'src="\1?v={build_hash}"', content
+            )
             index_path.write_text(content, "utf-8")
-            logger.info(f"Injected cache-busting hash {build_hash} into index.html")
+
+            # 2. Update JS file for dynamic theme assets
+            if js_path.exists():
+                js_content = js_path.read_text("utf-8")
+                js_content = re.sub(
+                    r'(assets/[^"]+\.(?:png|ico|jpg|svg))(\?v=[a-zA-Z0-9]+)?', rf"\1?v={build_hash}", js_content
+                )
+                js_path.write_text(js_content, "utf-8")
+
+            logger.info(f"Injected cache-busting hash {build_hash} into static assets")
     except Exception as e:
-        logger.exception(f"Failed to apply cache busting to HTML: {e}. Browsers may serve stale CSS/JS.")
+        logger.exception(f"Failed to apply cache busting to HTML/JS: {e}. Browsers may serve stale assets.")
 
     beacon: Beacon = Beacon()
     beacon.start()

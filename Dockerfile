@@ -81,7 +81,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget \
 
 # 7. Setup User
 RUN useradd -m -s /bin/bash gpuser
-RUN echo "gpuser ALL=(root) NOPASSWD: /usr/bin/gpclient, /usr/bin/pkill" > /etc/sudoers.d/gpuser && \
+RUN echo "gpuser ALL=(root) NOPASSWD: /usr/bin/gpclient, /usr/bin/gpservice, /usr/bin/pkill, /usr/bin/pgrep" > /etc/sudoers.d/gpuser && \
     chmod 0440 /etc/sudoers.d/gpuser
 
 # 8. Copy Binaries
@@ -102,7 +102,7 @@ RUN mkdir -p /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus && \
 
 # Copy the frontend web directory and python backend with correct user permissions
 COPY --chown=gpuser:gpuser web/ /var/www/html/
-COPY --chown=gpuser:gpuser server.py control_listener.py stdin_proxy.py /opt/gp-proxy/
+COPY --chown=gpuser:gpuser server.py control_listener.py stdin_proxy.py utils.py /opt/gp-proxy/
 
 # Ensure proper execution rights
 RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py
