@@ -608,7 +608,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Handle incoming HTTP GET requests for status, log download, and static file serving.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
-        if self.path.lower().endswith((".py", ".pyc", ".pyo", ".env", ".sh")):
+        request_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lower()
+        if request_path.endswith((".py", ".pyc", ".pyo", ".env", ".sh")):
             self.send_error(403, "Forbidden")
             return
 
@@ -729,6 +730,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             length = 0
         except TypeError:
             length = 0
+
+        if length < 0:
+            self.send_error(400, "Invalid Content-Length")
+            return
 
         if length > 8192:  # Prevent memory exhaustion (DOS)
             self.send_error(413, "Payload Too Large")

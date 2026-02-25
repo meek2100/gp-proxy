@@ -321,14 +321,16 @@ dns_watchdog() {
 
         if [[ -n "$current_dns" ]] && [[ "$current_dns" != "$last_dns" ]]; then
             if [[ "$current_dns" != "8.8.8.8" && "$current_dns" != "1.1.1.1" ]]; then
-                log "INFO" "VPN DNS Detected: $current_dns. Enabling Forwarding..."
-                if [[ -n "$last_dns" ]]; then
-                    iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
-                    iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
+                if [[ "$VPN_MODE" != "socks" ]]; then
+                    log "INFO" "VPN DNS Detected: $current_dns. Enabling Forwarding..."
+                    if [[ -n "$last_dns" ]]; then
+                        iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
+                        iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
+                    fi
+                    iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$current_dns"
+                    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$current_dns"
+                    last_dns="$current_dns"
                 fi
-                iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$current_dns"
-                iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$current_dns"
-                last_dns="$current_dns"
             fi
         fi
         sleep 5
