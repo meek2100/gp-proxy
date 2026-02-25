@@ -1,4 +1,4 @@
-# File: stdin_proxy.py
+# File: backend/stdin_proxy.py
 """
 Container Agent - Standard Input Proxy.
 

@@ -1,4 +1,4 @@
-# File: utils.py
+# File: backend/utils.py
 """
 Container Agent - Shared Utilities.
 
@@ -33,17 +33,18 @@ def setup_logger(name: str) -> logging.Logger:
     Returns:
         logging.Logger: The configured logger instance.
     """
-    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    logger = logging.getLogger(name)
+    logger: logging.Logger = logging.getLogger(name)
 
     # Prevent duplicate handlers if called multiple times in the same process
     if not logger.hasHandlers():
         logger.setLevel(log_level)
-        formatter = logging.Formatter(
+        formatter: logging.Formatter = logging.Formatter(
             fmt="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ"
         )
 
+        handler: logging.Handler
         if Path("/tmp/gp-logs").exists():
             handler = logging.FileHandler(SERVICE_LOG)
         else:
@@ -68,7 +69,7 @@ def send_ipc_message(port: int, data: str) -> bool:
     Returns:
         bool: `True` if the data was written successfully, `False` if no listener was available.
     """
-    logger = setup_logger("ipc_client")
+    logger: logging.Logger = setup_logger("ipc_client")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1.0)
