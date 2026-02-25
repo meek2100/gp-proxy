@@ -14,9 +14,10 @@ if (metaToken && metaToken !== "EPHEMERAL_TOKEN_PLACEHOLDER") {
 const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get("token");
 if (urlToken) {
-    // Only persist and apply URL token when no secure meta injection is active
+    localStorage.setItem("api_token", urlToken);
+
+    // Safety check: Only override the active token if the secure meta injection is missing or uninitialized.
     if (!metaToken || metaToken === "EPHEMERAL_TOKEN_PLACEHOLDER") {
-        localStorage.setItem("api_token", urlToken);
         apiToken = urlToken;
     }
 

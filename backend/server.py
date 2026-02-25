@@ -595,7 +595,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return True
 
         # 2. Ed25519 Cryptographic Signature Check (Paired Rust Client)
-        if _paired_pubkey is not None:
+        with _pairing_lock:
+            pubkey_snapshot = _paired_pubkey  # pyright: ignore[reportUnknownVariableType]
+
+        if pubkey_snapshot is not None:
             sig_b64 = self.headers.get("X-Signature")
             timestamp = self.headers.get("X-Timestamp")
             if sig_b64 and timestamp:
@@ -606,7 +609,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         # Required Signature Payload Structure: "{timestamp}:{path}"
                         message = f"{ts}:{getattr(self, 'path', '')}".encode()
                         sig = base64.b64decode(sig_b64)
-                        _paired_pubkey.verify(sig, message)  # pyright: ignore[reportUnknownMemberType]
+                        pubkey_snapshot.verify(sig, message)  # pyright: ignore[reportUnknownMemberType]
                         return True
                 except (ValueError, InvalidSignature, TypeError):  # fmt: skip
                     pass
@@ -919,6 +922,9 @@ if __name__ == "__main__":
             logger.info(f"Injected cache-busting hash {build_hash} and Ephemeral UI Token into static assets")
     except Exception:
         logger.exception("Failed to apply cache busting to HTML. Browsers may serve stale assets.")
+
+    if not os.getenv("API_TOKEN") and _paired_pubkey is None:
+        logger.warning("No API_TOKEN set and no TOFU key paired. Awaiting POST /api/pair.")
 
     beacon: Beacon = Beacon()
     beacon.start()

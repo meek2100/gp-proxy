@@ -685,13 +685,15 @@ fn load_config() -> Result<ProxyConfig> {
     if let Some(pk_str) = lines.next() {
         let pk_trim = pk_str.trim();
         if !pk_trim.is_empty() {
-            if let Ok(decoded) = general_purpose::STANDARD.decode(pk_trim) {
-                if decoded.len() == 32 {
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&decoded);
-                    private_key = Some(arr);
-                }
+            let decoded = general_purpose::STANDARD
+                .decode(pk_trim)
+                .context("Invalid config: private key is not valid base64")?;
+            if decoded.len() != 32 {
+                anyhow::bail!("Invalid config: private key must be 32 bytes");
             }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&decoded);
+            private_key = Some(arr);
         }
     }
 
@@ -748,9 +750,6 @@ fn save_config(config: &ProxyConfig) -> Result<()> {
     }
     #[cfg(not(unix))]
     fs::write(&path, content)?;
-
-    #[cfg(not(unix))]
-    {} // No permission tightening available on non-Unix
 
     Ok(())
 }
