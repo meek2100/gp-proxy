@@ -502,6 +502,7 @@ while true; do
             VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
             VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
+            BASH_NL=$'\n' BASH_CR=$'\r' \
             bash -c '
             set -o pipefail
             > "$CLIENT_LOG"
@@ -527,7 +528,7 @@ while true; do
 
             if [[ -n "$GP_ARGS" ]]; then
                 # Trust boundary: GP_ARGS is operator-controlled. Reject dangerous shell metacharacters before eval.
-                if [[ "$GP_ARGS" == *$'\n'* || "$GP_ARGS" == *$'\r'* || "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\*?\{\}] ]]; then
+                if [[ "$GP_ARGS" == *"$BASH_NL"* || "$GP_ARGS" == *"$BASH_CR"* || "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\*?\{\}] ]]; then
                     echo "[Entrypoint] CRITICAL: Unsafe shell metacharacters detected. GP_ARGS rejected." >> "$SERVICE_LOG"
                 else
                     eval "set -- $GP_ARGS"

@@ -522,14 +522,10 @@ def _kill_and_poll_unix() -> None:
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
 
+    # Directly pass '-n' non-interactive flags to ensure sudo never hangs waiting for a password.
+    # Omitting the explicit password probe prevents restricted Cmnd_Alias lists from artificially masking privileges.
     sudo: str | None = shutil.which("sudo")
-    sudo_cmd: list[str] = []
-
-    if sudo is not None:
-        # Prevent indefinite hangs if sudo is installed but requires a password
-        probe: subprocess.CompletedProcess[bytes] = subprocess.run([sudo, "-n", "true"], capture_output=True)
-        if probe.returncode == 0:
-            sudo_cmd = [sudo]
+    sudo_cmd: list[str] = [sudo, "-n"] if sudo else []
 
     pkill: str | None = shutil.which("pkill")
 
