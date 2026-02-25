@@ -743,7 +743,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"OK")
-            except (ValueError, KeyError) as e:
+            except (ValueError, KeyError, TypeError) as e:  # fmt: skip
                 logger.warning(f"Pairing failed: {e}")
                 self.send_error(400, "Invalid pairing payload")
 

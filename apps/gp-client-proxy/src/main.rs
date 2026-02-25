@@ -749,7 +749,7 @@ fn save_config(config: &ProxyConfig) -> Result<()> {
     #[cfg(not(unix))]
     fs::write(&path, content)?;
 
-    #[cfg(all(not(unix)))]
+    #[cfg(not(unix))]
     {} // No permission tightening available on non-Unix
 
     Ok(())
