@@ -82,7 +82,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget \
 # 7. Setup User
 RUN useradd -m -s /bin/bash gpuser
 RUN echo "gpuser ALL=(root) NOPASSWD: /usr/bin/gpclient, /usr/bin/gpservice, /usr/bin/pkill, /usr/bin/pgrep" > /etc/sudoers.d/gpuser && \
-    chmod 0440 /etc/sudoers.d/gpuser
+    chmod 0440 /etc/sudoers.d/gpuser && \
+    visudo -cf /etc/sudoers.d/gpuser
 
 # 8. Copy Binaries
 COPY --from=builder \

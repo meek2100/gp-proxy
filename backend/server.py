@@ -791,8 +791,8 @@ if __name__ == "__main__":
                 js_path.write_text(js_content, "utf-8")
 
             logger.info(f"Injected cache-busting hash {build_hash} into static assets")
-    except Exception as e:
-        logger.exception(f"Failed to apply cache busting to HTML/JS: {e}. Browsers may serve stale assets.")
+    except Exception:
+        logger.exception("Failed to apply cache busting to HTML/JS. Browsers may serve stale assets.")
 
     beacon: Beacon = Beacon()
     beacon.start()
