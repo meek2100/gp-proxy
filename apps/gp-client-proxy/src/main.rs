@@ -1,14 +1,17 @@
 // File: apps/gp-client-proxy/src/main.rs
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose, Engine as _};
 use directories::ProjectDirs;
-use serde::Deserialize;
+use ed25519_dalek::{Signer, SigningKey};
+use rand::rngs::OsRng;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(not(target_os = "windows"))]
 use std::process::Command;
@@ -50,16 +53,23 @@ struct DiscoveryResponse {
     port: u16,
 }
 
+#[derive(Serialize, Debug)]
+struct PairRequest {
+    public_key: String,
+}
+
 #[derive(Clone, Debug)]
 struct ProxyConfig {
     base_url: String,
     token: String,
+    private_key: Option<[u8; 32]>,
 }
 
 impl ProxyConfig {
-    /// Generates the authenticated browser URL to pass the zero-touch token to the frontend
+    /// Generates the authenticated browser URL to pass the token to the frontend (if legacy API_TOKEN is used)
     fn browser_url(&self) -> String {
         if self.token.is_empty() {
+            // When using TOFU, the web interface utilizes a securely injected ephemeral token.
             self.base_url.clone()
         } else {
             format!("{}/?token={}", self.base_url, encode_token(&self.token))
@@ -81,12 +91,31 @@ fn encode_token(token: &str) -> String {
         .collect()
 }
 
-/// Helper function to uniformly inject the Authorization header if a token is present
-fn with_auth<T>(req: ureq::RequestBuilder<T>, token: &str) -> ureq::RequestBuilder<T> {
-    if token.is_empty() {
-        req
+/// Helper function to uniformly inject the Authorization header OR the Ed25519 signature payload
+fn with_auth<T>(
+    req: ureq::RequestBuilder<T>,
+    config: &ProxyConfig,
+    path: &str,
+) -> ureq::RequestBuilder<T> {
+    if !config.token.is_empty() {
+        // Legacy manual API_TOKEN locking
+        req.header("Authorization", &format!("Bearer {}", config.token))
+    } else if let Some(key_bytes) = &config.private_key {
+        // Trust On First Use (TOFU) Cryptographic Ed25519 Signing
+        let signing_key = SigningKey::from_bytes(key_bytes);
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let message = format!("{}:{}", ts, path);
+        let signature = signing_key.sign(message.as_bytes());
+        let sig_b64 = general_purpose::STANDARD.encode(signature.to_bytes());
+
+        req.header("X-Timestamp", &ts.to_string())
+            .header("X-Signature", &sig_b64)
     } else {
-        req.header("Authorization", &format!("Bearer {}", token))
+        req
     }
 }
 
@@ -233,7 +262,7 @@ fn run_dashboard() -> Result<()> {
                     if s.state == "connected" {
                         println!("Disconnecting...");
                         let req = agent.post(&format!("{}/disconnect", config.base_url));
-                        if let Err(e) = with_auth(req, &config.token).send_empty() {
+                        if let Err(e) = with_auth(req, &config, "/disconnect").send_empty() {
                             println!("Error disconnecting: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
@@ -242,7 +271,7 @@ fn run_dashboard() -> Result<()> {
                     } else {
                         println!("Initiating Connection...");
                         let req = agent.post(&format!("{}/connect", config.base_url));
-                        if let Err(e) = with_auth(req, &config.token).send_empty() {
+                        if let Err(e) = with_auth(req, &config, "/connect").send_empty() {
                             println!("Error initiating connection: {}", e);
                             thread::sleep(Duration::from_secs(2));
                         } else {
@@ -302,7 +331,7 @@ fn poll_for_success(config: &ProxyConfig, agent: &ureq::Agent) {
 /// Fetches the proxy server's status using a fast-timeout HTTP agent.
 fn fetch_status(config: &ProxyConfig, agent: &ureq::Agent) -> Result<ServerStatus> {
     let req = agent.get(&format!("{}/status.json", config.base_url));
-    let resp: ServerStatus = with_auth(req, &config.token)
+    let resp: ServerStatus = with_auth(req, config, "/status.json")
         .call()?
         .body_mut()
         .read_json()?;
@@ -378,17 +407,55 @@ fn run_setup_wizard() -> Result<()> {
         }
     };
 
-    println!("\nDoes the server require an API Token?");
-    println!("(Leave blank if your container is deployed for open LAN access)");
+    println!("\n[OPTIONAL] Does the server require a manual API Token?");
+    println!("(Leave blank to automatically use Trust-On-First-Use Pairing)");
     print!("Token > ");
     io::stdout().flush()?;
     let mut token_input = String::new();
     io::stdin().read_line(&mut token_input)?;
     let final_token = token_input.trim().to_string();
 
+    let mut private_key_opt: Option<[u8; 32]> = None;
+
+    if final_token.is_empty() {
+        println!("\nGenerating Ed25519 identity and attempting TOFU pairing...");
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+
+        let pubkey_b64 = general_purpose::STANDARD.encode(verifying_key.as_bytes());
+
+        let pair_req = PairRequest {
+            public_key: pubkey_b64,
+        };
+
+        let agent = get_agent();
+        let resp = agent
+            .post(&format!("{}/api/pair", final_url))
+            .send_json(&pair_req);
+
+        match resp {
+            Ok(r) if r.status() == 200 => {
+                println!("[SUCCESS] Cryptographic Trust-On-First-Use (TOFU) Pairing complete.");
+                private_key_opt = Some(signing_key.to_bytes());
+            }
+            Ok(r) => {
+                println!("[ERROR] Pairing rejected by server (HTTP {}). Container might be manually locked via API_TOKEN or already paired.", r.status());
+                wait_for_enter();
+                return Ok(());
+            }
+            Err(e) => {
+                println!("[ERROR] Failed to connect for pairing: {}", e);
+                wait_for_enter();
+                return Ok(());
+            }
+        }
+    }
+
     let config = ProxyConfig {
         base_url: final_url,
         token: final_token,
+        private_key: private_key_opt,
     };
 
     println!("Saving configuration...");
@@ -420,7 +487,7 @@ fn handle_link(url: &str) -> Result<()> {
     let agent = get_agent();
     let req = agent.post(&target_endpoint);
 
-    let resp = with_auth(req, &config.token).send_form([("callback_url", url)])?;
+    let resp = with_auth(req, &config, "/submit").send_form([("callback_url", url)])?;
 
     if resp.status() != 200 {
         anyhow::bail!("Server Error: {}", resp.status());
@@ -477,15 +544,33 @@ fn load_config() -> Result<ProxyConfig> {
 
     let token = lines.next().unwrap_or("").trim().to_string();
 
-    Ok(ProxyConfig { base_url, token })
+    let mut private_key = None;
+    if let Some(pk_str) = lines.next() {
+        let pk_trim = pk_str.trim();
+        if !pk_trim.is_empty() {
+            if let Ok(decoded) = general_purpose::STANDARD.decode(pk_trim) {
+                if decoded.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&decoded);
+                    private_key = Some(arr);
+                }
+            }
+        }
+    }
+
+    Ok(ProxyConfig {
+        base_url,
+        token,
+        private_key,
+    })
 }
 
 fn save_config(config: &ProxyConfig) -> Result<()> {
-    let content = if config.token.is_empty() {
-        format!("{}\n", config.base_url)
-    } else {
-        format!("{}\n{}\n", config.base_url, config.token)
-    };
+    let mut content = format!("{}\n{}\n", config.base_url, config.token);
+    if let Some(pk) = &config.private_key {
+        content.push_str(&general_purpose::STANDARD.encode(pk));
+        content.push('\n');
+    }
     fs::write(get_config_path()?, content)?;
     Ok(())
 }

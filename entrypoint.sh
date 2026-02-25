@@ -158,15 +158,12 @@ RAW_GOST_AUTH=$(get_env_value "GOST_AUTH" "gost_auth")
 GOST_AUTH=$(clean_val_preserve_inner "$RAW_GOST_AUTH")
 export GOST_AUTH
 
-# 17. API Token (Secure By Default)
+# 17. API Token (Optional Legacy Override)
 RAW_API_TOKEN=$(get_env_value "API_TOKEN" "api_token")
 API_TOKEN=$(clean_val_preserve_inner "$RAW_API_TOKEN")
-IS_GENERATED_TOKEN=false
-if [[ -z "$API_TOKEN" ]]; then
-    API_TOKEN=$(openssl rand -hex 16)
-    IS_GENERATED_TOKEN=true
+if [[ -n "$API_TOKEN" ]]; then
+    export API_TOKEN
 fi
-export API_TOKEN
 
 # ==============================================================================
 # 2. RUNTIME SETUP
@@ -228,13 +225,11 @@ if [[ -n "$DNS_SERVERS" ]]; then
     log "INFO" "Custom DNS:  $DNS_SERVERS"
 fi
 
-if [[ "$IS_GENERATED_TOKEN" == true ]]; then
+if [[ -n "$API_TOKEN" ]]; then
     log "WARN" "------------------------------------------"
-    log "WARN" " NO API_TOKEN PROVIDED IN ENVIRONMENT!    "
-    log "WARN" " SECURE-BY-DEFAULT POSTURE IS ACTIVE.     "
-    log "WARN" " Auto-generated Token: ${API_TOKEN:0:4}...${API_TOKEN: -4} (use 'docker exec <container_id> printenv API_TOKEN' to retrieve)"
+    log "WARN" " API_TOKEN Provided. TOFU Pairing Disabled."
 else
-    log "INFO" "API Token:   [Provided via Environment]"
+    log "INFO" "API Token:   [Optional - TOFU Pairing Active]"
 fi
 log "INFO" "------------------------------------------"
 

@@ -4,9 +4,11 @@ Container Agent - GP Proxy Web Interface and Control Server.
 
 Hosts the primary user-facing web dashboard and API endpoints for managing the VPN lifecycle.
 Manages thread-safe log parsing for state detection, enforces Bearer token authentication,
-and orchestrates inter-process communication (IPC) with the background OpenConnect processes.
+implements Trust On First Use (TOFU) Ed25519 pairing, and orchestrates inter-process communication
+(IPC) with the background OpenConnect processes.
 """
 
+import base64
 import hashlib
 import hmac
 import http.server
@@ -14,6 +16,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import socket
 import socketserver
@@ -25,6 +28,10 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, TypedDict
 
+from cryptography.exceptions import InvalidSignature  # pyright: ignore[reportUnknownVariableType]
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PublicKey,  # pyright: ignore[reportUnknownVariableType]
+)
 from utils import (
     CLIENT_LOG,
     IPC_CONTROL_PORT,
@@ -37,10 +44,17 @@ from utils import (
 
 logger: logging.Logger = setup_logger("server")
 
-# --- Configuration ---
+# --- Configuration & Security Globals ---
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
 MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
+
+# Ephemeral session token for local Web GUI authorization
+EPHEMERAL_TOKEN: str = secrets.token_urlsafe(32)
+
+# Paired Trust-On-First-Use (TOFU) Ed25519 Public Key
+_paired_pubkey: Ed25519PublicKey | None = None
+
 
 # --- Pre-compiled Regex (Optimization) ---
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -260,10 +274,6 @@ class Beacon(threading.Thread):
         """
         Listen for "GP_DISCOVER" UDP packets and respond with a JSON payload containing the best IP, server port,
         and hostname.
-
-        Security Note: The API token is intentionally omitted from the broadcast payload to prevent
-        cleartext sniffing on untrusted LANs. If an API_TOKEN is configured, the Host Agent must be
-        pre-provisioned to use it.
         """
         logger.info(f"UDP Beacon active on port {UDP_BEACON_PORT}")
         while True:
@@ -559,23 +569,41 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _is_authorized(self) -> bool:
         """
-        Validates the request against the configured pre-shared API_TOKEN.
-        If no API_TOKEN environment variable is set, defaults to open access,
-        relying on network-level boundaries (e.g., Docker networks) for security.
-        Uses hmac.compare_digest for timing-safe string comparison.
+        Validates the request against the local Ephemeral Session Token, the optional API_TOKEN,
+        or a valid Trust-On-First-Use (TOFU) Ed25519 signature from a paired Rust client.
+        Uses hmac.compare_digest for timing-safe string comparisons.
 
         Returns:
-            bool: `True` if authorized or no token is required, `False` otherwise.
+            bool: `True` if authorized, `False` otherwise.
         """
-        expected_token = os.getenv("API_TOKEN")
-
-        # If no token is configured, allow the request
-        if not expected_token:
-            return True
-
-        # If a token is configured, strictly enforce it safely
+        # 1. Bearer Token Check (Ephemeral GUI or Manual Override API_TOKEN)
         auth_header = self.headers.get("Authorization", "")
-        return hmac.compare_digest(auth_header, f"Bearer {expected_token}")
+        if auth_header:
+            if hmac.compare_digest(auth_header, f"Bearer {EPHEMERAL_TOKEN}"):
+                return True
+
+            expected_token = os.getenv("API_TOKEN")
+            if expected_token and hmac.compare_digest(auth_header, f"Bearer {expected_token}"):
+                return True
+
+        # 2. Ed25519 Cryptographic Signature Check (Paired Rust Client)
+        if _paired_pubkey is not None:
+            sig_b64 = self.headers.get("X-Signature")
+            timestamp = self.headers.get("X-Timestamp")
+            if sig_b64 and timestamp:
+                try:
+                    ts = int(timestamp)
+                    # Enforce a tight 60-second window to mitigate replay attacks
+                    if abs(time.time() - ts) < 60:
+                        # Required Signature Payload Structure: "{timestamp}:{path}"
+                        message = f"{ts}:{getattr(self, 'path', '')}".encode()
+                        sig = base64.b64decode(sig_b64)
+                        _paired_pubkey.verify(sig, message)  # pyright: ignore[reportUnknownMemberType]
+                        return True
+                except (ValueError, InvalidSignature, TypeError):  # fmt: skip
+                    pass
+
+        return False
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """
@@ -655,6 +683,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.path = "/index.html"
         return super().do_GET()
 
+    def _handle_pair(self, length: int) -> None:
+        """
+        Handle the Trust-On-First-Use (TOFU) public key pairing request from the Rust client.
+        Prevents pairing if already paired or if manual API_TOKEN locking is engaged.
+        """
+        global _paired_pubkey
+        if os.getenv("API_TOKEN"):
+            self.send_error(403, "Pairing disabled: Manual API_TOKEN configured")
+            return
+        if _paired_pubkey is not None:
+            self.send_error(403, "Already paired. Trust On First Use (TOFU) locking active.")
+            return
+
+        try:
+            raw_data = self.rfile.read(length).decode("utf-8")
+            data = json.loads(raw_data)
+            pubkey_b64 = data.get("public_key")
+            if not pubkey_b64:
+                self.send_error(400, "Missing public_key")
+                return
+
+            pubkey_bytes = base64.b64decode(pubkey_b64)
+            _paired_pubkey = Ed25519PublicKey.from_public_bytes(pubkey_bytes)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+            logger.info("TOFU Pairing successful. Rust Host Agent trusted.")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+        except Exception as e:
+            logger.warning(f"Pairing failed: {e}")
+            self.send_error(400, "Invalid pairing payload")
+
     def _handle_connect(self) -> None:
         """
         Handle an HTTP request to initiate a VPN connection.
@@ -720,29 +780,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Globally enforces payload size limits.
 
         Supported Endpoints:
+            - /api/pair: Initiates TOFU Ed25519 pairing. (Unauthenticated)
             - /connect: Initiates a new VPN connection. Requires no payload.
             - /disconnect: Terminates active VPN client processes. Requires no payload.
             - /submit: Forwards authentication tokens or form inputs to the VPN client.
               Requires a form-encoded payload containing 'callback_url' or 'user_input'.
         """
-        if not self._is_authorized():
-            self.send_error(401, "Unauthorized")
-            return
+        request_path = getattr(self, "path", "")
 
         try:
             length: int = int(self.headers.get("Content-Length", 0))
         except (ValueError, TypeError):  # fmt: skip
             length = 0
 
-        if length < 0:
-            self.send_error(400, "Invalid Content-Length")
+        if length < 0 or length > 8192:
+            self.send_error(400 if length < 0 else 413, "Invalid Payload Size")
             return
 
-        if length > 8192:  # Prevent memory exhaustion (DOS)
-            self.send_error(413, "Payload Too Large")
+        # Explicitly allow unauthenticated pairing
+        if request_path == "/api/pair":
+            self._handle_pair(length)
             return
 
-        request_path = getattr(self, "path", "")
+        if not self._is_authorized():
+            self.send_error(401, "Unauthorized")
+            return
 
         if request_path == "/connect":
             self._handle_connect()
@@ -780,8 +842,7 @@ if __name__ == "__main__":
 
     init_runtime_dir()
 
-    # Dynamic cache busting for the frontend GUI.
-    # Exclusively updates index.html based on canonical static content hashing.
+    # Dynamic cache busting and ephemeral token injection for the frontend GUI.
     try:
         index_path = Path("index.html")
 
@@ -805,9 +866,12 @@ if __name__ == "__main__":
             content = re.sub(
                 r'src="([^"]+\.(?:js|png|jpg|svg|ico))(\?v=[a-zA-Z0-9]+)?"', rf'src="\1?v={build_hash}"', content
             )
+            # Inject the secure memory-generated Ephemeral Session Token into the HTML boundary
+            content = content.replace("EPHEMERAL_TOKEN_PLACEHOLDER", EPHEMERAL_TOKEN)
+
             index_path.write_text(content, "utf-8")
 
-            logger.info(f"Injected cache-busting hash {build_hash} into static assets")
+            logger.info(f"Injected cache-busting hash {build_hash} and Ephemeral UI Token into static assets")
     except Exception:
         logger.exception("Failed to apply cache busting to HTML. Browsers may serve stale assets.")
 
