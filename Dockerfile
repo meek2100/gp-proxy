@@ -54,7 +54,7 @@ ENV PYTHONUNBUFFERED=1
 # Catch pipe failures during the build process
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# 5. Install Runtime Dependencies
+# 5. Install Runtime System Dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iptables iproute2 util-linux procps tzdata \
     vpnc-scripts ca-certificates \
@@ -62,7 +62,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
-# 6. Download GOST and Purge Wget
+# 6. Install Python Dependencies
+# Required for the TOFU Ed25519 pairing architecture
+RUN pip install --no-cache-dir cryptography==46.0.5
+
+# 7. Download GOST and Purge Wget
 RUN apt-get update && apt-get install -y --no-install-recommends wget \
     && if [ "$TARGETARCH" = "arm" ]; then \
     echo "Error: 32-bit ARM (arm/v7) is not supported by GOST v${GOST_VERSION} prebuilts." >&2 && exit 1; \
@@ -79,13 +83,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# 7. Setup User
+# 8. Setup User
 RUN useradd -m -s /bin/bash gpuser
 RUN echo "gpuser ALL=(root) NOPASSWD: /usr/bin/gpclient, /usr/bin/gpservice, /usr/bin/pkill, /usr/bin/pgrep" > /etc/sudoers.d/gpuser && \
     chmod 0440 /etc/sudoers.d/gpuser && \
     visudo -cf /etc/sudoers.d/gpuser
 
-# 8. Copy Binaries
+# 9. Copy Binaries
 COPY --from=builder \
     /usr/src/app/target/release/gpclient \
     /usr/src/app/target/release/gpservice \
@@ -93,11 +97,11 @@ COPY --from=builder \
     /usr/bin/
 COPY --from=builder /usr/src/app/healthcheck /usr/bin/healthcheck
 
-# 9. Set Capabilities
+# 10. Set Capabilities
 RUN setcap 'cap_net_admin,cap_net_bind_service+ep' /usr/bin/gpservice && \
     ldconfig
 
-# 10. Setup App Environment
+# 11. Setup App Environment
 RUN mkdir -p /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus && \
     chown -R gpuser:gpuser /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus
 
@@ -111,7 +115,7 @@ RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-p
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# 11. Healthcheck
+# 12. Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD /usr/bin/healthcheck || exit 1
 
