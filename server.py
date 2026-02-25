@@ -613,7 +613,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(403, "Forbidden")
             return
 
-        if self.path.startswith("/status.json"):
+        if request_path == "/status.json":
             if not self._is_authorized():
                 self.send_error(401, "Unauthorized")
                 return

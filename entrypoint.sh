@@ -427,9 +427,11 @@ fi
 # --- 5. INIT ENVIRONMENT ---
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR" /tmp/gp-logs
-chmod 700 "$RUNTIME_DIR"
 
+# Harden permissions immediately to prevent logs from being broadly readable
+chmod 700 "$RUNTIME_DIR" /tmp/gp-logs
 touch "$CLIENT_LOG" "$SERVICE_LOG"
+chmod 600 "$CLIENT_LOG" "$SERVICE_LOG"
 
 chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$RUNTIME_DIR"
 
@@ -524,10 +526,15 @@ while true; do
             [[ -n "$VPN_CLIENT_VERSION" ]] && args+=(--client-version "$VPN_CLIENT_VERSION")
 
             if [[ -n "$GP_ARGS" ]]; then
-                eval "set -- $GP_ARGS"
-                for arg in "$@"; do
-                    args+=("$arg")
-                done
+                # Trust boundary: GP_ARGS is operator-controlled. Reject dangerous shell metacharacters before eval.
+                if [[ "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\] ]]; then
+                    echo "[Entrypoint] CRITICAL: Unsafe shell metacharacters detected. GP_ARGS rejected." >> "$SERVICE_LOG"
+                else
+                    eval "set -- $GP_ARGS"
+                    for arg in "$@"; do
+                        args+=("$arg")
+                    done
+                fi
             fi
 
             SAFE_CMD=$(printf "%q " "${args[@]}")
