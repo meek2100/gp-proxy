@@ -9,8 +9,7 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 # 1. ROBUST CONFIGURATION PARSING
 # ==============================================================================
 
-# get_env_value searches the provided environment variable names case-insensitively and echoes the first non-empty value found.
-# It checks each name for an exact exported variable first, then falls back to a case-insensitive lookup of the environment if not found.
+# Helper: Find env var value case-insensitively
 get_env_value() {
     local val=""
     for key in "$@"; do
@@ -28,7 +27,7 @@ get_env_value() {
     echo "$val"
 }
 
-# clean_val removes all single and double quotes from the given string and trims leading and trailing whitespace while preserving internal spacing.
+# Helper: Strip quotes and trim whitespace safely without collapsing internal spaces
 clean_val() {
     local val="$1"
     # Remove all single and double quotes
@@ -234,11 +233,12 @@ else
 fi
 log "INFO" "------------------------------------------"
 
-# cleanup terminates gpclient and gpservice processes, kills any background jobs, and exits with status 0 when a shutdown signal is received.
+# --- GRACEFUL SHUTDOWN ---
 cleanup() {
     log "WARN" "Received Shutdown Signal"
     sudo pkill -x gpclient || true
     sudo pkill -x gpservice || true
+    pkill -x gost || true
     kill "$(jobs -p)" 2>/dev/null || true
     exit 0
 }
@@ -258,7 +258,25 @@ check_log_size() {
     done
 }
 
-# --- WATCHDOG ---
+# --- DYNAMIC PROCESS MANAGEMENT ---
+start_gost() {
+    if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
+        if ! pgrep -x gost >/dev/null; then
+            log "INFO" "Starting gost SOCKS proxy..."
+            local gost_args="-L=socks5://:1080?udp=true"
+            if [[ -n "$GOST_AUTH" ]]; then
+                if [[ "$GOST_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
+                    log "INFO" "SOCKS5 Authentication Enabled."
+                    gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
+                else
+                    log "ERROR" "GOST_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
+                fi
+            fi
+            runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
+        fi
+    fi
+}
+
 check_services() {
     if ! pgrep -f server.py >/dev/null; then
         log "ERROR" "CRITICAL: Web UI (server.py) died."
@@ -271,17 +289,18 @@ check_services() {
         runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
     fi
 
-    if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
-        if ! pgrep -x gost >/dev/null; then
-            log "ERROR" "CRITICAL: gost SOCKS proxy died unexpectedly."
-            exit 1
-        fi
-    fi
-
     local mode
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
+    # Enforce background process isolation to active phases only
     if [[ "$mode" == "active" ]]; then
+        if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
+            if ! pgrep -x gost >/dev/null; then
+                log "ERROR" "CRITICAL: gost SOCKS proxy died while VPN was active. Restarting..."
+                start_gost
+            fi
+        fi
+
         if ! pgrep -f "gpservice" >/dev/null; then
             log "ERROR" "CRITICAL: gpservice died while VPN was active."
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
@@ -450,20 +469,6 @@ mkfifo "$RUNTIME_DIR/gp_control_pipe"
 exec 3<>"$RUNTIME_DIR/gp_control_pipe"
 chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
 
-if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
-    gost_args="-L=socks5://:1080?udp=true"
-    if [[ -n "$GOST_AUTH" ]]; then
-        if [[ "$GOST_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
-            log "INFO" "SOCKS5 Authentication Enabled."
-            gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
-        else
-            log "ERROR" "GOST_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
-            GOST_AUTH=""
-        fi
-    fi
-    runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
-fi
-
 # Ensure API_TOKEN and GOST_AUTH states are definitively passed down to the server context
 runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" GOST_AUTH="$GOST_AUTH" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
@@ -486,6 +491,8 @@ while true; do
     if [[ "$CMD" == "START" ]]; then
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
+
+        start_gost
 
         # 1. Start gpservice
         log "INFO" "Starting gpservice..."
@@ -546,9 +553,10 @@ while true; do
         '
 
         # 3. Cleanup after disconnect
-        log "WARN" "gpclient exited. Cleaning up services..."
+        log "WARN" "gpclient pipeline resolved. Cleaning up services..."
         echo "idle" >"$MODE_FILE"
         sudo pkill -x gpservice || true
-        log "INFO" "gpservice stopped. System Idle."
+        pkill -x gost || true
+        log "INFO" "Services stopped. System Idle."
     fi
 done
