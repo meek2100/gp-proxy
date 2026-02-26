@@ -12,7 +12,7 @@ import os
 # Add backend directory to path for imports
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
@@ -156,7 +156,7 @@ class TestSetupLogger:
             root_logger.handlers = old_handlers
 
     def test_setup_logger_adds_file_handler_when_log_dir_exists(self) -> None:
-        """Test that FileHandler is added when /tmp/gp-logs exists."""
+        """Test that FileHandler is added when log dir exists."""
         import uuid
 
         logger_name = f"test_logger_file_{uuid.uuid4().hex[:8]}"
@@ -165,11 +165,10 @@ class TestSetupLogger:
         old_handlers = root_logger.handlers[:]
         root_logger.handlers = []
 
-        with patch("utils.Path") as mock_path:
-            mock_path_instance = Mock()
-            mock_path_instance.exists.return_value = True
-            mock_path.return_value = mock_path_instance
+        mock_dir = MagicMock()
+        mock_dir.exists.return_value = True
 
+        with patch("utils._log_dir", mock_dir):
             with patch("utils.logging.FileHandler") as mock_file_handler:
                 setup_logger(logger_name)
                 mock_file_handler.assert_called_once()
@@ -177,7 +176,7 @@ class TestSetupLogger:
         root_logger.handlers = old_handlers
 
     def test_setup_logger_adds_stream_handler_when_log_dir_missing(self) -> None:
-        """Test that StreamHandler is added when /tmp/gp-logs does not exist."""
+        """Test that StreamHandler is added when log dir does not exist."""
         import uuid
 
         logger_name = f"test_logger_stream_{uuid.uuid4().hex[:8]}"
@@ -186,11 +185,10 @@ class TestSetupLogger:
         old_handlers = root_logger.handlers[:]
         root_logger.handlers = []
 
-        with patch("utils.Path") as mock_path:
-            mock_path_instance = Mock()
-            mock_path_instance.exists.return_value = False
-            mock_path.return_value = mock_path_instance
+        mock_dir = MagicMock()
+        mock_dir.exists.return_value = False
 
+        with patch("utils._log_dir", mock_dir):
             with patch("utils.logging.StreamHandler") as mock_stream_handler:
                 setup_logger(logger_name)
                 mock_stream_handler.assert_called_once()

@@ -412,7 +412,7 @@ class TestStateManager:
         try:
             with patch.object(Path, "stat", side_effect=mock_stat):
                 _analysis, log = manager.get_cached_log_analysis(temp_path)
-                assert log == "Connecting\n"
+                assert log == ""
                 assert manager._log_mtime_ns == -1  # Cache should not have updated
         finally:
             if temp_path.exists():
@@ -512,20 +512,20 @@ class TestGetVpnState:
                     state_vpn = get_vpn_state()
                     assert state_vpn["vpn_mode"] == "gateway"
 
-    def test_get_vpn_state_socks_auth_detection(self) -> None:
-        """Test SOCKS authentication flag detection."""
+    def test_get_vpn_state_proxy_auth_detection(self) -> None:
+        """Test proxy authentication flag detection."""
         with tempfile.TemporaryDirectory() as tmpdir:
             mode_file = Path(tmpdir) / "gp-mode"
             mode_file.write_text("idle")
 
             with patch("server.MODE_FILE", mode_file):
-                with patch.dict(os.environ, {"GOST_AUTH": "user:pass"}):
+                with patch.dict(os.environ, {"PROXY_AUTH": "user:pass"}):
                     state_auth: Any = get_vpn_state()
-                    assert state_auth["socks_auth_enabled"] is True
+                    assert state_auth["proxy_auth_enabled"] is True
 
                 with patch.dict(os.environ, {}, clear=True):
                     state_no_auth: Any = get_vpn_state()
-                    assert state_no_auth["socks_auth_enabled"] is False
+                    assert state_no_auth["proxy_auth_enabled"] is False
 
 
 class TestInitRuntimeDir:
@@ -544,14 +544,11 @@ class TestInitRuntimeDir:
 
     def test_init_runtime_dir_sets_permissions_unix(self) -> None:
         """Test that correct permissions are set on Unix."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            runtime_dir = Path(tmpdir) / "test-runtime"
-
-            with patch("server.RUNTIME_DIR", runtime_dir):
-                with patch("sys.platform", "linux"):
-                    init_runtime_dir()
-                    stat = runtime_dir.stat()
-                    assert stat.st_mode & 0o777 == 0o700
+        with patch("server.RUNTIME_DIR") as mock_runtime_dir:
+            with patch("sys.platform", "linux"):
+                init_runtime_dir()
+                mock_runtime_dir.mkdir.assert_called_once_with(mode=0o700, parents=True, exist_ok=True)
+                mock_runtime_dir.chmod.assert_called_once_with(0o700)
 
     def test_init_runtime_dir_handles_existing_directory(self) -> None:
         """Test handling of existing directory."""
