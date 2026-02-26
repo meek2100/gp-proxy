@@ -316,8 +316,17 @@ start_gost() {
                 case "$p" in
                     socks5) gost_args="$gost_args -L=socks5://${auth_prefix}:1080?udp=true" ;;
                     socks4) gost_args="$gost_args -L=socks4://${auth_prefix}:1084" ;;
+                    socks4a) gost_args="$gost_args -L=socks4a://${auth_prefix}:1085" ;;
                     http) gost_args="$gost_args -L=http://${auth_prefix}:8080" ;;
                     https) gost_args="$gost_args -L=https://${auth_prefix}:8443" ;;
+                    ss)
+                        if [[ -z "$auth_prefix" ]]; then
+                            log "WARN" "Shadowsocks requires authentication. Falling back to default: chacha20:password"
+                            gost_args="$gost_args -L=ss://chacha20:password@:8388"
+                        else
+                            gost_args="$gost_args -L=ss://${auth_prefix}:8388"
+                        fi
+                        ;;
                     *) log "WARN" "Unknown proxy mode: $p" ;;
                 esac
             done
@@ -584,8 +593,13 @@ if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
                 iptables -A INPUT -p udp --dport 1080 -j ACCEPT
                 ;;
             socks4) iptables -A INPUT -p tcp --dport 1084 -j ACCEPT ;;
+            socks4a) iptables -A INPUT -p tcp --dport 1085 -j ACCEPT ;;
             http) iptables -A INPUT -p tcp --dport 8080 -j ACCEPT ;;
             https) iptables -A INPUT -p tcp --dport 8443 -j ACCEPT ;;
+            ss)
+                iptables -A INPUT -p tcp --dport 8388 -j ACCEPT
+                iptables -A INPUT -p udp --dport 8388 -j ACCEPT
+                ;;
         esac
     done
 fi

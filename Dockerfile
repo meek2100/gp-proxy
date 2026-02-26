@@ -123,5 +123,5 @@ RUN chmod +x /entrypoint.sh
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD /usr/bin/healthcheck || exit 1
 
-EXPOSE 1080 1084 8080 8443 8001
+EXPOSE 1080 1084 1085 8001 8080 8388 8443
 ENTRYPOINT ["/entrypoint.sh"]

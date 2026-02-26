@@ -100,7 +100,7 @@ let lastAuthUrl = "";
 let isRestarting = false;
 
 // Global array of all possible proxy layout tabs
-const ALL_TABS = ["gateway", "socks5", "socks4", "http", "https"];
+const ALL_TABS = ["gateway", "socks5", "socks4", "socks4a", "http", "https", "ss"];
 
 /**
  * Switches the active connection detail tab on mobile devices.

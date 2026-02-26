@@ -80,12 +80,14 @@ The application supports simultaneous proxy and gateway topologies. Configure th
 - **`proxy`:** Starts proxy handler(s) ONLY. Explicitly disables IP Forwarding and NAT. Locked down.
 - **`gateway`:** Configures NAT/IP Forwarding ONLY. No proxy listeners. Requires `macvlan` network driver.
 
-When the mode is set to `standard` or `proxy`, you can configure exactly which proxy endpoints are active simultaneously via the `PROXY_MODE` environment variable. Provide a comma-separated list of values (e.g. `socks5,http,https,socks4`).
+When the mode is set to `standard` or `proxy`, you can configure exactly which proxy endpoints are active simultaneously via the `PROXY_MODE` environment variable. Provide a comma-separated list of values (e.g. `socks5,socks4,socks4a,http,https,ss`).
 
 - **`socks5`:** Standard UDP/TCP SOCKS5 proxy on Port 1080.
 - **`socks4`:** Standard TCP SOCKS4 proxy on Port 1084.
+- **`socks4a`:** SOCKS4a proxy (supports remote DNS) on Port 1085.
 - **`http`:** Standard HTTP proxy on Port 8080.
 - **`https`:** TLS-encrypted proxy on Port 8443. Auto-generates a local certificate.
+- **`ss`:** Shadowsocks encrypted proxy on Port 8388. (Note: `GOST_AUTH` acts as `cipher-method:password`).
 
 ## Advanced Networking: Smart Split-Tunneling
 
