@@ -411,7 +411,7 @@ class TestStateManager:
 
         try:
             with patch.object(Path, "stat", side_effect=mock_stat):
-                analysis, log = manager.get_cached_log_analysis(temp_path)
+                _analysis, log = manager.get_cached_log_analysis(temp_path)
                 assert log == "Connecting\n"
                 assert manager._log_mtime_ns == -1  # Cache should not have updated
         finally:

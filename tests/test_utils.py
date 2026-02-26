@@ -1,4 +1,5 @@
 # File: tests/test_utils.py
+# pyright: reportPrivateUsage=false
 """
 Tests for backend/utils.py
 
@@ -34,7 +35,7 @@ def _parse_port(env_var: str, default: int) -> int:
     return default
 
 
-utils._parse_port = _parse_port  # type: ignore[attr-defined]
+utils._parse_port = _parse_port
 
 
 class TestParsePort:
@@ -43,60 +44,60 @@ class TestParsePort:
     def test_parse_port_with_valid_value(self) -> None:
         """Test parsing a valid port number from environment."""
         with patch.dict(os.environ, {"TEST_PORT": "8080"}):
-            result = utils._parse_port("TEST_PORT", 9999)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 9999)
             assert result == 8080
 
     def test_parse_port_with_missing_env_var(self) -> None:
         """Test that default is returned when environment variable is missing."""
-        result = utils._parse_port("NONEXISTENT_PORT", 5000)  # type: ignore[attr-defined]
+        result = utils._parse_port("NONEXISTENT_PORT", 5000)
         assert result == 5000
 
     def test_parse_port_with_empty_string(self) -> None:
         """Test that default is returned when environment variable is empty."""
         with patch.dict(os.environ, {"TEST_PORT": ""}):
-            result = utils._parse_port("TEST_PORT", 3000)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 3000)
             assert result == 3000
 
     def test_parse_port_with_whitespace(self) -> None:
         """Test that whitespace is stripped correctly."""
         with patch.dict(os.environ, {"TEST_PORT": "  4000  "}):
-            result = utils._parse_port("TEST_PORT", 9999)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 9999)
             assert result == 4000
 
     def test_parse_port_with_invalid_string(self) -> None:
         """Test that default is returned for non-numeric values."""
         with patch.dict(os.environ, {"TEST_PORT": "not_a_number"}):
-            result = utils._parse_port("TEST_PORT", 7000)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 7000)
             assert result == 7000
 
     def test_parse_port_below_valid_range(self) -> None:
         """Test that default is returned for port numbers below 1."""
         with patch.dict(os.environ, {"TEST_PORT": "0"}):
-            result = utils._parse_port("TEST_PORT", 8000)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 8000)
             assert result == 8000
 
         with patch.dict(os.environ, {"TEST_PORT": "-1"}):
-            result = utils._parse_port("TEST_PORT", 8000)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 8000)
             assert result == 8000
 
     def test_parse_port_above_valid_range(self) -> None:
         """Test that default is returned for port numbers above 65535."""
         with patch.dict(os.environ, {"TEST_PORT": "65536"}):
-            result = utils._parse_port("TEST_PORT", 8000)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 8000)
             assert result == 8000
 
         with patch.dict(os.environ, {"TEST_PORT": "70000"}):
-            result = utils._parse_port("TEST_PORT", 8000)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 8000)
             assert result == 8000
 
     def test_parse_port_at_boundaries(self) -> None:
         """Test boundary values for valid port range."""
         with patch.dict(os.environ, {"TEST_PORT": "1"}):
-            result = utils._parse_port("TEST_PORT", 9999)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 9999)
             assert result == 1
 
         with patch.dict(os.environ, {"TEST_PORT": "65535"}):
-            result = utils._parse_port("TEST_PORT", 9999)  # type: ignore[attr-defined]
+            result = utils._parse_port("TEST_PORT", 9999)
             assert result == 65535
 
 
