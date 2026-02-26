@@ -300,8 +300,10 @@ class TestBinaryDataHandling:
         with patch("socket.socket") as mock_socket_class:
             mock_socket = Mock()
             mock_client = MagicMock()
-            # Translated "Hello World"
-            unicode_data = b"Hello World"
+
+            # Using an em-dash to test real multi-byte UTF-8 with strict standard punctuation
+            unicode_data = "Hello \u2014 World".encode()
+
             mock_client.recv.side_effect = [unicode_data, b""]
             mock_socket.accept.return_value = (mock_client, ("127.0.0.1", 12345))
             mock_socket_class.return_value.__enter__.return_value = mock_socket
@@ -319,7 +321,7 @@ class TestBinaryDataHandling:
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == unicode_data
-                    assert output.decode("utf-8") == "Hello World"
+                    assert output.decode("utf-8") == "Hello \u2014 World"
 
 
 class TestEdgeCases:

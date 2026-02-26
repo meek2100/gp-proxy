@@ -88,6 +88,7 @@ def setup_logger(name: str) -> logging.Logger:
             else:
                 handler = logging.StreamHandler()
 
+            handler.setLevel(log_level)
             handler.setFormatter(formatter)
             logger.addHandler(handler)
 

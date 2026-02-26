@@ -547,13 +547,19 @@ def _kill_and_poll_unix() -> None:
     res2: subprocess.CompletedProcess[bytes]
 
     # Directly pass '-n' non-interactive flags to ensure sudo never hangs waiting for a password.
-    # Omitting the explicit password probe prevents restricted Cmnd_Alias lists from artificially masking privileges.
     sudo: str | None = shutil.which("sudo")
-    sudo_cmd: list[str] = [sudo, "-n"] if sudo else []
+    sudo_cmd: list[str] = []
+    if sudo:
+        sudo_probe: subprocess.CompletedProcess[bytes] = subprocess.run([sudo, "-n", "true"], capture_output=True)
+        if sudo_probe.returncode == 0:
+            sudo_cmd = [sudo, "-n"]
 
-    # Explicitly fallback to hardcoded paths defined in the sudoers file to prevent rejection
-    pkill: str = shutil.which("pkill") or "/usr/bin/pkill"
-    pgrep: str = shutil.which("pgrep") or "/usr/bin/pgrep"
+    pkill: str | None = shutil.which("pkill")
+    pgrep: str | None = shutil.which("pgrep")
+
+    if not pkill or not pgrep:
+        logger.warning("Missing required tools for process teardown (pkill/pgrep)")
+        return
 
     # 1. Kill gost directly as gpuser to halt routing traffic instantly
     subprocess.run([pkill, "-x", "gost"], stderr=subprocess.DEVNULL)
@@ -878,7 +884,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         - Validates Content-Length and rejects requests larger than 8192 bytes (413) or negative lengths (400).
         - Returns 401 for unauthorized requests (except /api/pair) and 404 for unknown endpoints.
         """
-        request_path: str = self.path if hasattr(self, "path") else ""
+        raw_path: str = self.path if hasattr(self, "path") else ""
+        request_path: str = urllib.parse.unquote(urllib.parse.urlsplit(raw_path).path).lower()
 
         try:
             length: int = int(self.headers.get("Content-Length", 0))

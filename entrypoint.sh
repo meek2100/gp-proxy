@@ -277,7 +277,8 @@ cleanup() {
     log "WARN" "Received Shutdown Signal"
     sudo pkill -x gpclient || true
     sudo pkill -x gpservice || true
-    pkill -x gost || true
+    sudo pkill -x gost || true
+    sudo pkill -x dnsmasq || true
     kill "$(jobs -p)" 2>/dev/null || true
     exit 0
 }
@@ -336,8 +337,9 @@ start_proxies() {
                     https) proxy_args="$proxy_args -L=https://${auth_prefix}:8443" ;;
                     ss)
                         if [[ -z "$ss_auth_prefix" ]]; then
-                            log "WARN" "Shadowsocks requires authentication. Falling back to default: chacha20:password"
-                            proxy_args="$proxy_args -L=ss://chacha20:password@:8388"
+                            SS_DEFAULT_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
+                            log "WARN" "Shadowsocks requires authentication. Auto-generated password: $SS_DEFAULT_PASS"
+                            proxy_args="$proxy_args -L=ss://chacha20:${SS_DEFAULT_PASS}@:8388"
                         else
                             proxy_args="$proxy_args -L=ss://${ss_auth_prefix}:8388"
                         fi
@@ -516,7 +518,7 @@ if [[ "$reason" == "connect" ]]; then
         for i in "${ADDR[@]}"; do DOMAINS+=("$i"); done
     fi
 
-    UNIQUE_DOMAINS=($(printf "%s\n" "${DOMAINS[@]}" | sort -u | grep -v "^$"))
+    mapfile -t UNIQUE_DOMAINS < <(printf "%s\n" "${DOMAINS[@]}" | sort -u | grep -v "^$")
 
     # 5. Dynamically configure Split-DNS
     rm -f /etc/dnsmasq.d/vpn.conf

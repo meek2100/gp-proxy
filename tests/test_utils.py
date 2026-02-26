@@ -8,34 +8,10 @@ Verifies logging setup, IPC message sending, and port parsing functionality.
 
 import logging
 import os
-
-# Add backend directory to path for imports
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
-
-# Import module to access internal members safely for static analysis
 import utils
 from utils import send_ipc_message, setup_logger
-
-
-# Monkeypatch missing _parse_port function in utils module to make tests pass
-def _parse_port(env_var: str, default: int) -> int:
-    val = os.getenv(env_var, "").strip()
-    if not val:
-        return default
-    try:
-        port = int(val)
-        if 1 <= port <= 65535:
-            return port
-    except ValueError:
-        pass
-    return default
-
-
-utils._parse_port = _parse_port
 
 
 class TestParsePort:
