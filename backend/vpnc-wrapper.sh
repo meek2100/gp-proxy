@@ -44,6 +44,11 @@ if [[ "$reason" == "connect" ]]; then
     if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 && ${#VPN_DNS_SERVERS[@]} -gt 0 ]]; then
         PRIMARY_VPN_DNS="${VPN_DNS_SERVERS[0]}"
         for d in "${UNIQUE_DOMAINS[@]}"; do
+            # Validate domain to prevent dnsmasq config corruption (allow letters, numbers, hyphens, and dots)
+            if [[ ! "$d" =~ ^[\.a-zA-Z0-9-]+$ ]]; then
+                echo "[vpnc-wrapper] Skipping invalid split-domain value: $d" >>/tmp/gp-logs/gp-service.log
+                continue
+            fi
             echo "server=/$d/$PRIMARY_VPN_DNS" >>/etc/dnsmasq.d/vpn.conf
             echo "ipset=/$d/vpn_domains" >>/etc/dnsmasq.d/vpn.conf
         done
@@ -72,14 +77,27 @@ if [[ "$reason" == "connect" ]]; then
     # 7. Enable IPSet routing for dynamic domains so resolved targets bypass the local network
     if ipset list vpn_domains >/dev/null 2>&1; then
         echo "[vpnc-wrapper] Enabling dynamic policy routing for auto-detected VPN domains" >>/tmp/gp-logs/gp-service.log
-        ip rule add fwmark 0x10 lookup 100 2>/dev/null || true
-        ip route add default dev tun0 table 100 2>/dev/null || true
-        iptables -t mangle -A OUTPUT -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
-        iptables -t mangle -A PREROUTING -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
+
+        # Make rules idempotent
+        ip rule show | grep -q "fwmark 0x10 lookup 100" || ip rule add fwmark 0x10 lookup 100 2>/dev/null || true
+        ip route replace default dev tun0 table 100 2>/dev/null || true
+
+        iptables -t mangle -C OUTPUT -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null ||
+            iptables -t mangle -A OUTPUT -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
+
+        iptables -t mangle -C PREROUTING -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null ||
+            iptables -t mangle -A PREROUTING -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
     fi
 
 elif [[ "$reason" == "disconnect" ]]; then
     rm -f /etc/dnsmasq.d/vpn.conf
     pkill -HUP dnsmasq || true
+
+    # Safely clear dynamic policy routing to prevent state-bloat on rapid disconnects
+    iptables -t mangle -D OUTPUT -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
+    ip rule del fwmark 0x10 lookup 100 2>/dev/null || true
+    ip route flush table 100 2>/dev/null || true
+
     ipset flush vpn_domains 2>/dev/null || true
 fi

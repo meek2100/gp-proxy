@@ -153,8 +153,8 @@ RAW_SUBNETS=$(get_env_value "ALLOWED_SUBNETS" "allowed_subnets")
 ALLOWED_SUBNETS=$(clean_val "$RAW_SUBNETS")
 export ALLOWED_SUBNETS
 
-# 16. Proxy Auth
-RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth")
+# 16. Proxy Auth (Accepts GOST_AUTH as legacy fallback)
+RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth" "GOST_AUTH" "gost_auth")
 PROXY_AUTH=$(clean_val_preserve_inner "$RAW_PROXY_AUTH")
 export PROXY_AUTH
 
@@ -303,12 +303,12 @@ start_proxies() {
     if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
         if ! pgrep -x gost >/dev/null; then
             log "INFO" "Starting proxy handlers..."
-            local proxy_args=""
+            local -a proxy_args=()
             local auth_prefix=""
             local ss_auth_prefix=""
 
             if [[ -n "$PROXY_AUTH" ]]; then
-                if [[ "$PROXY_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
+                if [[ "$PROXY_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
                     log "INFO" "Standard Proxy Authentication Enabled."
                     auth_prefix="${PROXY_AUTH}@"
                 else
@@ -317,7 +317,7 @@ start_proxies() {
             fi
 
             if [[ -n "$SS_AUTH" ]]; then
-                if [[ "$SS_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
+                if [[ "$SS_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
                     log "INFO" "Shadowsocks Authentication Enabled."
                     ss_auth_prefix="${SS_AUTH}@"
                 else
@@ -325,31 +325,31 @@ start_proxies() {
                 fi
             fi
 
-            # Dynamically attach multiple listeners based on PROXY_MODE
+            # Dynamically attach multiple listeners based on PROXY_MODE using an array to prevent shell injection
             IFS=',' read -ra PROXIES <<<"$PROXY_MODE"
             for p in "${PROXIES[@]}"; do
                 p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
                 case "$p" in
-                    socks5) proxy_args="$proxy_args -L=socks5://${auth_prefix}:1080?udp=true" ;;
-                    socks4) proxy_args="$proxy_args -L=socks4://${auth_prefix}:1084" ;;
-                    socks4a) proxy_args="$proxy_args -L=socks4a://${auth_prefix}:1085" ;;
-                    http) proxy_args="$proxy_args -L=http://${auth_prefix}:8080" ;;
-                    https) proxy_args="$proxy_args -L=https://${auth_prefix}:8443" ;;
+                    socks5) proxy_args+=("-L=socks5://${auth_prefix}:1080?udp=true") ;;
+                    socks4) proxy_args+=("-L=socks4://${auth_prefix}:1084") ;;
+                    socks4a) proxy_args+=("-L=socks4a://${auth_prefix}:1085") ;;
+                    http) proxy_args+=("-L=http://${auth_prefix}:8080") ;;
+                    https) proxy_args+=("-L=https://${auth_prefix}:8443") ;;
                     ss)
                         if [[ -z "$ss_auth_prefix" ]]; then
                             SS_DEFAULT_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
                             log "WARN" "Shadowsocks requires authentication. Auto-generated password: $SS_DEFAULT_PASS"
-                            proxy_args="$proxy_args -L=ss://chacha20:${SS_DEFAULT_PASS}@:8388"
+                            proxy_args+=("-L=ss://chacha20:${SS_DEFAULT_PASS}@:8388")
                         else
-                            proxy_args="$proxy_args -L=ss://${ss_auth_prefix}:8388"
+                            proxy_args+=("-L=ss://${ss_auth_prefix}:8388")
                         fi
                         ;;
                     *) log "WARN" "Unknown proxy mode: $p" ;;
                 esac
             done
 
-            if [[ -n "$proxy_args" ]]; then
-                runuser -u gpuser -- bash -c "gost $proxy_args" >>"$SERVICE_LOG" 2>&1 &
+            if [[ ${#proxy_args[@]} -gt 0 ]]; then
+                runuser -u gpuser -- gost "${proxy_args[@]}" >>"$SERVICE_LOG" 2>&1 &
             else
                 log "WARN" "No valid proxy modes matched. Proxy engine will not start."
             fi
@@ -362,6 +362,12 @@ check_services() {
     if ! pgrep -f server.py >/dev/null; then
         log "ERROR" "CRITICAL: Web UI (server.py) died."
         exit 1
+    fi
+
+    # Liveness check for dnsmasq resolver
+    if ! pgrep -x dnsmasq >/dev/null; then
+        log "ERROR" "CRITICAL: dnsmasq died. Restarting..."
+        dnsmasq --user=root >>"$SERVICE_LOG" 2>&1 &
     fi
 
     # Liveness check for control listener to prevent pipe deadlocks

@@ -38,7 +38,7 @@
 
 html,
 body {
-    height: 100%;
+    min-height: 100vh;
     margin: 0;
     padding: 0;
     font-family: var(--font-family);
@@ -48,28 +48,27 @@ body {
         background-color 0.3s ease,
         color 0.3s ease;
     display: flex;
-    justify-content: center;
-    align-items: center;
+    flex-direction: column;
 }
 
 .app-container {
+    flex: 1;
     width: 100%;
-    padding: 16px;
+    padding: 32px 16px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
 }
 
 .card {
+    margin: auto;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
     width: 100%;
     max-width: 480px;
-    /* Default mobile-friendly width */
     padding: 40px 32px;
     position: relative;
     text-align: center;
@@ -103,20 +102,19 @@ body {
 @media (max-width: 480px) {
     .app-container {
         padding: 0;
-        height: 100%;
-        align-items: flex-start;
     }
 
     .card {
+        margin: 0;
         border: none;
         box-shadow: none;
         border-radius: 0;
-        padding: 24px;
+        padding: 32px 24px;
         min-height: 100vh;
         min-height: 100dvh;
         display: flex;
         flex-direction: column;
-        justify-content: center;
+        justify-content: flex-start;
     }
 }
 
@@ -366,18 +364,26 @@ select:focus {
 .conn-tabs {
     display: flex;
     border-bottom: 1px solid var(--border-color);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+
+.conn-tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .conn-tab-btn {
-    flex: 1;
+    flex: 1 0 auto;
     background: none;
     border: none;
-    padding: 12px;
+    padding: 12px 16px;
     font-size: 0.9rem;
     font-weight: 600;
     color: var(--text-secondary);
     cursor: pointer;
     border-bottom: 2px solid transparent;
+    white-space: nowrap;
 }
 
 .conn-tab-btn.active {
