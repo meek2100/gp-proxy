@@ -597,7 +597,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         try:
             super().handle()
-        except BrokenPipeError, ConnectionResetError:
+        except (BrokenPipeError, ConnectionResetError):  # fmt: skip
             pass
 
     def _is_authorized(self) -> bool:
