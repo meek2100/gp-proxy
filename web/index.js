@@ -515,9 +515,9 @@ async function updateStatus() {
             tabsContainer.style.display = visibleTabs.length <= 1 ? "none" : "";
         }
 
-        // Dynamically toggle the SOCKS proxy authentication UI text natively across all modes
+        // Dynamically toggle the proxy authentication UI text natively across all modes
         document.querySelectorAll(".proxy-auth-text").forEach((el) => {
-            el.innerText = data.socks_auth_enabled ? "See Env Config" : "None (Network Allowed)";
+            el.innerText = data.proxy_auth_enabled ? "See Env Config" : "None (Network Allowed)";
         });
 
         const debugSec = document.getElementById("debug-section");

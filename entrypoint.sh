@@ -153,26 +153,31 @@ RAW_SUBNETS=$(get_env_value "ALLOWED_SUBNETS" "allowed_subnets")
 ALLOWED_SUBNETS=$(clean_val "$RAW_SUBNETS")
 export ALLOWED_SUBNETS
 
-# 16. Gost Auth
-RAW_GOST_AUTH=$(get_env_value "GOST_AUTH" "gost_auth")
-GOST_AUTH=$(clean_val_preserve_inner "$RAW_GOST_AUTH")
-export GOST_AUTH
+# 16. Proxy Auth
+RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth")
+PROXY_AUTH=$(clean_val_preserve_inner "$RAW_PROXY_AUTH")
+export PROXY_AUTH
 
-# 17. API Token (Optional Legacy Override)
+# 17. Shadowsocks Auth
+RAW_SS_AUTH=$(get_env_value "SS_AUTH" "ss_auth")
+SS_AUTH=$(clean_val_preserve_inner "$RAW_SS_AUTH")
+export SS_AUTH
+
+# 18. API Token (Optional Legacy Override)
 RAW_API_TOKEN=$(get_env_value "API_TOKEN" "api_token")
 API_TOKEN=$(clean_val_preserve_inner "$RAW_API_TOKEN")
 if [[ -n "$API_TOKEN" ]]; then
     export API_TOKEN
 fi
 
-# 18. Proxy Mode (Multi-Protocol Support)
+# 19. Proxy Mode (Multi-Protocol Support)
 RAW_PROXY_MODE=$(get_env_value "PROXY_MODE" "proxy_mode")
 CLEAN_PROXY_MODE=$(clean_val "$RAW_PROXY_MODE")
 PROXY_MODE="${CLEAN_PROXY_MODE,,}"
 [[ -z "$PROXY_MODE" ]] && PROXY_MODE="socks5"
 export PROXY_MODE
 
-# 19. Split Tunneling
+# 20. Split Tunneling
 RAW_SPLIT_TUNNEL=$(get_env_value "SPLIT_TUNNEL" "split_tunnel")
 CLEAN_SPLIT=$(clean_val "$RAW_SPLIT_TUNNEL")
 if [[ "${CLEAN_SPLIT,,}" == "true" || "${CLEAN_SPLIT}" == "1" ]]; then
@@ -293,19 +298,29 @@ check_log_size() {
 }
 
 # --- DYNAMIC PROCESS MANAGEMENT ---
-start_gost() {
+start_proxies() {
     if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
         if ! pgrep -x gost >/dev/null; then
-            log "INFO" "Starting gost proxy handlers..."
-            local gost_args=""
+            log "INFO" "Starting proxy handlers..."
+            local proxy_args=""
             local auth_prefix=""
+            local ss_auth_prefix=""
 
-            if [[ -n "$GOST_AUTH" ]]; then
-                if [[ "$GOST_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
-                    log "INFO" "Proxy Authentication Enabled."
-                    auth_prefix="${GOST_AUTH}@"
+            if [[ -n "$PROXY_AUTH" ]]; then
+                if [[ "$PROXY_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
+                    log "INFO" "Standard Proxy Authentication Enabled."
+                    auth_prefix="${PROXY_AUTH}@"
                 else
-                    log "ERROR" "GOST_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
+                    log "ERROR" "PROXY_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
+                fi
+            fi
+
+            if [[ -n "$SS_AUTH" ]]; then
+                if [[ "$SS_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
+                    log "INFO" "Shadowsocks Authentication Enabled."
+                    ss_auth_prefix="${SS_AUTH}@"
+                else
+                    log "ERROR" "SS_AUTH must be in 'cipher:password' format with no special URL characters. Ignoring."
                 fi
             fi
 
@@ -314,27 +329,27 @@ start_gost() {
             for p in "${PROXIES[@]}"; do
                 p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
                 case "$p" in
-                    socks5) gost_args="$gost_args -L=socks5://${auth_prefix}:1080?udp=true" ;;
-                    socks4) gost_args="$gost_args -L=socks4://${auth_prefix}:1084" ;;
-                    socks4a) gost_args="$gost_args -L=socks4a://${auth_prefix}:1085" ;;
-                    http) gost_args="$gost_args -L=http://${auth_prefix}:8080" ;;
-                    https) gost_args="$gost_args -L=https://${auth_prefix}:8443" ;;
+                    socks5) proxy_args="$proxy_args -L=socks5://${auth_prefix}:1080?udp=true" ;;
+                    socks4) proxy_args="$proxy_args -L=socks4://${auth_prefix}:1084" ;;
+                    socks4a) proxy_args="$proxy_args -L=socks4a://${auth_prefix}:1085" ;;
+                    http) proxy_args="$proxy_args -L=http://${auth_prefix}:8080" ;;
+                    https) proxy_args="$proxy_args -L=https://${auth_prefix}:8443" ;;
                     ss)
-                        if [[ -z "$auth_prefix" ]]; then
+                        if [[ -z "$ss_auth_prefix" ]]; then
                             log "WARN" "Shadowsocks requires authentication. Falling back to default: chacha20:password"
-                            gost_args="$gost_args -L=ss://chacha20:password@:8388"
+                            proxy_args="$proxy_args -L=ss://chacha20:password@:8388"
                         else
-                            gost_args="$gost_args -L=ss://${auth_prefix}:8388"
+                            proxy_args="$proxy_args -L=ss://${ss_auth_prefix}:8388"
                         fi
                         ;;
                     *) log "WARN" "Unknown proxy mode: $p" ;;
                 esac
             done
 
-            if [[ -n "$gost_args" ]]; then
-                runuser -u gpuser -- bash -c "gost $gost_args" >>"$SERVICE_LOG" 2>&1 &
+            if [[ -n "$proxy_args" ]]; then
+                runuser -u gpuser -- bash -c "gost $proxy_args" >>"$SERVICE_LOG" 2>&1 &
             else
-                log "WARN" "No valid proxy modes matched. Gost will not start."
+                log "WARN" "No valid proxy modes matched. Proxy engine will not start."
             fi
         fi
     fi
@@ -359,21 +374,28 @@ check_services() {
     if [[ "$mode" == "active" ]]; then
         if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
             if ! pgrep -x gost >/dev/null; then
-                log "ERROR" "CRITICAL: gost proxy died while VPN was active. Restarting..."
-                start_gost
+                log "ERROR" "CRITICAL: proxy engine died while VPN was active. Restarting..."
+                start_proxies
             fi
         fi
 
         if ! pgrep -f "gpservice" >/dev/null; then
             log "ERROR" "CRITICAL: gpservice died while VPN was active."
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
+
             # Safely escape credentials and redact from the process dump
-            if [[ -n "$GOST_AUTH" ]]; then
-                ESCAPED_AUTH=$(printf "%s" "$GOST_AUTH" | sed 's/[\/&\\]/\\&/g')
-                ps aux | sed "s/${ESCAPED_AUTH}/***REDACTED***/g" >&2
-            else
-                ps aux >&2
+            local process_dump
+            process_dump=$(ps aux)
+
+            if [[ -n "$PROXY_AUTH" ]]; then
+                process_dump="${process_dump//"$PROXY_AUTH"/***REDACTED***}"
             fi
+
+            if [[ -n "$SS_AUTH" ]]; then
+                process_dump="${process_dump//"$SS_AUTH"/***REDACTED***}"
+            fi
+
+            echo "$process_dump" >&2
             log "ERROR" "--- DUMPING LOGS (Last 50 lines) ---"
             tail -n 50 "$SERVICE_LOG" >&2
         fi
@@ -628,8 +650,8 @@ mkfifo "$RUNTIME_DIR/gp_control_pipe"
 exec 3<>"$RUNTIME_DIR/gp_control_pipe"
 chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
 
-# Ensure API_TOKEN and GOST_AUTH states are definitively passed down to the server context
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" GOST_AUTH="$GOST_AUTH" \
+# Ensure API_TOKEN and PROXY_AUTH states are definitively passed down to the server context
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" PROXY_AUTH="$PROXY_AUTH" SS_AUTH="$SS_AUTH" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
 # Start persistent control listener directly bound to the pipe descriptor
@@ -651,7 +673,7 @@ while true; do
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 
-        start_gost
+        start_proxies
 
         # 1. Start gpservice
         log "INFO" "Starting gpservice..."

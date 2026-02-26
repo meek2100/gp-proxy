@@ -77,7 +77,7 @@ class VPNState(TypedDict):
     vpn_mode: str  # The configured network mode (standard, proxy, gateway)
     proxy_modes: list[str]  # Active proxy types (e.g., ['socks5', 'http'])
     server_ip: str  # The dynamically detected best outbound IP
-    socks_auth_enabled: bool  # Whether GOST proxy auth is configured
+    proxy_auth_enabled: bool  # Whether Proxy auth is configured
 
 
 class LogAnalysis(TypedDict):
@@ -443,7 +443,7 @@ def get_vpn_state() -> VPNState:
     proxy_modes: list[str] = [p.strip().lower() for p in proxy_mode_env.split(",") if p.strip()]
 
     server_ip: str = get_best_ip()
-    socks_auth_enabled: bool = bool(os.getenv("GOST_AUTH"))
+    proxy_auth_enabled: bool = bool(os.getenv("PROXY_AUTH"))
 
     if MODE_FILE.exists():
         try:
@@ -461,7 +461,7 @@ def get_vpn_state() -> VPNState:
                     "vpn_mode": vpn_mode,
                     "proxy_modes": proxy_modes,
                     "server_ip": server_ip,
-                    "socks_auth_enabled": socks_auth_enabled,
+                    "proxy_auth_enabled": proxy_auth_enabled,
                 }
         except Exception:
             logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
@@ -483,7 +483,7 @@ def get_vpn_state() -> VPNState:
         "vpn_mode": vpn_mode,
         "proxy_modes": proxy_modes,
         "server_ip": server_ip,
-        "socks_auth_enabled": socks_auth_enabled,
+        "proxy_auth_enabled": proxy_auth_enabled,
     }
 
 
