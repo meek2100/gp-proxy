@@ -2,7 +2,7 @@
 # File: entrypoint.sh
 set -e
 
-# --- FIX: Ensure administrative commands (ip, iptables) are in PATH ---
+# --- FIX: Ensure administrative commands (ip, iptables, ipset) are in PATH ---
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # ==============================================================================
@@ -101,7 +101,7 @@ RAW_PGID=$(get_env_value "PGID" "pgid")
 PGID=$(clean_val "$RAW_PGID")
 export PGID
 
-# --- NEW: Advanced GP Options ---
+# --- Advanced GP Options ---
 
 # 9. HIP Report (--hip)
 RAW_HIP=$(get_env_value "VPN_HIP_REPORT" "hip_report" "HIP")
@@ -165,6 +165,25 @@ if [[ -n "$API_TOKEN" ]]; then
     export API_TOKEN
 fi
 
+# --- Smart Split Tunneling Variables ---
+RAW_SPLIT_TUNNEL=$(get_env_value "SPLIT_TUNNEL" "split_tunnel")
+CLEAN_SPLIT=$(clean_val "$RAW_SPLIT_TUNNEL")
+if [[ "${CLEAN_SPLIT,,}" == "true" || "${CLEAN_SPLIT}" == "1" ]]; then SPLIT_TUNNEL="true"; else SPLIT_TUNNEL="false"; fi
+export SPLIT_TUNNEL
+
+# Optional Manual Overrides (Auto-detected if left empty)
+RAW_LOCAL_DNS=$(get_env_value "LOCAL_DNS" "local_dns")
+LOCAL_DNS=$(clean_val "$RAW_LOCAL_DNS")
+export LOCAL_DNS
+
+RAW_VPN_DOMAINS=$(get_env_value "VPN_DOMAINS" "vpn_domains")
+VPN_DOMAINS=$(clean_val "$RAW_VPN_DOMAINS")
+export VPN_DOMAINS
+
+RAW_VPN_SUBNETS=$(get_env_value "VPN_SUBNETS" "vpn_subnets")
+VPN_SUBNETS=$(clean_val "$RAW_VPN_SUBNETS")
+export VPN_SUBNETS
+
 # ==============================================================================
 # 2. RUNTIME SETUP
 # ==============================================================================
@@ -218,6 +237,7 @@ log "INFO" "Mode:        $VPN_MODE"
 log "INFO" "Log Level:   $LOG_LEVEL"
 log "INFO" "Verbosity:   ${GP_VERBOSITY:-None}"
 log "INFO" "Portal:      ${VPN_PORTAL:-[Not Set]}"
+log "INFO" "Split Route: ${SPLIT_TUNNEL} (Smart Auto-Detection)"
 if [[ -n "$VPN_GATEWAY" ]]; then
     log "INFO" "Gateway:     $VPN_GATEWAY"
 fi
@@ -317,41 +337,6 @@ check_services() {
     fi
 }
 
-# --- DNS WATCHDOG ---
-dns_watchdog() {
-    local last_dns=""
-    while true; do
-        local current_dns=""
-        if [[ -f /etc/resolv.conf ]]; then
-            while read -r line; do
-                if [[ "$line" =~ ^nameserver\ +([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
-                    local ip="${BASH_REMATCH[1]}"
-                    if [[ "$ip" != "127.0.0.1" ]]; then
-                        current_dns="$ip"
-                        break
-                    fi
-                fi
-            done </etc/resolv.conf
-        fi
-
-        if [[ -n "$current_dns" ]] && [[ "$current_dns" != "$last_dns" ]]; then
-            if [[ "$current_dns" != "8.8.8.8" && "$current_dns" != "1.1.1.1" ]]; then
-                if [[ "$VPN_MODE" != "socks" ]]; then
-                    log "INFO" "VPN DNS Detected: $current_dns. Enabling Forwarding..."
-                    if [[ -n "$last_dns" ]]; then
-                        iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
-                        iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
-                    fi
-                    iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$current_dns"
-                    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$current_dns"
-                    last_dns="$current_dns"
-                fi
-            fi
-        fi
-        sleep 5
-    done
-}
-
 # --- 1. SETUP ---
 if [[ -n "$PUID" ]]; then usermod -u "$PUID" gpuser; fi
 if [[ -n "$PGID" ]]; then groupmod -g "$PGID" gpuser; fi
@@ -380,26 +365,143 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     fi
 fi
 
-# --- 3. DNS CONFIGURATION ---
+# --- 3. BASE DNSMASQ CONFIGURATION ---
 DNS_TO_APPLY=""
-if [[ -n "$DNS_SERVERS" ]]; then
+if [[ -n "$LOCAL_DNS" ]]; then
+    DNS_TO_APPLY="$LOCAL_DNS"
+elif [[ -n "$DNS_SERVERS" ]]; then
     DNS_TO_APPLY="$DNS_SERVERS"
 elif [[ "$IS_MACVLAN" == true ]]; then
     log "INFO" "Macvlan detected. Applying fallback defaults."
     DNS_TO_APPLY="8.8.8.8 1.1.1.1"
+else
+    # Extract the original docker container DNS to use as the local fallback
+    DNS_TO_APPLY=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | grep -v "127.0.0.1" | head -n 2 | paste -sd " " || echo "8.8.8.8 1.1.1.1")
 fi
 
+log "INFO" "Base Upstream Local DNS identified as: $DNS_TO_APPLY"
+
+mkdir -p /etc/dnsmasq.d
+cat <<EOF >/etc/dnsmasq.conf
+port=53
+listen-address=0.0.0.0
+bind-interfaces
+keep-in-foreground
+conf-dir=/etc/dnsmasq.d/,*.conf
+EOF
+
 if [[ -n "$DNS_TO_APPLY" ]]; then
-    log "INFO" "Overwriting /etc/resolv.conf"
-    echo "options ndots:0" >/etc/resolv.conf
     # Using read -ra to safely split by spaces to appease shellcheck SC2086
     read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
     for ip in "${DNS_ARRAY[@]}"; do
-        echo "nameserver $ip" >>/etc/resolv.conf
+        echo "server=$ip" >>/etc/dnsmasq.conf
     done
 fi
 
-# --- 4. NETWORK SETUP ---
+# Initialize ipset for Dynamic DNS-based Policy Routing
+ipset create vpn_domains hash:ip 2>/dev/null || true
+
+# Instruct local container apps (like Gost) to use the dnsmasq split-router natively
+echo "options ndots:0" >/etc/resolv.conf
+echo "nameserver 127.0.0.1" >>/etc/resolv.conf
+
+# Run dnsmasq as root so it can modify the ipsets dynamically
+dnsmasq --user=root &
+
+# --- 4. VPNC SMART ROUTING WRAPPER ---
+# This wrapper intercepts the connection sequence to dynamically configure Split-DNS and Subnets
+# based directly on the payloads provided by the GlobalProtect server.
+if [[ ! -f "/usr/share/vpnc-scripts/vpnc-script-orig" ]]; then
+    mv /usr/share/vpnc-scripts/vpnc-script /usr/share/vpnc-scripts/vpnc-script-orig
+fi
+
+cat <<'EOF' >/usr/share/vpnc-scripts/vpnc-script
+#!/bin/bash
+
+# 1. Execute original script to initialize tun0 and standard IP allocations
+/usr/share/vpnc-scripts/vpnc-script-orig "$@"
+
+if [[ "$reason" == "connect" ]]; then
+    # 2. Prevent vpnc-script from overriding our container resolver
+    echo "options ndots:0" > /etc/resolv.conf
+    echo "nameserver 127.0.0.1" >> /etc/resolv.conf
+
+    # 3. Detect VPN DNS Servers
+    VPN_DNS_SERVERS=($INTERNAL_IP4_DNS)
+
+    # 4. Smart Auto-Detect VPN Domains
+    DOMAINS=()
+    if [[ -n "$CISCO_DEF_DOMAIN" ]]; then DOMAINS+=("$CISCO_DEF_DOMAIN"); fi
+    if [[ -n "$CISCO_SPLIT_DNS" ]]; then
+        IFS=',' read -ra ADDR <<< "$CISCO_SPLIT_DNS"
+        for i in "${ADDR[@]}"; do DOMAINS+=("$i"); done
+    fi
+
+    # Fallback: Parse the raw client log to catch GlobalProtect-specific XML split-domains that
+    # OpenConnect marks as "Unknown" and fails to export to standard env variables.
+    if grep -q "<include-split-tunneling-domain>" /tmp/gp-logs/gp-client.log 2>/dev/null; then
+        EXTRA_DOMAINS=$(awk '/<include-split-tunneling-domain>:/ {flag=1; next} /</ {flag=0} flag {print}' /tmp/gp-logs/gp-client.log | tr -d '\t\r ' | sed 's/^[*.]*//')
+        for d in $EXTRA_DOMAINS; do
+            if [[ -n "$d" ]]; then DOMAINS+=("$d"); fi
+        done
+    fi
+
+    # Manual Override support
+    if [[ -n "$VPN_DOMAINS" ]]; then
+        IFS=',' read -ra ADDR <<< "$VPN_DOMAINS"
+        for i in "${ADDR[@]}"; do DOMAINS+=("$i"); done
+    fi
+
+    UNIQUE_DOMAINS=($(printf "%s\n" "${DOMAINS[@]}" | sort -u | grep -v "^$"))
+
+    # 5. Dynamically configure Split-DNS
+    rm -f /etc/dnsmasq.d/vpn.conf
+    if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 && ${#VPN_DNS_SERVERS[@]} -gt 0 ]]; then
+        PRIMARY_VPN_DNS="${VPN_DNS_SERVERS[0]}"
+        for d in "${UNIQUE_DOMAINS[@]}"; do
+            echo "server=/$d/$PRIMARY_VPN_DNS" >> /etc/dnsmasq.d/vpn.conf
+            echo "ipset=/$d/vpn_domains" >> /etc/dnsmasq.d/vpn.conf
+        done
+        echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for: ${UNIQUE_DOMAINS[*]} -> $PRIMARY_VPN_DNS" >> /tmp/gp-logs/gp-service.log
+        pkill -HUP dnsmasq || true
+    fi
+
+    # 6. Smart Split Routing Implementation
+    if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+        echo "[vpnc-wrapper] Enforcing Split-Tunnel: Stripping default route (0.0.0.0/0) from tun0" >> /tmp/gp-logs/gp-service.log
+        ip route del default dev tun0 2>/dev/null || true
+    fi
+
+    # Note: Standard vpnc-script already auto-routes CISCO_SPLIT_INC_... subnets provided by the VPN.
+    # We only need to add manual overrides if the user provided them.
+    if [[ -n "$VPN_SUBNETS" ]]; then
+        IFS=',' read -ra SUBNETS <<< "$VPN_SUBNETS"
+        for sub in "${SUBNETS[@]}"; do
+            sub="$(echo "$sub" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            [[ -z "$sub" ]] && continue
+            ip route add "$sub" dev tun0 2>/dev/null || true
+            echo "[vpnc-wrapper] Added explicit manual split route: $sub -> tun0" >> /tmp/gp-logs/gp-service.log
+        done
+    fi
+
+    # 7. Enable IPSet routing for dynamic domains so resolved targets bypass the local network
+    if ipset list vpn_domains >/dev/null 2>&1; then
+        echo "[vpnc-wrapper] Enabling dynamic policy routing for auto-detected VPN domains" >> /tmp/gp-logs/gp-service.log
+        ip rule add fwmark 0x10 lookup 100 2>/dev/null || true
+        ip route add default dev tun0 table 100 2>/dev/null || true
+        iptables -t mangle -A OUTPUT -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
+        iptables -t mangle -A PREROUTING -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
+    fi
+
+elif [[ "$reason" == "disconnect" ]]; then
+    rm -f /etc/dnsmasq.d/vpn.conf
+    pkill -HUP dnsmasq || true
+    ipset flush vpn_domains 2>/dev/null || true
+fi
+EOF
+chmod +x /usr/share/vpnc-scripts/vpnc-script
+
+# --- 5. NETWORK SETUP ---
 iptables -F
 iptables -t nat -F
 iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
@@ -444,7 +546,7 @@ if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
     iptables -A INPUT -p udp --dport 1080 -j ACCEPT
 fi
 
-# --- 5. INIT ENVIRONMENT ---
+# --- 6. INIT ENVIRONMENT ---
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR" /tmp/gp-logs
 
@@ -458,9 +560,8 @@ chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$RUNTIME_DIR"
 echo "idle" >"$MODE_FILE"
 chmod 644 "$MODE_FILE"
 
-# --- 6. START SERVICES ---
+# --- 7. START SERVICES ---
 log "INFO" "Starting Services..."
-dns_watchdog &
 
 # Setup persistent control pipe to eliminate Python interpreter startup overhead in the polling loop
 # Note: The FIFO is intentionally created and opened as root before chown so child processes
@@ -480,7 +581,7 @@ tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
 sleep 3
 
-# --- 7. MAIN LOOP ---
+# --- 8. MAIN LOOP ---
 while true; do
     check_services
     check_log_size
@@ -510,7 +611,7 @@ while true; do
             VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
             VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
-            BASH_NL=$'\n' BASH_CR=$'\r' \
+            BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" \
             bash -c '
             set -o pipefail
             > "$CLIENT_LOG"
