@@ -163,6 +163,9 @@ RAW_SS_AUTH=$(get_env_value "SS_AUTH" "ss_auth")
 SS_AUTH=$(clean_val_preserve_inner "$RAW_SS_AUTH")
 export SS_AUTH
 
+# Initialize a global fallback password variable for the crash redaction watchdog
+SS_DEFAULT_PASS=""
+
 # 18. API Token (Optional Legacy Override)
 RAW_API_TOKEN=$(get_env_value "API_TOKEN" "api_token")
 API_TOKEN=$(clean_val_preserve_inner "$RAW_API_TOKEN")
@@ -338,7 +341,16 @@ start_proxies() {
                     ss)
                         if [[ -z "$ss_auth_prefix" ]]; then
                             SS_DEFAULT_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
-                            log "WARN" "Shadowsocks requires authentication. Auto-generated password: $SS_DEFAULT_PASS"
+
+                            # Save credentials securely inside the container so the user can retrieve them
+                            echo "Cipher: chacha20" >"$RUNTIME_DIR/ss_credentials.txt"
+                            echo "Password: ${SS_DEFAULT_PASS}" >>"$RUNTIME_DIR/ss_credentials.txt"
+                            chown gpuser:gpuser "$RUNTIME_DIR/ss_credentials.txt"
+                            chmod 600 "$RUNTIME_DIR/ss_credentials.txt"
+
+                            log "WARN" "Shadowsocks auth missing. Auto-generated credentials saved securely."
+                            log "WARN" "-> To view them, run: docker exec -it <container_name> cat $RUNTIME_DIR/ss_credentials.txt"
+
                             proxy_args+=("-L=ss://chacha20:${SS_DEFAULT_PASS}@:8388")
                         else
                             proxy_args+=("-L=ss://${ss_auth_prefix}:8388")
@@ -401,6 +413,11 @@ check_services() {
 
             if [[ -n "$SS_AUTH" ]]; then
                 process_dump="${process_dump//"$SS_AUTH"/***REDACTED***}"
+            fi
+
+            # Redact the dynamically generated fallback password if it was used
+            if [[ -n "$SS_DEFAULT_PASS" ]]; then
+                process_dump="${process_dump//"$SS_DEFAULT_PASS"/***REDACTED***}"
             fi
 
             echo "$process_dump" >&2

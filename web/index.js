@@ -264,6 +264,7 @@ function handleSSOClick(btn) {
  * Restarts the auth sequence by issuing a new connect command to generate a fresh SSO link.
  */
 async function restartAuth() {
+    if (isRestarting) return;
     isRestarting = true;
     window.expectedNextState = "auth_refresh";
 
@@ -273,15 +274,28 @@ async function restartAuth() {
         window.expectedNextState = null;
     }, 15000);
 
-    window.vpnState = null;
-    setBadge("Generating Link...", "connecting");
+    const ssoLink = document.getElementById("sso-link");
+    const originalText = ssoLink ? ssoLink.textContent : "Open SSO Login";
+    if (ssoLink) {
+        ssoLink.textContent = "Generating New Link...";
+        ssoLink.classList.add("btn-disabled");
+    }
     document.getElementById("btn-restart-auth").classList.add("hidden");
 
     try {
-        await fetch("/connect", getFetchOptions("POST"));
+        const res = await fetch("/disconnect", getFetchOptions("POST"));
+        if (res.ok) {
+            await fetch("/connect", getFetchOptions("POST"));
+        }
     } catch (e) {
         console.error("Failed to restart auth:", e);
     } finally {
+        setTimeout(() => {
+            if (ssoLink && ssoLink.textContent === "Generating New Link...") {
+                ssoLink.textContent = originalText;
+                ssoLink.classList.remove("btn-disabled");
+            }
+        }, 2500);
         resetPoll(1000);
     }
 }
@@ -365,7 +379,11 @@ async function confirmReset() {
         }, 15000);
 
         try {
-            await fetch("/disconnect", getFetchOptions("POST"));
+            const res = await fetch("/disconnect", getFetchOptions("POST"));
+            if (res.ok) {
+                window.location.href = window.location.pathname + "?t=" + Date.now();
+                return;
+            }
         } catch (e) {
             console.error("Force reset fetch failed:", e);
         } finally {
@@ -446,7 +464,9 @@ async function updateStatus() {
                 console.warn("401 Unauthorized - Ephemeral token rotated. Reloading page...");
                 setBadge("Session Expired. Reloading...", "error");
                 setView("error");
-                setTimeout(() => window.location.reload(), 1500);
+                setTimeout(() => {
+                    window.location.href = window.location.pathname + "?t=" + Date.now();
+                }, 1500);
                 return;
             } else {
                 throw new Error(`HTTP Error: ${res.status}`);

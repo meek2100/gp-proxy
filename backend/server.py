@@ -122,6 +122,26 @@ class StateManager:
         }
         self._cached_log: str = ""
 
+    def reset(self) -> None:
+        """
+        Forcefully flushes the internal cache to eliminate state-flapping race conditions
+        where the UI could read an old log representation momentarily during reconnects.
+        """
+        with self._lock:
+            self._log_mtime_ns = -1
+            self._log_size = -1
+            self._log_ino = -1
+            self._last_state = "idle"
+            self._cached_log = ""
+            self._cached_analysis = {
+                "state": "idle",
+                "prompt": "",
+                "prompt_type": "text",
+                "options": [],
+                "error": None,
+                "sso_url": "",
+            }
+
     def update_and_check_transition(self, new_state: str) -> bool:
         """
         Update the stored state to `new_state` and indicate whether the state changed.
@@ -600,9 +620,12 @@ def _kill_and_poll() -> None:
     # where the bash orchestrator natively takes a few seconds to start truncating the old log files.
     try:
         MODE_FILE.write_text("idle\n")
-        CLIENT_LOG.write_text("")
+        with open(CLIENT_LOG, "w") as f:
+            f.truncate(0)
     except OSError:
         pass
+
+    state_manager.reset()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
