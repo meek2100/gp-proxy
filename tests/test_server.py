@@ -391,6 +391,33 @@ class TestStateManager:
         finally:
             temp_path.unlink()
 
+    def test_get_cached_log_analysis_toctou_resilience(self) -> None:
+        """Test resilience against TOCTOU race condition where file vanishes during read."""
+        manager: Any = StateManager()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".log") as f:
+            f.write("Connecting\n")
+            temp_path = Path(f.name)
+
+        original_stat = temp_path.stat
+        call_count = 0
+
+        def mock_stat() -> os.stat_result:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:  # Simulate vanishing file mid-verification phase
+                raise FileNotFoundError()
+            return original_stat()
+
+        try:
+            with patch.object(Path, "stat", side_effect=mock_stat):
+                analysis, log = manager.get_cached_log_analysis(temp_path)
+                assert log == "Connecting\n"
+                assert manager._log_mtime_ns == -1  # Cache should not have updated
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
 
 class TestGetBestIp:
     """Test best IP address selection."""
@@ -617,7 +644,7 @@ class TestHandlerAuthentication:
         handler: Any = self._create_handler()
         handler.path = "/status.json"
 
-        timestamp = int(time.time()) - 120
+        timestamp = int(time.time()) - 6  # Trigger strict 5-second replay validation window
         message = f"{timestamp}:/status.json".encode()
         signature: bytes = private_key.sign(message)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         sig_b64: str = base64.b64encode(signature).decode()  # pyright: ignore[reportUnknownArgumentType]

@@ -3,18 +3,29 @@
 Container Agent - Shared Utilities.
 
 Provides centralized configuration, logging initialization, and IPC networking
-tools to ensure consistency across all Python background daemons.
+tools to ensure consistency across all Python background daemons. Implements
+safe cross-platform pathing and thread-safe singleton patterns.
 """
 
 import logging
 import os
 import socket
+import sys
+import tempfile
+import threading
 from pathlib import Path
 
-# --- Global Paths ---
-RUNTIME_DIR: Path = Path("/tmp/gp-runtime")
-CLIENT_LOG: Path = Path("/tmp/gp-logs/gp-client.log")
-SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
+# --- Global Paths & Thread Locks ---
+_is_win: bool = sys.platform == "win32"
+_tmp_base: Path = Path(tempfile.gettempdir()) if _is_win else Path("/tmp")
+
+# Fallbacks to user temp directories during local Windows development
+RUNTIME_DIR: Path = Path(os.getenv("GP_RUNTIME_DIR", str(_tmp_base / "gp-runtime")))
+_log_dir: Path = Path(os.getenv("GP_LOG_DIR", str(_tmp_base / "gp-logs")))
+CLIENT_LOG: Path = _log_dir / "gp-client.log"
+SERVICE_LOG: Path = _log_dir / "gp-service.log"
+
+_logger_lock: threading.Lock = threading.Lock()
 
 
 # --- IPC Port Configuration ---
@@ -48,9 +59,9 @@ def setup_logger(name: str) -> logging.Logger:
     Create or retrieve a logger configured with standardized formatting and handlers.
 
     Log level is taken from the LOG_LEVEL environment variable (default "INFO").
-    If /tmp/gp-logs exists, output is written to the service log file; otherwise
-    output goes to the standard stream. Repeated calls for the same logger name
-    will not add duplicate handlers.
+    If the designated log directory exists, output is written to the service log file;
+    otherwise, output goes to the standard stream. Thread-safe to prevent duplicate
+    handlers during highly concurrent API request bursts.
 
     Parameters:
         name (str): Name of the logger to create or retrieve.
@@ -61,24 +72,24 @@ def setup_logger(name: str) -> logging.Logger:
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
     logger: logging.Logger = logging.getLogger(name)
-
-    # Prevent duplicate handlers if called multiple times in the same process
-    # Uses hasHandlers() to properly inspect the entire logger hierarchy
     logger.setLevel(log_level)
-    if not logger.handlers:
-        logger.propagate = False
-        formatter: logging.Formatter = logging.Formatter(
-            fmt="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ"
-        )
 
-        handler: logging.Handler
-        if Path("/tmp/gp-logs").exists():
-            handler = logging.FileHandler(SERVICE_LOG)
-        else:
-            handler = logging.StreamHandler()
+    # Thread-safe lock prevents race conditions instantiating duplicate file handlers
+    with _logger_lock:
+        if not logger.handlers:
+            logger.propagate = False
+            formatter: logging.Formatter = logging.Formatter(
+                fmt="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ"
+            )
 
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+            handler: logging.Handler
+            if _log_dir.exists():
+                handler = logging.FileHandler(SERVICE_LOG)
+            else:
+                handler = logging.StreamHandler()
+
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
 
     return logger
 

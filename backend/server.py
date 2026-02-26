@@ -103,7 +103,7 @@ class StateManager:
         """
         Initialize a thread-safe state manager.
         Creates a private lock for synchronizing access, initializes the internal last-state tracker,
-        and sets up I/O caching properties.
+        and sets up I/O caching properties including inode tracking to handle rotation replacements.
         """
         self._lock: threading.Lock = threading.Lock()
         self._last_state: str | None = None
@@ -111,6 +111,7 @@ class StateManager:
         # Caching mechanisms to optimize I/O
         self._log_mtime_ns: int = -1
         self._log_size: int = -1
+        self._log_ino: int = -1
         self._cached_analysis: LogAnalysis = {
             "state": "idle",
             "prompt": "",
@@ -152,12 +153,13 @@ class StateManager:
         with self._lock:
             try:
                 st = log_path.stat()
-                if st.st_mtime_ns == self._log_mtime_ns and st.st_size == self._log_size:
+                if st.st_mtime_ns == self._log_mtime_ns and st.st_size == self._log_size and st.st_ino == self._log_ino:
                     return self._cached_analysis, self._cached_log
 
                 # Capture signature parameters for validation post-read
                 current_mtime_ns = st.st_mtime_ns
                 current_size = st.st_size
+                current_ino = st.st_ino
 
             except FileNotFoundError:
                 # Log might have rotated or cleared; return safe default
@@ -200,9 +202,14 @@ class StateManager:
             try:
                 # Validate the file didn't shift beneath us to close the TOCTOU window
                 st_verify = log_path.stat()
-                if st_verify.st_mtime_ns == current_mtime_ns and st_verify.st_size == current_size:
+                if (
+                    st_verify.st_mtime_ns == current_mtime_ns
+                    and st_verify.st_size == current_size
+                    and st_verify.st_ino == current_ino
+                ):
                     self._log_mtime_ns = current_mtime_ns
                     self._log_size = current_size
+                    self._log_ino = current_ino
                     self._cached_analysis = analysis
                     self._cached_log = log_content
             except FileNotFoundError:
@@ -511,9 +518,9 @@ def _kill_and_poll_windows() -> None:
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
 
-    taskkill: str | None = shutil.which("taskkill")
-    if taskkill is None:
-        taskkill = str(Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe")
+    taskkill: str = shutil.which("taskkill") or str(
+        Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe"
+    )
 
     if os.path.exists(taskkill):
         subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
@@ -527,6 +534,11 @@ def _kill_and_poll_windows() -> None:
             if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
                 break
             time.sleep(0.1)
+        else:
+            # Forceful escalation if graceful kill fails
+            subprocess.run([taskkill, "/F", "/T", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+            subprocess.run([taskkill, "/F", "/T", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+            time.sleep(0.5)
 
 
 def _kill_and_poll_unix() -> None:
@@ -539,34 +551,31 @@ def _kill_and_poll_unix() -> None:
     sudo: str | None = shutil.which("sudo")
     sudo_cmd: list[str] = [sudo, "-n"] if sudo else []
 
-    pkill: str | None = shutil.which("pkill")
+    # Explicitly fallback to hardcoded paths defined in the sudoers file to prevent rejection
+    pkill: str = shutil.which("pkill") or "/usr/bin/pkill"
+    pgrep: str = shutil.which("pgrep") or "/usr/bin/pgrep"
 
-    if pkill is not None:
-        # 1. Kill gost directly as gpuser to halt routing traffic instantly
-        subprocess.run([pkill, "-x", "gost"], stderr=subprocess.DEVNULL)
+    # 1. Kill gost directly as gpuser to halt routing traffic instantly
+    subprocess.run([pkill, "-x", "gost"], stderr=subprocess.DEVNULL)
 
-        # 2. Kill the unprivileged stdin proxy to forcefully unblock the bash entrypoint pipeline's left side.
-        subprocess.run([pkill, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL)
+    # 2. Kill the unprivileged stdin proxy to forcefully unblock the bash entrypoint pipeline's left side.
+    subprocess.run([pkill, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL)
 
-        # 3. Request graceful shutdown of privileged daemons via sudo wrappers
-        subprocess.run([*sudo_cmd, pkill, "-x", "gpclient"], stderr=subprocess.DEVNULL)
-        subprocess.run([*sudo_cmd, pkill, "-x", "gpservice"], stderr=subprocess.DEVNULL)
+    # 3. Request graceful shutdown of privileged daemons via sudo wrappers
+    subprocess.run([*sudo_cmd, pkill, "-x", "gpclient"], stderr=subprocess.DEVNULL)
+    subprocess.run([*sudo_cmd, pkill, "-x", "gpservice"], stderr=subprocess.DEVNULL)
 
-        pgrep: str | None = shutil.which("pgrep")
-        if pgrep is not None:
-            for _ in range(50):
-                res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
-                res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
-                if res1.returncode != 0 and res2.returncode != 0:
-                    break
-                time.sleep(0.1)
-            else:
-                # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
-                subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpclient"], stderr=subprocess.DEVNULL)
-                subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL)
-                time.sleep(0.5)
-        else:
-            time.sleep(1.0)
+    for _ in range(50):
+        res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
+        res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
+        if res1.returncode != 0 and res2.returncode != 0:
+            break
+        time.sleep(0.1)
+    else:
+        # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
+        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpclient"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL)
+        time.sleep(0.5)
 
 
 def _kill_and_poll() -> None:
@@ -615,7 +624,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         environment variable, or a TOFU Ed25519 signature from a previously paired client.
         For TOFU authentication the request must include X-Signature (base64) and X-Timestamp
         headers; the signature is verified over the message "{timestamp}:{path}" and the timestamp
-        must be within 60 seconds of server time to limit replay attacks.
+        must be within 5 seconds of server time to limit replay attacks.
 
         Returns:
             `True` if the request is authorized, `False` otherwise.
@@ -640,8 +649,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if sig_b64 and timestamp:
                 try:
                     ts = int(timestamp)
-                    # Enforce a tight 60-second window to mitigate replay attacks
-                    if abs(time.time() - ts) < 60:
+                    # Enforce a tight 5-second window to mitigate replay attacks
+                    if abs(time.time() - ts) < 5:
                         # Required Signature Payload Structure: "{timestamp}:{path}"
                         message = f"{ts}:{self.path}".encode()
                         sig = base64.b64decode(sig_b64)
