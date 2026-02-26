@@ -24,8 +24,8 @@ RUN git clone --branch v2.5.1 https://github.com/yuezk/GlobalProtect-openconnect
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # 3. Apply Patches
-RUN grep -rl "cannot be run as root" . | xargs -r sed -i 's/if.*root.*/if false {/'
-RUN sed -i 's/let no_gui = false;/let no_gui = true;/' apps/gpservice/src/cli.rs
+RUN grep -rl "cannot be run as root" . | xargs -r sed -i 's/if.*root.*/if false {/' && \
+    sed -i 's/let no_gui = false;/let no_gui = true;/' apps/gpservice/src/cli.rs
 
 # 4. Compilation
 ENV CARGO_PROFILE_RELEASE_LTO=thin \
@@ -33,9 +33,8 @@ ENV CARGO_PROFILE_RELEASE_LTO=thin \
     CARGO_PROFILE_RELEASE_PANIC=abort
 
 RUN echo 'fn main() { if std::net::TcpStream::connect("127.0.0.1:8001").is_ok() { std::process::exit(0); } else { std::process::exit(1); } }' > healthcheck.rs && \
-    rustc -O healthcheck.rs -o healthcheck
-
-RUN cargo build --release --bin gpclient --no-default-features && \
+    rustc -O healthcheck.rs -o healthcheck && \
+    cargo build --release --bin gpclient --no-default-features && \
     cargo build --release --bin gpservice && \
     cargo build --release --bin gpauth --no-default-features && \
     strip target/release/gpclient target/release/gpservice target/release/gpauth
@@ -84,8 +83,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget \
     && rm -rf /var/lib/apt/lists/*
 
 # 8. Setup User
-RUN useradd -m -s /bin/bash gpuser
-RUN printf '%s\n' \
+RUN useradd -m -s /bin/bash gpuser && \
+    printf '%s\n' \
     "Cmnd_Alias GP_RUNTIME = /usr/bin/gpclient, /usr/bin/gpservice" \
     "Cmnd_Alias GP_PROCCTL = /usr/bin/pkill -x gpclient, /usr/bin/pkill -x gpservice, /usr/bin/pkill -9 -x gpclient, /usr/bin/pkill -9 -x gpservice, /usr/bin/pgrep -x gpclient, /usr/bin/pgrep -x gpservice" \
     "gpuser ALL=(root) NOPASSWD: GP_RUNTIME, GP_PROCCTL" \
@@ -107,17 +106,17 @@ RUN setcap 'cap_net_admin,cap_net_bind_service+ep' /usr/bin/gpservice && \
 
 # 11. Setup App Environment
 RUN mkdir -p /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus && \
-    chown -R gpuser:gpuser /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus
+    chown -R gpuser:gpuser /var/www/html /opt/gp-proxy /tmp/gp-logs /run/dbus && \
+    mv /usr/share/vpnc-scripts/vpnc-script /usr/share/vpnc-scripts/vpnc-script-orig
 
 # Copy the frontend web directory and python backend with correct user permissions
 COPY --chown=gpuser:gpuser web/ /var/www/html/
 COPY --chown=gpuser:gpuser backend/ /opt/gp-proxy/
-
-# Ensure proper execution rights limited strictly to daemon entrypoints
-RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py
-
+COPY backend/vpnc-wrapper.sh /usr/share/vpnc-scripts/vpnc-script
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+
+# Ensure proper execution rights
+RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-proxy/stdin_proxy.py /usr/share/vpnc-scripts/vpnc-script /entrypoint.sh
 
 # 12. Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
