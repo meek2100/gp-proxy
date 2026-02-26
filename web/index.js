@@ -99,27 +99,38 @@ let pollInterval = null;
 let lastAuthUrl = "";
 let isRestarting = false;
 
+// Global array of all possible proxy layout tabs
+const ALL_TABS = ["gateway", "socks5", "socks4", "http", "https"];
+
 /**
  * Switches the active connection detail tab on mobile devices.
- * @param {string} tab - The tab to activate ('socks' or 'gateway').
+ * Interacts safely with CSS display states to prevent conflicts with the CSS Grid desktop media queries.
+ * @param {string} tab - The identifier of the tab to activate.
  */
 function switchTab(tab) {
-    // DOM selection via explicit datasets prevents inner-text language/localization bugs
     const btns = document.querySelectorAll(".conn-tab-btn");
-    btns.forEach((b) => b.classList.remove("active"));
-
     btns.forEach((b) => {
         if (b.dataset.tab === tab) {
             b.classList.add("active");
+        } else {
+            b.classList.remove("active");
         }
     });
 
-    document.getElementById("sec-socks").style.display = tab === "socks" ? "block" : "none";
-    document.getElementById("sec-gateway").style.display = tab === "gateway" ? "block" : "none";
+    ALL_TABS.forEach((t) => {
+        const sec = document.getElementById(`sec-${t}`);
+        if (sec && !sec.classList.contains("hidden-mode")) {
+            if (window.innerWidth < 640) {
+                sec.style.display = t === tab ? "block" : "none";
+            } else {
+                sec.style.display = ""; // Relinquish control back to CSS Grid
+            }
+        }
+    });
 
-    // Accessibility focus management on tab change
-    const activeSection = document.getElementById(tab === "socks" ? "sec-socks" : "sec-gateway");
-    if (activeSection) {
+    // Accessibility focus management on tab change (Mobile only)
+    const activeSection = document.getElementById(`sec-${tab}`);
+    if (activeSection && !activeSection.classList.contains("hidden-mode") && window.innerWidth < 640) {
         const header = activeSection.querySelector(".conn-header");
         if (header) {
             header.setAttribute("tabindex", "-1");
@@ -127,6 +138,23 @@ function switchTab(tab) {
         }
     }
 }
+
+// Respond gracefully when moving from vertical stack to horizontal grid layouts
+window.addEventListener("resize", () => {
+    const activeBtn = document.querySelector(".conn-tab-btn.active");
+    const currentTab = activeBtn ? activeBtn.dataset.tab : null;
+
+    ALL_TABS.forEach((t) => {
+        const sec = document.getElementById(`sec-${t}`);
+        if (sec && !sec.classList.contains("hidden-mode")) {
+            if (window.innerWidth >= 640) {
+                sec.style.display = ""; // Let CSS Grid structure panels automatically
+            } else {
+                sec.style.display = t === currentTab ? "block" : "none"; // Enforce mobile strict focus
+            }
+        }
+    });
+});
 
 /**
  * Updates dynamic IP address fields in the UI based on the current hostname.
@@ -436,35 +464,61 @@ async function updateStatus() {
             if (el.innerText !== displayIp) el.innerText = displayIp;
         });
 
-        const showGateway = data.vpn_mode === "gateway" || data.vpn_mode === "standard";
-        const showSocks = data.vpn_mode === "socks" || data.vpn_mode === "standard";
-
-        const secSocks = document.getElementById("sec-socks");
-        const secGateway = document.getElementById("sec-gateway");
-
-        if (!showSocks) secSocks.classList.add("hidden");
-        else secSocks.classList.remove("hidden");
-
-        if (!showGateway) secGateway.classList.add("hidden");
-        else secGateway.classList.remove("hidden");
-
-        // Dynamically toggle the UI labels
-        const socksPortEl = document.getElementById("socks-port");
-        if (socksPortEl) socksPortEl.innerText = "1080";
-
-        const gatewayMaskEl = document.getElementById("gateway-mask");
-        if (gatewayMaskEl) gatewayMaskEl.innerText = "255.255.255.0";
-
-        const authTextEl = document.getElementById("socks-auth-text");
-        if (authTextEl) {
-            authTextEl.innerText = data.socks_auth_enabled ? "See Env Config" : "None (Network Allowed)";
+        // Smart dynamic proxy tab generation
+        const visibleTabs = [];
+        if (data.vpn_mode === "standard" || data.vpn_mode === "gateway") {
+            visibleTabs.push("gateway");
         }
 
-        if (window.innerWidth < 640 && showSocks && showGateway) {
-            if (secSocks.style.display === "" && secGateway.style.display === "") {
-                switchTab("socks");
+        if (data.vpn_mode === "standard" || data.vpn_mode === "proxy") {
+            if (data.proxy_modes && Array.isArray(data.proxy_modes)) {
+                data.proxy_modes.forEach((pm) => {
+                    if (ALL_TABS.includes(pm)) visibleTabs.push(pm);
+                });
             }
         }
+
+        let activeTabStillVisible = false;
+        const currentActiveBtn = document.querySelector(".conn-tab-btn.active");
+        const currentActiveTab = currentActiveBtn ? currentActiveBtn.dataset.tab : null;
+
+        ALL_TABS.forEach((t) => {
+            const btn = document.querySelector(`.conn-tab-btn[data-tab="${t}"]`);
+            const sec = document.getElementById(`sec-${t}`);
+
+            if (visibleTabs.includes(t)) {
+                if (btn) btn.classList.remove("hidden");
+                if (sec) sec.classList.remove("hidden-mode");
+                if (t === currentActiveTab) activeTabStillVisible = true;
+            } else {
+                if (btn) {
+                    btn.classList.add("hidden");
+                    btn.classList.remove("active");
+                }
+                if (sec) {
+                    sec.classList.add("hidden-mode");
+                    sec.style.display = "none";
+                }
+            }
+        });
+
+        // Ensure focus remains on a valid, visible section
+        if (visibleTabs.length > 0 && !activeTabStillVisible) {
+            switchTab(visibleTabs[0]);
+        } else if (visibleTabs.length > 0) {
+            switchTab(currentActiveTab);
+        }
+
+        // Hide tabs container entirely if only 1 option available to keep UI clean
+        const tabsContainer = document.getElementById("tabs-container");
+        if (tabsContainer) {
+            tabsContainer.style.display = visibleTabs.length <= 1 ? "none" : "";
+        }
+
+        // Dynamically toggle the SOCKS proxy authentication UI text natively across all modes
+        document.querySelectorAll(".proxy-auth-text").forEach((el) => {
+            el.innerText = data.socks_auth_enabled ? "See Env Config" : "None (Network Allowed)";
+        });
 
         const debugSec = document.getElementById("debug-section");
         if (data.debug_mode) {
@@ -592,13 +646,3 @@ function resetPoll(delay) {
 initTheme();
 updateIPs();
 updateStatus().catch((e) => console.error("Initial status fetch failed:", e));
-
-// Responsive handling
-window.addEventListener("resize", () => {
-    if (window.innerWidth >= 640) {
-        document.getElementById("sec-socks").style.display = "";
-        document.getElementById("sec-gateway").style.display = "";
-    } else {
-        switchTab("socks");
-    }
-});

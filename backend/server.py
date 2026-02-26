@@ -74,9 +74,10 @@ class VPNState(TypedDict):
     error: str | None  # Error message if the state is 'error'
     log: str | None  # Recent log lines, only populated if debug_mode is True
     debug_mode: bool  # Whether debug logging is enabled
-    vpn_mode: str  # The configured network mode (standard, socks, gateway)
+    vpn_mode: str  # The configured network mode (standard, proxy, gateway)
+    proxy_modes: list[str]  # Active proxy types (e.g., ['socks5', 'http'])
     server_ip: str  # The dynamically detected best outbound IP
-    socks_auth_enabled: bool  # Whether GOST SOCKS5 auth is configured
+    socks_auth_enabled: bool  # Whether GOST proxy auth is configured
 
 
 class LogAnalysis(TypedDict):
@@ -436,7 +437,11 @@ def get_vpn_state() -> VPNState:
         VPNState: A dictionary containing the serializable current state.
     """
     is_debug: bool = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
-    vpn_mode: str = os.getenv("VPN_MODE", "standard")
+    vpn_mode: str = os.getenv("VPN_MODE", "standard").strip().lower()
+
+    proxy_mode_env: str = os.getenv("PROXY_MODE", "socks5")
+    proxy_modes: list[str] = [p.strip().lower() for p in proxy_mode_env.split(",") if p.strip()]
+
     server_ip: str = get_best_ip()
     socks_auth_enabled: bool = bool(os.getenv("GOST_AUTH"))
 
@@ -454,6 +459,7 @@ def get_vpn_state() -> VPNState:
                     "log": "Ready." if is_debug else None,
                     "debug_mode": is_debug,
                     "vpn_mode": vpn_mode,
+                    "proxy_modes": proxy_modes,
                     "server_ip": server_ip,
                     "socks_auth_enabled": socks_auth_enabled,
                 }
@@ -475,6 +481,7 @@ def get_vpn_state() -> VPNState:
         "log": log_content if is_debug else None,
         "debug_mode": is_debug,
         "vpn_mode": vpn_mode,
+        "proxy_modes": proxy_modes,
         "server_ip": server_ip,
         "socks_auth_enabled": socks_auth_enabled,
     }

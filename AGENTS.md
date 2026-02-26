@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-This project encapsulates a GP-compatible VPN client inside a Docker container, exposing it via a SOCKS5 proxy (`gost`) on port 1080 and a Transparent Gateway. It utilizes a "Split-Agent" architecture where a secure **Container Agent** handles the networking/VPN and a **Host Agent** (Desktop App) handles the SSO authentication flow and management.
+This project encapsulates a GP-compatible VPN client inside a Docker container, exposing it via various proxy protocols (`gost`) and/or a Transparent Gateway. It utilizes a "Split-Agent" architecture where a secure **Container Agent** handles the networking/VPN and a **Host Agent** (Desktop App) handles the SSO authentication flow and management.
 
 ## Development Standards (Crucial)
 
@@ -58,7 +58,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
     - **Auto-Discovery & Pairing:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically. On first run, it generates an Ed25519 keypair and issues `POST /api/pair` to securely lock the container identity. For subsequent queries, it signs a Unix timestamp and the URL path (e.g. `1710000000:/status.json`) and passes `X-Signature` and `X-Timestamp` HTTP headers to authorize itself.
     - **Management:** Displays real-time status (polled from `status.json`) and allows Connect/Disconnect actions.
     - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required.
-    - **Connection Info:** Displays the calculated Gateway IP and SOCKS port when connected.
+    - **Connection Info:** Displays the calculated Gateway IP and proxy ports when connected.
 2.  **Handler Mode (Background):**
     - Triggered by the OS when a `globalprotect://` link is clicked.
     - Captures the callback URL.
@@ -72,11 +72,20 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - The user authenticates (Okta, Microsoft, etc.) in their native browser.
 - The portal redirects to `globalprotect://...`, handing control back to the Host Agent.
 
-## Network Modes (`VPN_MODE`)
+## Network Modes (`VPN_MODE` & `PROXY_MODE`)
 
-- **`standard`:** Starts `gost` (port 1080) AND configures `iptables` for NAT/IP Forwarding. Best for general use.
-- **`socks`:** Starts `gost` ONLY. Disables IP Forwarding and NAT. Locked down.
-- **`gateway`:** Configures NAT/IP Forwarding ONLY. No SOCKS proxy. Requires `macvlan` network driver.
+The application supports simultaneous proxy and gateway topologies. Configure the overarching network stance via the `VPN_MODE` variable:
+
+- **`standard`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Best for general use.
+- **`proxy`:** Starts proxy handler(s) ONLY. Explicitly disables IP Forwarding and NAT. Locked down.
+- **`gateway`:** Configures NAT/IP Forwarding ONLY. No proxy listeners. Requires `macvlan` network driver.
+
+When the mode is set to `standard` or `proxy`, you can configure exactly which proxy endpoints are active simultaneously via the `PROXY_MODE` environment variable. Provide a comma-separated list of values (e.g. `socks5,http,https,socks4`).
+
+- **`socks5`:** Standard UDP/TCP SOCKS5 proxy on Port 1080.
+- **`socks4`:** Standard TCP SOCKS4 proxy on Port 1084.
+- **`http`:** Standard HTTP proxy on Port 8080.
+- **`https`:** TLS-encrypted proxy on Port 8443. Auto-generates a local certificate.
 
 ## Advanced Networking: Smart Split-Tunneling
 
@@ -92,10 +101,10 @@ _(Note: Advanced power users can still optionally declare `VPN_DOMAINS`, `LOCAL_
 
 ### Container (Server)
 
-- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, `SPLIT_TUNNEL` watchdog logic, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`. Strict globbing rejections are enforced on environment parameters. It injects a smart `vpnc-script` wrapper to process GlobalProtect payloads dynamically.
+- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `PROXY_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, `SPLIT_TUNNEL` watchdog logic, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`. Strict globbing rejections are enforced on environment parameters. It injects a smart `vpnc-script` wrapper to process GlobalProtect payloads dynamically.
 - **`backend/server.py`:** Python Control Server. Handles Trust-On-First-Use (TOFU) Ed25519 pairing, dynamic HTML cache busting, and ephemeral UI token injection. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management dynamically delegates (`sys.platform == "win32"`) to explicit OS handlers, enabling native Windows development while securely isolating Unix orchestration constraints.
 - **`backend/utils.py`:** Shared Python utility library. Centralizes cross-process configuration constants (`IPC_CONTROL_PORT`, `IPC_STDIN_PORT`), normalizes the execution environment paths (`CLIENT_LOG`, `SERVICE_LOG`), standardizes the `logging` format outputs across all background daemons, and contains the cross-platform TCP socket transmission logic (`send_ipc_message`).
-- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. The server dynamically rewrites the `<meta name="session-token">` tag in `index.html` on startup so the JS layer automatically picks up authorized access.
+- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. The server dynamically rewrites the `<meta name="session-token">` tag in `index.html` on startup so the JS layer automatically picks up authorized access. The UI uses strict DOM diffing against a JSON array to natively support concurrent multi-proxy rendering.
 
 ### Host (Client)
 
@@ -115,8 +124,8 @@ _(Note: Advanced power users can still optionally declare `VPN_DOMAINS`, `LOCAL_
 - **Rust Connection Pooling:** The Host Agent must utilize a single, globally instantiated `ureq::Agent` for standard connections and a separate fast `ureq::Agent` for status polling. Do not instantiate new HTTP agents inside loops, as this discards TCP connection pooling and exhausts system ports.
 - **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. In addition, 401 exceptions forcefully command `window.location.reload()` to ensure background loop resurrection and ephemeral token extraction upon credential fixing.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`).
-- **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll_unix()` dynamically determines container privileges by directly injecting `sudo -n` to invoke `pkill -x` and `pgrep -x` safely. It relies on a blocking loop alongside `subprocess.run(..., capture_output=True)` to natively return byte streams that satisfy strict Mypy types, verifying that processes have exited before reinitializing logic. If processes refuse to terminate gracefully within the polling window, it automatically escalates to a `SIGKILL` (-9) payload to prevent zombie state races. It specifically unblocks bash pipelines by killing the unprivileged `stdin_proxy.py`.
-- **Dynamic SOCKS5 UI Rendering:** The backend dynamically evaluates the presence of `GOST_AUTH` and surfaces a `socks_auth_enabled` boolean in `/status.json`. The frontend must rely exclusively on this flag to update the SOCKS5 Authentication UI text (e.g., "See Env Config" vs "None"), avoiding hardcoded assumptions about the proxy's security state.
+- **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll_unix()` dynamically determines container privileges by directly injecting `sudo -n` to invoke `pkill -x` and `pgrep -x` safely. It relies on a blocking loop alongside `subprocess.run(..., capture_output=True)` to natively return byte streams that satisfy strict Mypy types, verifying that processes have exited before reinitializing logic. If processes refuse to terminate gracefully within the polling window, it automatically escalates to a `SIGKILL` (-9) payload to prevent zombie state races. It specifically unblocks bash pipelines by killing the unprivileged `stdin_proxy.py` daemon directly, bypassing `sudo`.
+- **Dynamic Proxy UI Rendering:** The backend dynamically evaluates the configured proxies and network boundaries, surfaceing them as JSON arrays (`proxy_modes`). The frontend strictly relies on array matching (`ALL_TABS.includes()`) and DOM class toggling (`hidden-mode`) to safely control layout scaling and proxy info display.
 
 ## System Optimizations & Guardrails (DO NOT REMOVE)
 

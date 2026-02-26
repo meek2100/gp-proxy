@@ -550,3 +550,22 @@ select:focus {
     text-align: center;
     line-height: 1.4;
 }
+
+.hidden-mode {
+    display: none !important;
+}
+
+@media (min-width: 640px) {
+    .tabs-container {
+        display: none !important;
+    }
+    .conn-details {
+        display: grid;
+        /* Instructs CSS to automatically layout the panels without overflowing or needing fixed rows */
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+    }
+    .conn-section:not(.hidden-mode) {
+        display: block !important;
+    }
+}

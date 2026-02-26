@@ -101,7 +101,7 @@ RAW_PGID=$(get_env_value "PGID" "pgid")
 PGID=$(clean_val "$RAW_PGID")
 export PGID
 
-# --- Advanced GP Options ---
+# --- NEW: Advanced GP Options ---
 
 # 9. HIP Report (--hip)
 RAW_HIP=$(get_env_value "VPN_HIP_REPORT" "hip_report" "HIP")
@@ -165,10 +165,21 @@ if [[ -n "$API_TOKEN" ]]; then
     export API_TOKEN
 fi
 
-# --- Smart Split Tunneling Variables ---
+# 18. Proxy Mode (Multi-Protocol Support)
+RAW_PROXY_MODE=$(get_env_value "PROXY_MODE" "proxy_mode")
+CLEAN_PROXY_MODE=$(clean_val "$RAW_PROXY_MODE")
+PROXY_MODE="${CLEAN_PROXY_MODE,,}"
+[[ -z "$PROXY_MODE" ]] && PROXY_MODE="socks5"
+export PROXY_MODE
+
+# 19. Split Tunneling
 RAW_SPLIT_TUNNEL=$(get_env_value "SPLIT_TUNNEL" "split_tunnel")
 CLEAN_SPLIT=$(clean_val "$RAW_SPLIT_TUNNEL")
-if [[ "${CLEAN_SPLIT,,}" == "true" || "${CLEAN_SPLIT}" == "1" ]]; then SPLIT_TUNNEL="true"; else SPLIT_TUNNEL="false"; fi
+if [[ "${CLEAN_SPLIT,,}" == "true" || "${CLEAN_SPLIT}" == "1" ]]; then
+    SPLIT_TUNNEL="true"
+else
+    SPLIT_TUNNEL="false"
+fi
 export SPLIT_TUNNEL
 
 # Optional Manual Overrides (Auto-detected if left empty)
@@ -234,6 +245,9 @@ log "INFO" "=========================================="
 log "INFO" "          GP Proxy Startup               "
 log "INFO" "=========================================="
 log "INFO" "Mode:        $VPN_MODE"
+if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+    log "INFO" "Proxy Types: $PROXY_MODE"
+fi
 log "INFO" "Log Level:   $LOG_LEVEL"
 log "INFO" "Verbosity:   ${GP_VERBOSITY:-None}"
 log "INFO" "Portal:      ${VPN_PORTAL:-[Not Set]}"
@@ -280,23 +294,44 @@ check_log_size() {
 
 # --- DYNAMIC PROCESS MANAGEMENT ---
 start_gost() {
-    if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
+    if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
         if ! pgrep -x gost >/dev/null; then
-            log "INFO" "Starting gost SOCKS proxy..."
-            local gost_args="-L=socks5://:1080?udp=true"
+            log "INFO" "Starting gost proxy handlers..."
+            local gost_args=""
+            local auth_prefix=""
+
             if [[ -n "$GOST_AUTH" ]]; then
                 if [[ "$GOST_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
-                    log "INFO" "SOCKS5 Authentication Enabled."
-                    gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
+                    log "INFO" "Proxy Authentication Enabled."
+                    auth_prefix="${GOST_AUTH}@"
                 else
                     log "ERROR" "GOST_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
                 fi
             fi
-            runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
+
+            # Dynamically attach multiple listeners based on PROXY_MODE
+            IFS=',' read -ra PROXIES <<<"$PROXY_MODE"
+            for p in "${PROXIES[@]}"; do
+                p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+                case "$p" in
+                    socks5) gost_args="$gost_args -L=socks5://${auth_prefix}:1080?udp=true" ;;
+                    socks4) gost_args="$gost_args -L=socks4://${auth_prefix}:1084" ;;
+                    http) gost_args="$gost_args -L=http://${auth_prefix}:8080" ;;
+                    https) gost_args="$gost_args -L=https://${auth_prefix}:8443" ;;
+                    *) log "WARN" "Unknown proxy mode: $p" ;;
+                esac
+            done
+
+            if [[ -n "$gost_args" ]]; then
+                runuser -u gpuser -- bash -c "gost $gost_args" >>"$SERVICE_LOG" 2>&1 &
+            else
+                log "WARN" "No valid proxy modes matched. Gost will not start."
+            fi
         fi
     fi
 }
 
+# --- WATCHDOG ---
 check_services() {
     if ! pgrep -f server.py >/dev/null; then
         log "ERROR" "CRITICAL: Web UI (server.py) died."
@@ -312,11 +347,10 @@ check_services() {
     local mode
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
-    # Enforce background process isolation to active phases only
     if [[ "$mode" == "active" ]]; then
-        if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
+        if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
             if ! pgrep -x gost >/dev/null; then
-                log "ERROR" "CRITICAL: gost SOCKS proxy died while VPN was active. Restarting..."
+                log "ERROR" "CRITICAL: gost proxy died while VPN was active. Restarting..."
                 start_gost
             fi
         fi
@@ -360,8 +394,8 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     if [[ "$IS_MACVLAN" == false ]]; then
         log "WARN" "Configuration Mismatch: '$VPN_MODE' mode requested but no Macvlan interface found."
         log "WARN" "Gateway features require a direct routable IP (Macvlan)."
-        log "WARN" ">>> REVERTING TO 'socks' MODE to ensure functionality. <<<"
-        VPN_MODE="socks"
+        log "WARN" ">>> REVERTING TO 'proxy' MODE to ensure functionality. <<<"
+        VPN_MODE="proxy"
     fi
 fi
 
@@ -408,7 +442,7 @@ echo "nameserver 127.0.0.1" >>/etc/resolv.conf
 # Run dnsmasq as root so it can modify the ipsets dynamically
 dnsmasq --user=root &
 
-# --- 4. VPNC SMART ROUTING WRAPPER ---
+# --- VPNC SMART ROUTING WRAPPER ---
 # This wrapper intercepts the connection sequence to dynamically configure Split-DNS and Subnets
 # based directly on the payloads provided by the GlobalProtect server.
 if [[ ! -f "/usr/share/vpnc-scripts/vpnc-script-orig" ]]; then
@@ -417,7 +451,6 @@ fi
 
 cat <<'EOF' >/usr/share/vpnc-scripts/vpnc-script
 #!/bin/bash
-
 # 1. Execute original script to initialize tun0 and standard IP allocations
 /usr/share/vpnc-scripts/vpnc-script-orig "$@"
 
@@ -501,7 +534,7 @@ fi
 EOF
 chmod +x /usr/share/vpnc-scripts/vpnc-script
 
-# --- 5. NETWORK SETUP ---
+# --- 4. NETWORK SETUP ---
 iptables -F
 iptables -t nat -F
 iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
@@ -534,19 +567,30 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     fi
 
     iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
-elif [[ "$VPN_MODE" == "socks" ]]; then
+elif [[ "$VPN_MODE" == "proxy" ]]; then
     # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]]; then
         echo 0 >/proc/sys/net/ipv4/ip_forward
     fi
 fi
 
-if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
-    iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
-    iptables -A INPUT -p udp --dport 1080 -j ACCEPT
+if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+    IFS=',' read -ra PROXIES <<<"$PROXY_MODE"
+    for p in "${PROXIES[@]}"; do
+        p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+        case "$p" in
+            socks5)
+                iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
+                iptables -A INPUT -p udp --dport 1080 -j ACCEPT
+                ;;
+            socks4) iptables -A INPUT -p tcp --dport 1084 -j ACCEPT ;;
+            http) iptables -A INPUT -p tcp --dport 8080 -j ACCEPT ;;
+            https) iptables -A INPUT -p tcp --dport 8443 -j ACCEPT ;;
+        esac
+    done
 fi
 
-# --- 6. INIT ENVIRONMENT ---
+# --- 5. INIT ENVIRONMENT ---
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_DIR" /tmp/gp-logs
 
@@ -560,7 +604,7 @@ chown -R gpuser:gpuser /tmp/gp-logs /var/www/html "$RUNTIME_DIR"
 echo "idle" >"$MODE_FILE"
 chmod 644 "$MODE_FILE"
 
-# --- 7. START SERVICES ---
+# --- 6. START SERVICES ---
 log "INFO" "Starting Services..."
 
 # Setup persistent control pipe to eliminate Python interpreter startup overhead in the polling loop
@@ -571,7 +615,7 @@ exec 3<>"$RUNTIME_DIR/gp_control_pipe"
 chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
 
 # Ensure API_TOKEN and GOST_AUTH states are definitively passed down to the server context
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" GOST_AUTH="$GOST_AUTH" \
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" GOST_AUTH="$GOST_AUTH" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
 # Start persistent control listener directly bound to the pipe descriptor
@@ -581,7 +625,7 @@ tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
 sleep 3
 
-# --- 8. MAIN LOOP ---
+# --- 7. MAIN LOOP ---
 while true; do
     check_services
     check_log_size

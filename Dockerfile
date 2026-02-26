@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iptables iproute2 util-linux procps tzdata \
     vpnc-scripts ca-certificates \
     libxml2 libgnutls30t64 liblz4-1 libpsl5 libsecret-1-0 openssl \
-    sudo libcap2-bin \
+    sudo libcap2-bin dnsmasq ipset \
     && rm -rf /var/lib/apt/lists/*
 
 # 6. Install Python Dependencies
@@ -123,5 +123,5 @@ RUN chmod +x /entrypoint.sh
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD /usr/bin/healthcheck || exit 1
 
-EXPOSE 1080 8001
+EXPOSE 1080 1084 8080 8443 8001
 ENTRYPOINT ["/entrypoint.sh"]
