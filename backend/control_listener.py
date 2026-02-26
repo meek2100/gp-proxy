@@ -55,7 +55,9 @@ def _process_connection(c: socket.socket) -> None:
 
 def _run_server_loop(s: socket.socket) -> None:
     """
-    Maintains the non-blocking accept loop for incoming IPC connections.
+    Run the non-blocking accept loop that handles incoming IPC connections.
+    
+    Polls the listening socket with a 2.0 second timeout to remain interruptible, accepts ready connections, sets a 5.0 second timeout on each client socket, and processes each connection via _process_connection. Transient socket errors (e.g., OSError or TimeoutError) are logged and the loop continues; a KeyboardInterrupt triggers a clean exit.
     """
     while True:
         try:

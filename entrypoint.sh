@@ -9,7 +9,8 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 # 1. ROBUST CONFIGURATION PARSING
 # ==============================================================================
 
-# Helper: Find env var value case-insensitively
+# get_env_value searches the provided environment variable names case-insensitively and echoes the first non-empty value found.
+# It checks each name for an exact exported variable first, then falls back to a case-insensitive lookup of the environment if not found.
 get_env_value() {
     local val=""
     for key in "$@"; do
@@ -27,7 +28,7 @@ get_env_value() {
     echo "$val"
 }
 
-# Helper: Strip quotes and trim whitespace safely without collapsing internal spaces
+# clean_val removes all single and double quotes from the given string and trims leading and trailing whitespace while preserving internal spacing.
 clean_val() {
     local val="$1"
     # Remove all single and double quotes
@@ -233,7 +234,7 @@ else
 fi
 log "INFO" "------------------------------------------"
 
-# --- GRACEFUL SHUTDOWN ---
+# cleanup terminates gpclient and gpservice processes, kills any background jobs, and exits with status 0 when a shutdown signal is received.
 cleanup() {
     log "WARN" "Received Shutdown Signal"
     sudo pkill -x gpclient || true

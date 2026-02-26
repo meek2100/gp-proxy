@@ -19,6 +19,16 @@ SERVICE_LOG: Path = Path("/tmp/gp-logs/gp-service.log")
 
 # --- IPC Port Configuration ---
 def _parse_port(env_var: str, default: int) -> int:
+    """
+    Parse an environment variable as a TCP port number, returning a safe default when absent or invalid.
+    
+    Parameters:
+        env_var (str): Name of the environment variable to read.
+        default (int): Port to return if the environment value is missing, non-integer, or outside 1–65535.
+    
+    Returns:
+        int: The parsed port (1–65535) if valid, otherwise `default`.
+    """
     val = os.getenv(env_var, "").strip()
     if not val:
         return default
@@ -35,13 +45,13 @@ IPC_STDIN_PORT: int = _parse_port("IPC_STDIN_PORT", 32802)
 
 def setup_logger(name: str) -> logging.Logger:
     """
-    Initializes and returns a standardized logger.
-    Automatically detects if the persistent log directory exists; if so, routes
-    output to the service log file. Otherwise, falls back to standard stream output.
-
+    Create or retrieve a logger configured with standardized formatting and handlers.
+    
+    Log level is taken from the LOG_LEVEL environment variable (default "INFO"). If /tmp/gp-logs exists, output is written to the service log file; otherwise output goes to the standard stream. Repeated calls for the same logger name will not add duplicate handlers.
+    
     Parameters:
-        name (str): The name of the logger (typically __name__).
-
+        name (str): Name of the logger to create or retrieve.
+    
     Returns:
         logging.Logger: The configured logger instance.
     """
