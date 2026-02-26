@@ -681,7 +681,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     # Enforce a tight 5-second window to mitigate replay attacks
                     if abs(time.time() - ts) < 5:
                         # Required Signature Payload Structure: "{timestamp}:{path}"
-                        message = f"{ts}:{self.path}".encode()
+                        # Ensure query strings appended by frontend cache-busting do not break the signature
+                        clean_path = urllib.parse.urlsplit(self.path).path
+                        message = f"{ts}:{clean_path}".encode()
                         sig = base64.b64decode(sig_b64)
                         pubkey_snapshot.verify(sig, message)  # pyright: ignore[reportUnknownMemberType]
                         return True

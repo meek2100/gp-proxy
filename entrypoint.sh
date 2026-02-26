@@ -420,6 +420,9 @@ check_services() {
                 process_dump="${process_dump//"$SS_DEFAULT_PASS"/***REDACTED***}"
             fi
 
+            # Defense-in-depth: Regex strip any remaining full ss:// URIs
+            process_dump=$(echo "$process_dump" | sed -E 's|ss://[^[:space:]]+|ss://***REDACTED***|g')
+
             echo "$process_dump" >&2
             log "ERROR" "--- DUMPING LOGS (Last 50 lines) ---"
             tail -n 50 "$SERVICE_LOG" >&2
