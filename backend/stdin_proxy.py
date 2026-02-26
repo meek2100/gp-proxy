@@ -21,8 +21,13 @@ logger: logging.Logger = setup_logger("stdin_proxy")
 def main() -> None:
     """
     Proxy a local TCP port to this process's standard output.
-    
-    Binds to 127.0.0.1:IPC_STDIN_PORT, accepts incoming connections, and writes all received bytes to sys.stdout.buffer as they arrive. Transient socket errors during accept/recv are logged and the daemon continues; a KeyboardInterrupt exits the process cleanly (status 0). If binding the listen socket fails (e.g., port conflict), the function logs a fatal error and exits with status 1.
+
+    Binds to 127.0.0.1:IPC_STDIN_PORT, accepts incoming connections,
+    and writes all received bytes to sys.stdout.buffer as they arrive.
+    Transient socket errors during accept/recv are logged and the daemon
+    continues; a KeyboardInterrupt exits the process cleanly (status 0).
+    If binding the listen socket fails (e.g., port conflict), the function
+    logs a fatal error and exits with status 1.
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

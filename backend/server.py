@@ -483,8 +483,11 @@ def get_vpn_state() -> VPNState:
 def init_runtime_dir() -> None:
     """
     Ensure the process runtime directory exists with secure permissions.
-    
-    Creates RUNTIME_DIR if it does not exist. On non-Windows platforms the directory mode is set to 0o700; on Windows the directory is created without enforcing Unix-style permissions. If creation or permission changes fail, the error is caught and logged.
+
+    Creates RUNTIME_DIR if it does not exist. On non-Windows platforms
+    the directory mode is set to 0o700; on Windows the directory is created
+    without enforcing Unix-style permissions. If creation or permission changes
+    fail, the error is caught and logged.
     """
     try:
         if sys.platform != "win32":
@@ -572,9 +575,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _is_authorized(self) -> bool:
         """
         Check whether the incoming HTTP request is authorized for protected endpoints.
-        
-        Accepts one of: the ephemeral GUI bearer token, an API token from the API_TOKEN environment variable, or a TOFU Ed25519 signature from a previously paired client. For TOFU authentication the request must include X-Signature (base64) and X-Timestamp headers; the signature is verified over the message "{timestamp}:{path}" and the timestamp must be within 60 seconds of server time to limit replay attacks.
-        
+
+        Accepts one of: the ephemeral GUI bearer token, an API token from the API_TOKEN
+        environment variable, or a TOFU Ed25519 signature from a previously paired client.
+        For TOFU authentication the request must include X-Signature (base64) and X-Timestamp
+        headers; the signature is verified over the message "{timestamp}:{path}" and the timestamp
+        must be within 60 seconds of server time to limit replay attacks.
+
         Returns:
             `True` if the request is authorized, `False` otherwise.
         """
@@ -629,8 +636,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         """
         Set response caching headers appropriate for the requested resource before finalizing HTTP headers.
-        
-        For the root, index, and status endpoints ("/", "/index.html", "/status.json"), adds headers to disable caching. For common static asset extensions (".css", ".js", ".png", ".ico", ".svg", ".jpg"), adds a long-lived, immutable Cache-Control header. Safely handles cases where the request path is unavailable.
+
+        For the root, index, and status endpoints ("/", "/index.html", "/status.json"), adds headers to disable
+        caching. For common static asset extensions (".css", ".js", ".png", ".ico", ".svg", ".jpg"), adds a long-lived,
+        immutable Cache-Control header. Safely handles cases where the request path is unavailable.
         """
         # Safely evaluate path in the event this is called prematurely during an HTTP error
         raw_path: str = self.path if hasattr(self, "path") else ""
@@ -648,13 +657,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: C901
         """
         Handle HTTP GET requests for the web UI and API, serving static assets and protected endpoints.
-        
+
         Processes these routes:
         - /status.json: requires authorization; responds with the current VPN state as JSON.
-        - /download_logs: requires authorization and a DEBUG or TRACE log level; streams the combined service and client logs as a plain-text attachment named "vpn_full_debug.log".
+        - /download_logs: requires authorization and a DEBUG or TRACE log level; streams the combined service
+        and client logs as a plain-text attachment named "vpn_full_debug.log".
         - /: maps to /index.html for the web UI.
-        
-        Direct access to sensitive file extensions (".py", ".pyc", ".pyo", ".env", ".sh") is blocked; all other paths are handled by the base class handler.
+
+        Direct access to sensitive file extensions (".py", ".pyc", ".pyo", ".env", ".sh") is blocked; all other
+        paths are handled by the base class handler.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
         request_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lower()
