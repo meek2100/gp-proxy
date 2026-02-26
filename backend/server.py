@@ -533,8 +533,9 @@ def init_runtime_dir() -> None:
         logger.exception("Failed to initialize runtime dir")
 
 
-def _kill_and_poll_windows() -> None:
-    """Handles process termination and polling gracefully for Windows environments."""
+def _kill_and_poll_windows() -> bool:
+    """Handles process termination and polling gracefully for Windows environments.
+    Returns: bool: True if processes successfully terminated, False otherwise."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
 
@@ -552,7 +553,7 @@ def _kill_and_poll_windows() -> None:
             res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
             res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
             if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
-                break
+                return True
             time.sleep(0.1)
         else:
             # Forceful escalation if graceful kill fails
@@ -560,9 +561,17 @@ def _kill_and_poll_windows() -> None:
             subprocess.run([taskkill, "/F", "/T", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
             time.sleep(0.5)
 
+            # Final validation check
+            res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+            res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
+            return b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout
 
-def _kill_and_poll_unix() -> None:
-    """Handles Unix process termination using safe sudo polling checks, strictly avoiding unrelated processes."""
+    return True
+
+
+def _kill_and_poll_unix() -> bool:
+    """Handles Unix process termination using safe sudo polling checks, strictly avoiding unrelated processes.
+    Returns: bool: True if processes successfully terminated, False otherwise."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
 
@@ -579,7 +588,7 @@ def _kill_and_poll_unix() -> None:
 
     if not pkill or not pgrep:
         logger.warning("Missing required tools for process teardown (pkill/pgrep)")
-        return
+        return False
 
     # 1. Kill gost directly as gpuser to halt routing traffic instantly
     subprocess.run([pkill, "-x", "gost"], stderr=subprocess.DEVNULL)
@@ -595,7 +604,7 @@ def _kill_and_poll_unix() -> None:
         res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
         res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
         if res1.returncode != 0 and res2.returncode != 0:
-            break
+            return True
         time.sleep(0.1)
     else:
         # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
@@ -603,17 +612,28 @@ def _kill_and_poll_unix() -> None:
         subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL)
         time.sleep(0.5)
 
+        # Final validation check to guarantee propagation of failure
+        res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
+        res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
+        return res1.returncode != 0 and res2.returncode != 0
 
-def _kill_and_poll() -> None:
+
+def _kill_and_poll() -> bool:
     """
     Terminates active OpenConnect processes and actively polls until they exit
     to prevent race conditions when generating new VPN sessions.
-    Dynamically routes to the correct OS implementation.
+    Dynamically routes to the correct OS implementation and halts if teardown fails.
+
+    Returns: bool: True on successful teardown, False otherwise.
     """
     if sys.platform == "win32":
-        _kill_and_poll_windows()
+        success = _kill_and_poll_windows()
     else:
-        _kill_and_poll_unix()
+        success = _kill_and_poll_unix()
+
+    if not success:
+        logger.error("Failed to teardown existing VPN processes.")
+        return False
 
     # Aggressively force state evaluation files to an empty/idle state.
     # This proactively prevents UI state flapping (e.g. jumping to 'Connected') on reconnects
@@ -626,6 +646,7 @@ def _kill_and_poll() -> None:
         pass
 
     state_manager.reset()
+    return True
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -807,29 +828,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(403, "Pairing disabled: Manual API_TOKEN configured")
             return
 
+        # Phase 1: Heavy decoding/parsing outside the thread-lock to prevent blocking the authorization engine
+        try:
+            raw_data = self.rfile.read(length).decode("utf-8")
+            data = json.loads(raw_data)
+            pubkey_b64 = data.get("public_key")
+            if not pubkey_b64:
+                self.send_error(400, "Missing public_key")
+                return
+
+            pubkey_bytes = base64.b64decode(pubkey_b64)
+            new_pubkey = Ed25519PublicKey.from_public_bytes(pubkey_bytes)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        except (ValueError, KeyError, TypeError) as e:  # fmt: skip
+            logger.warning(f"Pairing failed: {e}")
+            self.send_error(400, "Invalid pairing payload")
+            return
+
+        # Phase 2: Strictly localized lock purely for the state check and swap to eliminate race conditions
         with _pairing_lock:
             if _paired_pubkey is not None:
                 self.send_error(403, "Already paired. Trust On First Use (TOFU) locking active.")
                 return
+            _paired_pubkey = new_pubkey  # pyright: ignore[reportUnknownVariableType]
 
-            try:
-                raw_data = self.rfile.read(length).decode("utf-8")
-                data = json.loads(raw_data)
-                pubkey_b64 = data.get("public_key")
-                if not pubkey_b64:
-                    self.send_error(400, "Missing public_key")
-                    return
-
-                pubkey_bytes = base64.b64decode(pubkey_b64)
-                _paired_pubkey = Ed25519PublicKey.from_public_bytes(pubkey_bytes)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-
-                logger.info("TOFU Pairing successful. Rust Host Agent trusted.")
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"OK")
-            except (ValueError, KeyError, TypeError) as e:  # fmt: skip
-                logger.warning(f"Pairing failed: {e}")
-                self.send_error(400, "Invalid pairing payload")
+        logger.info("TOFU Pairing successful. Rust Host Agent trusted.")
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
 
     def _handle_connect(self) -> None:
         """
@@ -841,7 +866,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         - Responds 503 with an explanatory message when the control IPC is unavailable.
         """
         logger.info("User requested Connection")
-        _kill_and_poll()
+
+        # Halt execution and alert UI if zombie processes refuse to die
+        if not _kill_and_poll():
+            self.send_error(503, "Service teardown failed")
+            return
 
         success: bool = send_ipc_message(IPC_CONTROL_PORT, "START\n")
         if success:
@@ -856,7 +885,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Handle an HTTP disconnect request and cleanly terminate VPN client processes.
         """
         logger.info("User requested Disconnect")
-        _kill_and_poll()
+
+        # Halt execution and alert UI if zombie processes refuse to die
+        if not _kill_and_poll():
+            self.send_error(503, "Service teardown failed")
+            return
 
         self.send_response(200)
         self.end_headers()

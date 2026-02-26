@@ -275,13 +275,22 @@ else
 fi
 log "INFO" "------------------------------------------"
 
+# --- PRIVILEGE DETECTION FOR TEARDOWN ---
+SUDO_CMD=""
+if [[ "$(id -u)" -ne "0" ]]; then
+    # Dynamically inject non-interactive sudo flag if executing unprivileged and sudo is available
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        SUDO_CMD="sudo -n"
+    fi
+fi
+
 # --- GRACEFUL SHUTDOWN ---
 cleanup() {
     log "WARN" "Received Shutdown Signal"
-    sudo pkill -x gpclient || true
-    sudo pkill -x gpservice || true
-    sudo pkill -x gost || true
-    sudo pkill -x dnsmasq || true
+    $SUDO_CMD pkill -x gpclient || true
+    $SUDO_CMD pkill -x gpservice || true
+    $SUDO_CMD pkill -x gost || true
+    $SUDO_CMD pkill -x dnsmasq || true
     kill "$(jobs -p)" 2>/dev/null || true
     exit 0
 }
@@ -434,9 +443,10 @@ check_services() {
 if [[ -n "$PUID" ]]; then usermod -u "$PUID" gpuser; fi
 if [[ -n "$PGID" ]]; then groupmod -g "$PGID" gpuser; fi
 
-# Verify backend translation layer
+# Verify backend translation layer immediately and fail-fast
 if ! command -v iptables &>/dev/null; then
-    log "WARN" "iptables command not found. Ensure iptables-nft translation is installed for correct container routing."
+    log "ERROR" "iptables command not found. Ensure iptables-nft translation is installed for correct container routing."
+    exit 1
 fi
 
 # --- 2. NETWORK & MODE DETECTION ---
@@ -672,8 +682,8 @@ while true; do
         # 3. Cleanup after disconnect
         log "WARN" "gpclient pipeline resolved. Cleaning up services..."
         echo "idle" >"$MODE_FILE"
-        sudo pkill -x gpservice || true
-        pkill -x gost || true
+        $SUDO_CMD pkill -x gpservice || true
+        $SUDO_CMD pkill -x gost || true
         log "INFO" "Services stopped. System Idle."
     fi
 done
