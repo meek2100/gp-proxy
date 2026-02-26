@@ -355,28 +355,6 @@ select:focus {
     margin-bottom: 24px;
 }
 
-/* Desktop: Side by Side */
-@media (min-width: 640px) {
-    .conn-container {
-        flex-direction: row;
-        align-items: stretch;
-    }
-
-    .conn-section {
-        flex: 1;
-    }
-
-    /* Hide tab buttons on desktop */
-    .conn-tabs {
-        display: none !important;
-    }
-
-    /* Show all contents on desktop */
-    .conn-content {
-        display: block !important;
-    }
-}
-
 .conn-section {
     background: var(--bg-body);
     border: 1px solid var(--border-color);
@@ -493,6 +471,11 @@ select:focus {
     display: none !important;
 }
 
+/* Required for JS API syncing of dynamic proxy UI containers */
+.hidden-mode {
+    display: none !important;
+}
+
 .spinner {
     width: 24px;
     height: 24px;
@@ -551,21 +534,25 @@ select:focus {
     line-height: 1.4;
 }
 
-.hidden-mode {
-    display: none !important;
-}
-
+/* Desktop: Side by Side Fluid Grid */
 @media (min-width: 640px) {
-    .tabs-container {
+    .conn-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+    }
+
+    /* Hide mobile tab buttons on desktop layout */
+    .conn-tabs {
         display: none !important;
     }
-    .conn-details {
-        display: grid;
-        /* Instructs CSS to automatically layout the panels without overflowing or needing fixed rows */
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 1.5rem;
-    }
+
+    /* Reveal dynamically visible cards on desktop bypassing mobile tab restrictions */
     .conn-section:not(.hidden-mode) {
+        display: block !important;
+    }
+
+    .conn-content {
         display: block !important;
     }
 }
