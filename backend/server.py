@@ -534,8 +534,13 @@ def _kill_and_poll_unix() -> None:
     pkill: str | None = shutil.which("pkill")
 
     if pkill is not None:
+        # 1. Kill the privileged OpenConnect daemons via sudo wrappers
         subprocess.run([*sudo_cmd, pkill, "-x", "gpclient"], stderr=subprocess.DEVNULL)
         subprocess.run([*sudo_cmd, pkill, "-x", "gpservice"], stderr=subprocess.DEVNULL)
+
+        # 2. Kill the unprivileged stdin proxy to forcefully unblock the bash entrypoint pipeline.
+        # This executes purely as the gpuser daemon owner to bypass strict Dockerfile sudoer limits.
+        subprocess.run([pkill, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL)
 
         pgrep: str | None = shutil.which("pgrep")
         if pgrep is not None:
@@ -656,16 +661,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: C901
         """
-        Handle HTTP GET requests for the web UI and API, serving static assets and protected endpoints.
+        Handle HTTP GET requests for the web UI and API endpoints.
 
-        Processes these routes:
-        - /status.json: requires authorization; responds with the current VPN state as JSON.
-        - /download_logs: requires authorization and a DEBUG or TRACE log level; streams the combined service
-        and client logs as a plain-text attachment named "vpn_full_debug.log".
-        - /: maps to /index.html for the web UI.
-
-        Direct access to sensitive file extensions (".py", ".pyc", ".pyo", ".env", ".sh") is blocked; all other
-        paths are handled by the base class handler.
+        Processes requests for:
+        - /status.json: returns current VPN state as JSON (requires authorization; responds 401 if unauthorized).
+        - /download_logs: streams combined service and client logs as a text attachment
+          (requires authorization and debug/trace log level; responds 401 or 403 as appropriate).
+        - /: serves index.html.
+        Blocks direct access to sensitive file types (.py, .pyc, .pyo, .env, .sh)
+        and otherwise delegates to the base handler for static files.
         """
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
         request_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path).lower()
@@ -868,6 +872,17 @@ class VPNServer(socketserver.ThreadingTCPServer):
     """Custom ThreadingTCPServer that safely enables address reuse."""
 
     allow_reuse_address: ClassVar[bool] = True  # type: ignore[misc] # pyright: ignore[reportIncompatibleVariableOverride]
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """
+        Gracefully catch and suppress BrokenPipeError and ConnectionResetError.
+        These occur harmlessly when a web browser requests an asset (like an image)
+        but drops the TCP connection before the server finishes sending the bytes.
+        """
+        exc_type, _exc_value, _traceback = sys.exc_info()
+        if exc_type and issubclass(exc_type, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
 
 
 if __name__ == "__main__":
