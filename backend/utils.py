@@ -64,8 +64,9 @@ def setup_logger(name: str) -> logging.Logger:
 
     # Prevent duplicate handlers if called multiple times in the same process
     # Uses hasHandlers() to properly inspect the entire logger hierarchy
-    if not logger.hasHandlers():
-        logger.setLevel(log_level)
+    logger.setLevel(log_level)
+    if not logger.handlers:
+        logger.propagate = False
         formatter: logging.Formatter = logging.Formatter(
             fmt="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%SZ"
         )
