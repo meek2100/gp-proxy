@@ -573,6 +573,15 @@ def _kill_and_poll() -> None:
     else:
         _kill_and_poll_unix()
 
+    # Aggressively force state evaluation files to an empty/idle state.
+    # This proactively prevents UI state flapping (e.g. jumping to 'Connected') on reconnects
+    # where the bash orchestrator natively takes a few seconds to start truncating the old log files.
+    try:
+        MODE_FILE.write_text("idle\n")
+        CLIENT_LOG.write_text("")
+    except OSError:
+        pass
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     """
@@ -801,15 +810,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         logger.info("User requested Disconnect")
         _kill_and_poll()
-
-        # Aggressively force state evaluation files to an empty/idle state.
-        # This provides instantaneous closure to the frontend UI polling loops without
-        # waiting on the entrypoint.sh orchestrator pipeline to fully resolve itself.
-        try:
-            MODE_FILE.write_text("idle\n")
-            CLIENT_LOG.write_text("")
-        except OSError:
-            pass
 
         self.send_response(200)
         self.end_headers()

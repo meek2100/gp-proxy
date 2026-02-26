@@ -24,10 +24,10 @@ def _parse_port(env_var: str, default: int) -> int:
 
     Parameters:
         env_var (str): Name of the environment variable to read.
-        default (int): Port to return if the environment value is missing, non-integer, or outside 1–65535.
+        default (int): Port to return if the environment value is missing, non-integer, or outside 1-65535.
 
     Returns:
-        int: The parsed port (1–65535) if valid, otherwise `default`.
+        int: The parsed port (1-65535) if valid, otherwise `default`.
     """
     val = os.getenv(env_var, "").strip()
     if not val:

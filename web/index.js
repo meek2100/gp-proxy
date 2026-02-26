@@ -406,20 +406,23 @@ window.downloadLogs = downloadLogs;
 /**
  * Periodically fetches and updates the frontend state from the backend.
  * Implements strict DOM diffing for dynamic inputs to preserve user focus.
- * If API token validation fails, presents the user with an authorization error.
+ * If API token validation fails, presents the user with an authorization error and forces a reload.
  */
 async function updateStatus() {
     try {
         const res = await fetch("/status.json?t=" + Date.now(), getFetchOptions("GET"));
         if (!res.ok) {
             if (res.status === 401) {
-                setBadge("Unauthorized (Check Key Exchange)", "error");
+                // The backend rotated the Ephemeral token (likely due to a container restart).
+                // We must reload the page to extract the new token from the HTML meta tag.
+                console.warn("401 Unauthorized - Ephemeral token rotated. Reloading page...");
+                setBadge("Session Expired. Reloading...", "error");
                 setView("error");
+                setTimeout(() => window.location.reload(), 1500);
+                return;
             } else {
                 throw new Error(`HTTP Error: ${res.status}`);
             }
-            resetPoll(5000); // Ensure polling resumes so corrections resolve naturally
-            return;
         }
         const data = await res.json();
 
