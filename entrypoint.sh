@@ -240,6 +240,17 @@ log() {
     fi
 }
 
+# --- PROXY HELPER ---
+# Parses the comma-delimited PROXY_MODE string and applies a provided callback
+for_each_proxy_mode() {
+    local callback="$1"
+    IFS=',' read -ra PROXIES <<<"$PROXY_MODE"
+    for p in "${PROXIES[@]}"; do
+        p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+        [[ -n "$p" ]] && "$callback" "$p"
+    done
+}
+
 # --- VERBOSITY MAPPING ---
 GP_VERBOSITY=""
 if [[ "$LOG_LEVEL" == "DEBUG" ]]; then
@@ -337,10 +348,9 @@ start_proxies() {
                 fi
             fi
 
-            # Dynamically attach multiple listeners based on PROXY_MODE using an array to prevent shell injection
-            IFS=',' read -ra PROXIES <<<"$PROXY_MODE"
-            for p in "${PROXIES[@]}"; do
-                p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+            # Dynamically attach multiple listeners based on PROXY_MODE using a callback closure
+            build_proxy_args() {
+                local p="$1"
                 case "$p" in
                     socks5) proxy_args+=("-L=socks5://${auth_prefix}:1080?udp=true") ;;
                     socks4) proxy_args+=("-L=socks4://${auth_prefix}:1084") ;;
@@ -367,7 +377,9 @@ start_proxies() {
                         ;;
                     *) log "WARN" "Unknown proxy mode: $p" ;;
                 esac
-            done
+            }
+
+            for_each_proxy_mode build_proxy_args
 
             if [[ ${#proxy_args[@]} -gt 0 ]]; then
                 runuser -u gpuser -- gost "${proxy_args[@]}" >>"$SERVICE_LOG" 2>&1 &
@@ -502,7 +514,12 @@ if [[ -n "$DNS_TO_APPLY" ]]; then
 fi
 
 # Initialize ipset for Dynamic DNS-based Policy Routing
-ipset create vpn_domains hash:ip 2>/dev/null || true
+if ! ipset create vpn_domains hash:ip 2>/dev/null; then
+    if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+        log "ERROR" "Failed to create ipset 'vpn_domains'. Split-tunneling requires the 'ipset' kernel module."
+        exit 1
+    fi
+fi
 
 # Instruct local container apps (like Gost) to use the dnsmasq split-router natively
 echo "options ndots:0" >/etc/resolv.conf
@@ -552,9 +569,8 @@ elif [[ "$VPN_MODE" == "proxy" ]]; then
 fi
 
 if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
-    IFS=',' read -ra PROXIES <<<"$PROXY_MODE"
-    for p in "${PROXIES[@]}"; do
-        p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+    setup_proxy_iptables() {
+        local p="$1"
         case "$p" in
             socks5)
                 iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
@@ -569,7 +585,9 @@ if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
                 iptables -A INPUT -p udp --dport 8388 -j ACCEPT
                 ;;
         esac
-    done
+    }
+
+    for_each_proxy_mode setup_proxy_iptables
 fi
 
 # --- 5. INIT ENVIRONMENT ---
