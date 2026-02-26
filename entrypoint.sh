@@ -349,7 +349,7 @@ start_proxies() {
                             chmod 600 "$RUNTIME_DIR/ss_credentials.txt"
 
                             log "WARN" "Shadowsocks auth missing. Auto-generated credentials saved securely."
-                            log "WARN" "-> To view them, run: docker exec -it <container_name> cat $RUNTIME_DIR/ss_credentials.txt"
+                            log "WARN" "-> To view them, run: docker exec -it $(hostname) cat $RUNTIME_DIR/ss_credentials.txt"
 
                             proxy_args+=("-L=ss://chacha20:${SS_DEFAULT_PASS}@:8388")
                         else
