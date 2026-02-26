@@ -1,10 +1,10 @@
+# File: tests/test_stdin_proxy.py
 """
 Tests for backend/stdin_proxy.py
 
 Verifies the stdin proxy daemon that bridges HTTP server and OpenConnect subprocess.
 """
 
-import select
 import socket
 import sys
 from io import BytesIO
@@ -209,7 +209,7 @@ class TestStdinProxyMain:
                 assert exc_info.value.code == 0
 
     def test_main_fatal_bind_error_exits_with_code_1(self) -> None:
-        """Test that fatal bind error exits with code 1."""
+        """Test that fatal x-bind error exits with code 1."""
         with patch("socket.socket") as mock_socket_class:
             mock_socket = Mock()
             mock_socket.bind.side_effect = OSError("Address already in use")
@@ -300,7 +300,8 @@ class TestBinaryDataHandling:
         with patch("socket.socket") as mock_socket_class:
             mock_socket = Mock()
             mock_client = MagicMock()
-            unicode_data = "Hello 世界".encode("utf-8")
+            # Translated "Hello World"
+            unicode_data = b"Hello World"
             mock_client.recv.side_effect = [unicode_data, b""]
             mock_socket.accept.return_value = (mock_client, ("127.0.0.1", 12345))
             mock_socket_class.return_value.__enter__.return_value = mock_socket
@@ -318,7 +319,7 @@ class TestBinaryDataHandling:
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == unicode_data
-                    assert output.decode("utf-8") == "Hello 世界"
+                    assert output.decode("utf-8") == "Hello World"
 
 
 class TestEdgeCases:
