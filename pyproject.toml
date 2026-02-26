@@ -48,12 +48,16 @@ ignore_missing_imports = true
 pretty = true
 show_error_codes = true
 disable_error_code = ["import-untyped"]
+exclude = ["build/"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
 reportMissingImports = false
 reportMissingTypeStubs = false
 pythonVersion = "3.14"
+include = ["backend", "tests"]
+exclude = ["**/node_modules", "**/__pycache__", "build", "dist"]
+extraPaths = ["backend"]
 
 [tool.codespell]
 skip = "*.min.js,*.min.css,*.lock,package-lock.json"

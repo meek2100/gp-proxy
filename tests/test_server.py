@@ -1,4 +1,5 @@
 # File: tests/test_server.py
+# pyright: reportPrivateUsage=false
 """
 Tests for backend/server.py
 
@@ -19,21 +20,24 @@ from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
+import server
 from server import (
     ANSI_ESCAPE,
     GATEWAY_REGEX,
     URL_PATTERN,
     Handler,
     StateManager,
-    _evaluate_line_state,
-    _extract_gateways,
-    _extract_sso_url,
     analyze_log_lines,
     get_best_ip,
     get_vpn_state,
     init_runtime_dir,
     strip_ansi,
 )
+
+# Access private members
+evaluate_line_state = server._evaluate_line_state
+extract_gateways = server._extract_gateways
+extract_sso_url = server._extract_sso_url
 
 
 class TestStripAnsi:
@@ -80,7 +84,7 @@ class TestExtractGateways:
             "Gateway options:",
             "  > Gateway1 (gw1.example.com)",
         ]
-        result: list[str] = _extract_gateways(lines)
+        result: list[str] = extract_gateways(lines)
         assert "Gateway1 (gw1.example.com)" in result
 
     def test_extract_gateways_multiple_options(self) -> None:
@@ -90,7 +94,7 @@ class TestExtractGateways:
             "    Gateway2 (gw2.example.com)",
             "    Gateway3 (gw3.example.com)",
         ]
-        result: list[str] = _extract_gateways(lines)
+        result: list[str] = extract_gateways(lines)
         assert len(result) == 3
         assert "Gateway1 (gw1.example.com)" in result
         assert "Gateway2 (gw2.example.com)" in result
@@ -103,7 +107,7 @@ class TestExtractGateways:
             "  Alpha (a.example.com)",
             "  Beta (b.example.com)",
         ]
-        result: list[str] = _extract_gateways(lines)
+        result: list[str] = extract_gateways(lines)
         assert result == sorted(result)
 
     def test_extract_gateways_deduplicates(self) -> None:
@@ -113,7 +117,7 @@ class TestExtractGateways:
             "  Gateway1 (gw1.example.com)",
             "  Gateway2 (gw2.example.com)",
         ]
-        result: list[str] = _extract_gateways(lines)
+        result: list[str] = extract_gateways(lines)
         assert len(result) == 2
 
     def test_extract_gateways_excludes_prompt_line(self) -> None:
@@ -122,13 +126,13 @@ class TestExtractGateways:
             "Which gateway do you want to connect to?",
             "  Gateway1 (gw1.example.com)",
         ]
-        result: list[str] = _extract_gateways(lines)
+        result: list[str] = extract_gateways(lines)
         assert "Which gateway" not in str(result)
         assert "Gateway1 (gw1.example.com)" in result
 
     def test_extract_gateways_empty_lines(self) -> None:
         """Test handling of empty line list."""
-        result: list[str] = _extract_gateways([])
+        result: list[str] = extract_gateways([])
         assert result == []
 
 
@@ -138,36 +142,36 @@ class TestExtractSsoUrl:
     def test_extract_sso_url_finds_https_url(self) -> None:
         """Test extraction of HTTPS SSO URL."""
         log = "Please authenticate at: https://auth.example.com/saml/login?token=abc123"
-        result: str = _extract_sso_url(log, 8001)
+        result: str = extract_sso_url(log, 8001)
         assert result == "https://auth.example.com/saml/login?token=abc123"
 
     def test_extract_sso_url_finds_http_url(self) -> None:
         """Test extraction of HTTP URL."""
         log = "Login at http://login.example.com"
-        result: str = _extract_sso_url(log, 8001)
+        result: str = extract_sso_url(log, 8001)
         assert result == "http://login.example.com"
 
     def test_extract_sso_url_excludes_local_urls(self) -> None:
         """Test that local URLs with port are excluded."""
         log = "Server at http://127.0.0.1:8001/status and auth at https://auth.example.com/login"
-        result: str = _extract_sso_url(log, 8001)
+        result: str = extract_sso_url(log, 8001)
         assert result == "https://auth.example.com/login"
 
     def test_extract_sso_url_returns_last_match(self) -> None:
         """Test that the most recent URL is returned."""
         log = "First: https://old.example.com/login Second: https://new.example.com/auth"
-        result: str = _extract_sso_url(log, 8001)
+        result: str = extract_sso_url(log, 8001)
         assert result == "https://new.example.com/auth"
 
     def test_extract_sso_url_no_urls(self) -> None:
         """Test handling when no URLs are present."""
         log = "Connecting to VPN..."
-        result: str = _extract_sso_url(log, 8001)
+        result: str = extract_sso_url(log, 8001)
         assert result == ""
 
     def test_extract_sso_url_empty_log(self) -> None:
         """Test handling of empty log."""
-        result: str = _extract_sso_url("", 8001)
+        result: str = extract_sso_url("", 8001)
         assert result == ""
 
 
@@ -184,7 +188,7 @@ class TestEvaluateLineState:
             "error": None,
             "sso_url": "",
         }
-        result: bool = _evaluate_line_state("Connected to vpn.example.com", [], analysis)
+        result: bool = evaluate_line_state("Connected to vpn.example.com", [], analysis)
         assert result is True
         assert analysis["state"] == "connected"
 
@@ -198,7 +202,7 @@ class TestEvaluateLineState:
             "error": None,
             "sso_url": "",
         }
-        result: bool = _evaluate_line_state("Login failed", [], analysis)
+        result: bool = evaluate_line_state("Login failed", [], analysis)
         assert result is True
         assert analysis["state"] == "error"
         assert analysis["error"] == "Login failed"
@@ -214,7 +218,7 @@ class TestEvaluateLineState:
             "error": None,
             "sso_url": "",
         }
-        result: bool = _evaluate_line_state("Which gateway do you want to connect to", lines, analysis)
+        result: bool = evaluate_line_state("Which gateway do you want to connect to", lines, analysis)
         assert result is True
         assert analysis["state"] == "input"
         assert analysis["prompt"] == "Select Gateway"
@@ -231,7 +235,7 @@ class TestEvaluateLineState:
             "error": None,
             "sso_url": "",
         }
-        result: bool = _evaluate_line_state("Enter password:", [], analysis)
+        result: bool = evaluate_line_state("Enter password:", [], analysis)
         assert result is True
         assert analysis["state"] == "input"
         assert analysis["prompt"] == "Enter Password"
@@ -247,7 +251,7 @@ class TestEvaluateLineState:
             "error": None,
             "sso_url": "",
         }
-        result: bool = _evaluate_line_state("Enter username:", [], analysis)
+        result: bool = evaluate_line_state("Enter username:", [], analysis)
         assert result is True
         assert analysis["state"] == "input"
         assert analysis["prompt"] == "Enter Username"
@@ -263,7 +267,7 @@ class TestEvaluateLineState:
             "error": None,
             "sso_url": "",
         }
-        result: bool = _evaluate_line_state("Connecting to server...", [], analysis)
+        result: bool = evaluate_line_state("Connecting to server...", [], analysis)
         assert result is True
         assert analysis["state"] == "connecting"
 
@@ -277,7 +281,7 @@ class TestEvaluateLineState:
             "error": None,
             "sso_url": "",
         }
-        result: bool = _evaluate_line_state("Some random log line", [], analysis)
+        result: bool = evaluate_line_state("Some random log line", [], analysis)
         assert result is False
         assert analysis["state"] == "idle"
 
@@ -451,9 +455,9 @@ class TestGetVpnState:
 
             with patch("server.MODE_FILE", mode_file):
                 with patch.dict(os.environ, {}, clear=True):
-                    state = get_vpn_state()
-                    assert state["state"] == "idle"
-                    assert state["error"] is None
+                    state_idle = get_vpn_state()
+                    assert state_idle["state"] == "idle"
+                    assert state_idle["error"] is None
 
     def test_get_vpn_state_includes_debug_mode(self) -> None:
         """Test that debug mode flag is set correctly."""
@@ -478,8 +482,8 @@ class TestGetVpnState:
 
             with patch("server.MODE_FILE", mode_file):
                 with patch.dict(os.environ, {"VPN_MODE": "gateway"}):
-                    state = get_vpn_state()
-                    assert state["vpn_mode"] == "gateway"
+                    state_vpn = get_vpn_state()
+                    assert state_vpn["vpn_mode"] == "gateway"
 
     def test_get_vpn_state_socks_auth_detection(self) -> None:
         """Test SOCKS authentication flag detection."""
@@ -579,20 +583,22 @@ class TestHandlerAuthentication:
 
     def test_is_authorized_with_ed25519_signature(self) -> None:
         """Test authorization with Ed25519 signature."""
-        from cryptography.hazmat.primitives.asymmetric import ed25519
+        from cryptography.hazmat.primitives.asymmetric import (
+            ed25519,  # pyright: ignore[reportUnknownVariableType]
+        )
 
-        private_key: Any = ed25519.Ed25519PrivateKey.generate()
-        public_key: Any = private_key.public_key()
+        private_key: Any = ed25519.Ed25519PrivateKey.generate()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        public_key: Any = private_key.public_key()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
         handler: Any = self._create_handler()
         handler.path = "/status.json"
 
         timestamp = int(time.time())
         message = f"{timestamp}:/status.json".encode()
-        signature: bytes = private_key.sign(message)
-        sig_b64: str = base64.b64encode(signature).decode()
+        signature: bytes = private_key.sign(message)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        sig_b64: str = base64.b64encode(signature).decode()  # pyright: ignore[reportUnknownArgumentType]
 
-        with patch("server._paired_pubkey", public_key):
+        with patch("server._paired_pubkey", public_key):  # pyright: ignore[reportUnknownArgumentType]
             handler.headers = {
                 "X-Signature": sig_b64,
                 "X-Timestamp": str(timestamp),
@@ -601,20 +607,22 @@ class TestHandlerAuthentication:
 
     def test_is_authorized_ed25519_signature_expired(self) -> None:
         """Test that expired signatures are rejected."""
-        from cryptography.hazmat.primitives.asymmetric import ed25519
+        from cryptography.hazmat.primitives.asymmetric import (
+            ed25519,  # pyright: ignore[reportUnknownVariableType]
+        )
 
-        private_key: Any = ed25519.Ed25519PrivateKey.generate()
-        public_key: Any = private_key.public_key()
+        private_key: Any = ed25519.Ed25519PrivateKey.generate()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        public_key: Any = private_key.public_key()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
         handler: Any = self._create_handler()
         handler.path = "/status.json"
 
         timestamp = int(time.time()) - 120
         message = f"{timestamp}:/status.json".encode()
-        signature: bytes = private_key.sign(message)
-        sig_b64: str = base64.b64encode(signature).decode()
+        signature: bytes = private_key.sign(message)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        sig_b64: str = base64.b64encode(signature).decode()  # pyright: ignore[reportUnknownArgumentType]
 
-        with patch("server._paired_pubkey", public_key):
+        with patch("server._paired_pubkey", public_key):  # pyright: ignore[reportUnknownArgumentType]
             handler.headers = {
                 "X-Signature": sig_b64,
                 "X-Timestamp": str(timestamp),
