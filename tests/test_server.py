@@ -513,15 +513,19 @@ class TestGetVpnState:
                     assert state_vpn["vpn_mode"] == "gateway"
 
     def test_get_vpn_state_proxy_auth_detection(self) -> None:
-        """Test proxy authentication flag detection."""
+        """Test proxy authentication boolean flag detection."""
         with tempfile.TemporaryDirectory() as tmpdir:
             mode_file = Path(tmpdir) / "gp-mode"
             mode_file.write_text("idle")
 
             with patch("server.MODE_FILE", mode_file):
-                with patch.dict(os.environ, {"PROXY_AUTH": "user:pass"}):
+                with patch.dict(os.environ, {"PROXY_AUTH_ENABLED": "true"}):
                     state_auth: Any = get_vpn_state()
                     assert state_auth["proxy_auth_enabled"] is True
+
+                with patch.dict(os.environ, {"SS_AUTH_ENABLED": "true"}):
+                    state_ss: Any = get_vpn_state()
+                    assert state_ss["proxy_auth_enabled"] is True
 
                 with patch.dict(os.environ, {}, clear=True):
                     state_no_auth: Any = get_vpn_state()
