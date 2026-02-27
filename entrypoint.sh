@@ -156,12 +156,10 @@ export ALLOWED_SUBNETS
 # 16. Proxy Auth (Accepts GOST_AUTH as legacy fallback)
 RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth" "GOST_AUTH" "gost_auth")
 PROXY_AUTH=$(clean_val_preserve_inner "$RAW_PROXY_AUTH")
-export PROXY_AUTH
 
 # 17. Shadowsocks Auth
 RAW_SS_AUTH=$(get_env_value "SS_AUTH" "ss_auth")
 SS_AUTH=$(clean_val_preserve_inner "$RAW_SS_AUTH")
-export SS_AUTH
 
 # Initialize a global fallback password variable for the crash redaction watchdog
 SS_DEFAULT_PASS=""
@@ -614,8 +612,15 @@ mkfifo "$RUNTIME_DIR/gp_control_pipe"
 exec 3<>"$RUNTIME_DIR/gp_control_pipe"
 chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
 
-# Ensure API_TOKEN and PROXY_AUTH states are definitively passed down to the server context
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" PROXY_AUTH="$PROXY_AUTH" SS_AUTH="$SS_AUTH" \
+# Determine boolean presence of auth variables for the web UI
+PROXY_AUTH_ENABLED="false"
+[[ -n "$PROXY_AUTH" ]] && PROXY_AUTH_ENABLED="true"
+
+SS_AUTH_ENABLED="false"
+[[ -n "$SS_AUTH" ]] && SS_AUTH_ENABLED="true"
+
+# Ensure API_TOKEN and state booleans are definitively passed down to the server context without leaking secrets
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" PROXY_AUTH_ENABLED="$PROXY_AUTH_ENABLED" SS_AUTH_ENABLED="$SS_AUTH_ENABLED" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
 # Start persistent control listener directly bound to the pipe descriptor

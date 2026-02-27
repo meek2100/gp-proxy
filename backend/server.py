@@ -470,7 +470,10 @@ def get_vpn_state() -> VPNState:
     proxy_modes: list[str] = [p.strip().lower() for p in proxy_mode_env.split(",") if p.strip()]
 
     server_ip: str = get_best_ip()
-    proxy_auth_enabled: bool = bool(os.getenv("PROXY_AUTH"))
+
+    proxy_auth_enabled: bool = (os.getenv("PROXY_AUTH_ENABLED", "false").lower() == "true") or (
+        os.getenv("SS_AUTH_ENABLED", "false").lower() == "true"
+    )
 
     if MODE_FILE.exists():
         try:
@@ -538,35 +541,48 @@ def _kill_and_poll_windows() -> bool:
     Returns: bool: True if processes successfully terminated, False otherwise."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
+    res3: subprocess.CompletedProcess[bytes]
 
     taskkill: str = shutil.which("taskkill") or str(
         Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe"
     )
 
-    if os.path.exists(taskkill):
-        subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
-        subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
-        subprocess.run([taskkill, "/F", "/IM", "gost.exe"], stderr=subprocess.DEVNULL)
+    if not os.path.exists(taskkill):
+        logger.warning("Missing required tools for process teardown (taskkill)")
+        return False
 
-        # Active polling loop for Windows environment
-        for _ in range(50):
-            res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
-            res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
-            if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
-                return True
-            time.sleep(0.1)
-        else:
-            # Forceful escalation if graceful kill fails
-            subprocess.run([taskkill, "/F", "/T", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
-            subprocess.run([taskkill, "/F", "/T", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
-            time.sleep(0.5)
+    subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+    subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+    subprocess.run([taskkill, "/F", "/IM", "gost.exe"], stderr=subprocess.DEVNULL)
 
-            # Final validation check
-            res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
-            res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
-            return b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout
+    # Active polling loop for Windows environment
+    for _ in range(50):
+        res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+        res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
+        res3 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gost.exe"], capture_output=True)
+        if (
+            b"gpclient.exe" not in res1.stdout
+            and b"gpservice.exe" not in res2.stdout
+            and b"gost.exe" not in res3.stdout
+        ):
+            return True
+        time.sleep(0.1)
+    else:
+        # Forceful escalation if graceful kill fails
+        subprocess.run([taskkill, "/F", "/T", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+        subprocess.run([taskkill, "/F", "/T", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+        subprocess.run([taskkill, "/F", "/T", "/IM", "gost.exe"], stderr=subprocess.DEVNULL)
+        time.sleep(0.5)
 
-    return True
+        # Final validation check
+        res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+        res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
+        res3 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gost.exe"], capture_output=True)
+        return (
+            b"gpclient.exe" not in res1.stdout
+            and b"gpservice.exe" not in res2.stdout
+            and b"gost.exe" not in res3.stdout
+        )
 
 
 def _kill_and_poll_unix() -> bool:
