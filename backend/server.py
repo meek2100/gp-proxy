@@ -546,9 +546,12 @@ def _kill_and_poll_windows() -> bool:
     taskkill: str = shutil.which("taskkill") or str(
         Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe"
     )
+    tasklist: str = shutil.which("tasklist") or str(
+        Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "tasklist.exe"
+    )
 
-    if not os.path.exists(taskkill):
-        logger.warning("Missing required tools for process teardown (taskkill)")
+    if not os.path.exists(taskkill) or not os.path.exists(tasklist):
+        logger.warning("Missing required tools for process teardown (taskkill/tasklist)")
         return False
 
     subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
@@ -557,9 +560,9 @@ def _kill_and_poll_windows() -> bool:
 
     # Active polling loop for Windows environment
     for _ in range(50):
-        res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
-        res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
-        res3 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gost.exe"], capture_output=True)
+        res1 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+        res2 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
+        res3 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gost.exe"], capture_output=True)
         if (
             b"gpclient.exe" not in res1.stdout
             and b"gpservice.exe" not in res2.stdout
@@ -575,9 +578,9 @@ def _kill_and_poll_windows() -> bool:
         time.sleep(0.5)
 
         # Final validation check
-        res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
-        res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
-        res3 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gost.exe"], capture_output=True)
+        res1 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
+        res2 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
+        res3 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gost.exe"], capture_output=True)
         return (
             b"gpclient.exe" not in res1.stdout
             and b"gpservice.exe" not in res2.stdout
@@ -590,6 +593,7 @@ def _kill_and_poll_unix() -> bool:
     Returns: bool: True if processes successfully terminated, False otherwise."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
+    res3: subprocess.CompletedProcess[bytes]
 
     # Directly pass '-n' non-interactive flags to ensure sudo never hangs waiting for a password.
     sudo: str | None = shutil.which("sudo")
@@ -619,19 +623,22 @@ def _kill_and_poll_unix() -> bool:
     for _ in range(50):
         res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
         res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
-        if res1.returncode != 0 and res2.returncode != 0:
+        res3 = subprocess.run([*sudo_cmd, pgrep, "-x", "gost"], capture_output=True)
+        if res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0:
             return True
         time.sleep(0.1)
     else:
         # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
         subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpclient"], stderr=subprocess.DEVNULL)
         subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gost"], stderr=subprocess.DEVNULL)
         time.sleep(0.5)
 
         # Final validation check to guarantee propagation of failure
         res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
         res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
-        return res1.returncode != 0 and res2.returncode != 0
+        res3 = subprocess.run([*sudo_cmd, pgrep, "-x", "gost"], capture_output=True)
+        return res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0
 
 
 def _kill_and_poll() -> bool:

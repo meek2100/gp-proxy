@@ -614,10 +614,17 @@ chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
 
 # Determine boolean presence of auth variables for the web UI
 PROXY_AUTH_ENABLED="false"
-[[ -n "$PROXY_AUTH" ]] && PROXY_AUTH_ENABLED="true"
+if [[ -n "$PROXY_AUTH" ]] && [[ "$PROXY_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
+    PROXY_AUTH_ENABLED="true"
+fi
 
 SS_AUTH_ENABLED="false"
-[[ -n "$SS_AUTH" ]] && SS_AUTH_ENABLED="true"
+if [[ -n "$SS_AUTH" ]] && [[ "$SS_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
+    SS_AUTH_ENABLED="true"
+elif [[ "$PROXY_MODE" == *"ss"* ]]; then
+    # Shadowsocks automatically creates secure credentials entirely when omitted/invalid
+    SS_AUTH_ENABLED="true"
+fi
 
 # Ensure API_TOKEN and state booleans are definitively passed down to the server context without leaking secrets
 runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" PROXY_AUTH_ENABLED="$PROXY_AUTH_ENABLED" SS_AUTH_ENABLED="$SS_AUTH_ENABLED" \
