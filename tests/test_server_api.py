@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, Mock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
 import server
+import utils
 
 
 class TestBeacon:
@@ -69,7 +70,14 @@ class TestKillAndPoll:
     def test_kill_and_poll_windows_success(self) -> None:
         """Test Windows process killing and polling loop success."""
         with patch("sys.platform", "win32"):
-            with patch("shutil.which", side_effect=lambda x: "C:\\Windows\\System32\\" + str(x) + ".exe"):  # pyright: ignore[reportUnknownLambdaType]
+            with patch("shutil.which") as mock_which:
+                # Replace the anonymous lambda with an explicitly typed nested function
+                # to satisfy strict Pyright constraints on generic argument types.
+                def _mock_which(x: str) -> str:
+                    return f"C:\\Windows\\System32\\{x}.exe"
+
+                mock_which.side_effect = _mock_which
+
                 with patch("os.path.exists", return_value=True):
                     with patch("subprocess.run") as mock_run:
                         # Setup returns:
@@ -123,10 +131,10 @@ class TestKillAndPoll:
 
 def _create_mock_handler(path: str = "/", method: str = "GET", headers: dict[str, str] | None = None) -> Any:
     """Create an initialized mock HTTP handler."""
-    handler = server.Handler.__new__(server.Handler)  # pyright: ignore[reportUnknownArgumentType]
+    handler: Any = server.Handler.__new__(server.Handler)  # pyright: ignore
     handler.rfile = BytesIO()
     handler.wfile = BytesIO()
-    handler.headers = headers or {}  # pyright: ignore[reportAttributeAccessIssue]
+    handler.headers = headers or {}  # pyright: ignore
     handler.path = path
     handler.command = method
     handler.client_address = ("127.0.0.1", 12345)
@@ -193,7 +201,7 @@ class TestHTTPHandlerAPI:
         with patch("server.send_ipc_message", return_value=True) as mock_ipc:
             handler.do_POST()
 
-            mock_ipc.assert_called_with(server.IPC_STDIN_PORT, "mypassword123\n")
+            mock_ipc.assert_called_with(utils.IPC_STDIN_PORT, "mypassword123\n")
             handler.send_response.assert_called_with(200)
 
     def test_do_post_pair_success(self) -> None:

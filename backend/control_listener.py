@@ -35,7 +35,7 @@ def _process_connection(c: socket.socket) -> None:
         while b"\n" in buffer:
             line_bytes, buffer = buffer.split(b"\n", 1)
             try:
-                cleaned: str = line_bytes.decode("utf-8").strip()
+                cleaned: str = line_bytes.decode("utf-8", errors="replace").strip()
                 if cleaned:
                     sys.stdout.write(cleaned + "\n")
                     sys.stdout.flush()
@@ -45,7 +45,7 @@ def _process_connection(c: socket.socket) -> None:
     # Process any remaining buffer content after the connection cleanly closes
     if buffer:
         try:
-            cleaned_rem: str = buffer.decode("utf-8").strip()
+            cleaned_rem: str = buffer.decode("utf-8", errors="replace").strip()
             if cleaned_rem:
                 sys.stdout.write(cleaned_rem + "\n")
                 sys.stdout.flush()

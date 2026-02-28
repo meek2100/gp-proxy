@@ -95,6 +95,10 @@ def setup_logger(name: str) -> logging.Logger:
     return logger
 
 
+# Initialize a module-level logger to avoid locking delays on frequent IPC transactions
+ipc_logger: logging.Logger = setup_logger("ipc_client")
+
+
 def send_ipc_message(port: int, data: str) -> bool:
     """
     Perform a cross-platform socket connection to dispatch an IPC payload.
@@ -108,14 +112,13 @@ def send_ipc_message(port: int, data: str) -> bool:
     Returns:
         bool: `True` if the data was written successfully, `False` if no listener was available.
     """
-    logger: logging.Logger = setup_logger("ipc_client")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1.0)
             s.connect(("127.0.0.1", port))
             s.sendall(data.encode("utf-8"))
     except OSError as e:
-        logger.warning(f"IPC connection failed on port {port}: {e}")
+        ipc_logger.warning(f"IPC connection failed on port {port}: {e}")
         return False
     else:
         return True

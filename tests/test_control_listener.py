@@ -103,14 +103,15 @@ class TestProcessConnection:
             assert "  START  " not in output
 
     def test_process_connection_unicode_decode_error(self) -> None:
-        """Test handling of malformed UTF-8 sequences."""
+        """Test handling of malformed UTF-8 sequences (replaced with \\ufffd)."""
         mock_socket = Mock()
         mock_socket.recv.side_effect = [b"\xff\xfe\n", b"VALID\n", b""]
 
-        with patch("sys.stdout", new_callable=StringIO):
-            with patch("control_listener.logger") as mock_logger:
-                process_connection(mock_socket)
-                mock_logger.exception.assert_called()
+        with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
+            process_connection(mock_socket)
+            output = mock_stdout.getvalue()
+            assert "\ufffd\ufffd\n" in output
+            assert "VALID\n" in output
 
     def test_process_connection_remaining_buffer_processed(self) -> None:
         """Test that remaining buffer content without newline is processed."""
@@ -123,14 +124,14 @@ class TestProcessConnection:
             assert "START\n" in output
 
     def test_process_connection_remaining_buffer_malformed(self) -> None:
-        """Test handling of malformed data in remaining buffer."""
+        """Test handling of malformed data in remaining buffer (replaced with \\ufffd)."""
         mock_socket = Mock()
         mock_socket.recv.side_effect = [b"\xff\xfe", b""]
 
-        with patch("sys.stdout", new_callable=StringIO):
-            with patch("control_listener.logger") as mock_logger:
-                process_connection(mock_socket)
-                mock_logger.exception.assert_called()
+        with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
+            process_connection(mock_socket)
+            output = mock_stdout.getvalue()
+            assert "\ufffd\ufffd\n" in output
 
     def test_process_connection_large_buffer(self) -> None:
         """Test processing large amounts of data."""

@@ -13,7 +13,9 @@ import os
 # Add backend directory to path for imports
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
@@ -163,6 +165,12 @@ class TestExtractSsoUrl:
         result: str = extract_sso_url(log, 8001)
         assert result == "https://new.example.com/auth"
 
+    def test_extract_sso_url_strips_punctuation(self) -> None:
+        """Test that trailing punctuation is properly stripped from URLs."""
+        log = "Please visit https://sso.gateway.com/auth."
+        result: str = extract_sso_url(log, 8001)
+        assert result == "https://sso.gateway.com/auth"
+
     def test_extract_sso_url_no_urls(self) -> None:
         """Test handling when no URLs are present."""
         log = "Connecting to VPN..."
@@ -309,6 +317,21 @@ class TestAnalyzeLogLines:
         result: Any = analyze_log_lines(lines, "\n".join(lines))
         assert result["state"] == "connected"
 
+    def test_analyze_log_lines_gateway_timeout(self) -> None:
+        """Test that Error 512 timeout correctly registers as an explicit error."""
+        lines = ["Connecting...", "GP response error: 512"]
+        result: Any = analyze_log_lines(lines, "\n".join(lines))
+        assert result["state"] == "error"
+        assert "Gateway Rejected Connection" in result["error"]
+
+    def test_analyze_log_lines_saml_encodings(self) -> None:
+        """Test URL extraction maintains validity amidst SAML encoding strings."""
+        log_content = "auth server started please go to: https://login.corp.com/saml2/idp/SSOService.php?SAMLRequest=jZFRb4IwFIX%2F"
+        lines = [log_content]
+        result: Any = analyze_log_lines(lines, log_content)
+        assert result["state"] == "auth"
+        assert result["sso_url"] == "https://login.corp.com/saml2/idp/SSOService.php?SAMLRequest=jZFRb4IwFIX%2F"
+
     def test_analyze_log_lines_empty(self) -> None:
         """Test analysis of empty logs."""
         result: Any = analyze_log_lines([], "")
@@ -418,6 +441,44 @@ class TestStateManager:
             if temp_path.exists():
                 temp_path.unlink()
 
+    def test_state_manager_concurrency_stress(self) -> None:
+        """Test StateManager under heavy concurrent read/write load."""
+        manager: Any = StateManager()
+        stop_flag = False
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".log") as f:
+            f.write("Idle\n")
+            temp_path = Path(f.name)
+
+        def writer_thread() -> None:
+            counter = 0
+            while not stop_flag:
+                try:
+                    with open(temp_path, "w") as fw:
+                        fw.write(f"Connecting {counter}\n")
+                    time.sleep(0.001)
+                    counter += 1
+                except OSError:
+                    pass
+
+        def reader_thread() -> None:
+            for _ in range(50):
+                manager.get_cached_log_analysis(temp_path)
+                time.sleep(0.002)
+
+        t_writer = threading.Thread(target=writer_thread)
+        t_writer.start()
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(reader_thread) for _ in range(10)]
+            for fut in futures:
+                fut.result()
+
+        stop_flag = True
+        t_writer.join()
+        if temp_path.exists():
+            temp_path.unlink()
+
 
 class TestGetBestIp:
     """Test best IP address selection."""
@@ -493,11 +554,11 @@ class TestGetVpnState:
             mode_file.write_text("idle")
 
             with patch("server.MODE_FILE", mode_file):
-                with patch.dict(os.environ, {"LOG_LEVEL": "DEBUG"}):
+                with patch("server.STATIC_DEBUG_MODE", True):
                     state_debug: Any = get_vpn_state()
                     assert state_debug["debug_mode"] is True
 
-                with patch.dict(os.environ, {"LOG_LEVEL": "INFO"}):
+                with patch("server.STATIC_DEBUG_MODE", False):
                     state_info: Any = get_vpn_state()
                     assert state_info["debug_mode"] is False
 
@@ -508,7 +569,7 @@ class TestGetVpnState:
             mode_file.write_text("idle")
 
             with patch("server.MODE_FILE", mode_file):
-                with patch.dict(os.environ, {"VPN_MODE": "gateway"}):
+                with patch("server.STATIC_VPN_MODE", "gateway"):
                     state_vpn = get_vpn_state()
                     assert state_vpn["vpn_mode"] == "gateway"
 
@@ -519,15 +580,11 @@ class TestGetVpnState:
             mode_file.write_text("idle")
 
             with patch("server.MODE_FILE", mode_file):
-                with patch.dict(os.environ, {"PROXY_AUTH_ENABLED": "true"}):
+                with patch("server.STATIC_PROXY_AUTH_ENABLED", True):
                     state_auth: Any = get_vpn_state()
                     assert state_auth["proxy_auth_enabled"] is True
 
-                with patch.dict(os.environ, {"SS_AUTH_ENABLED": "true"}):
-                    state_ss: Any = get_vpn_state()
-                    assert state_ss["proxy_auth_enabled"] is True
-
-                with patch.dict(os.environ, {}, clear=True):
+                with patch("server.STATIC_PROXY_AUTH_ENABLED", False):
                     state_no_auth: Any = get_vpn_state()
                     assert state_no_auth["proxy_auth_enabled"] is False
 
@@ -572,7 +629,9 @@ class TestHandlerAuthentication:
     @staticmethod
     def _create_handler() -> Any:
         """Create a Handler instance without triggering HTTP parsing."""
-        handler: Any = Handler.__new__(Handler)
+        from typing import cast
+
+        handler: Any = cast(Any, server.Handler).__new__(server.Handler)
         handler.rfile = MagicMock()
         handler.wfile = MagicMock()
         handler.headers = {}
@@ -633,8 +692,8 @@ class TestHandlerAuthentication:
             }
             assert handler._is_authorized() is True
 
-    def test_is_authorized_ed25519_signature_expired(self) -> None:
-        """Test that expired signatures are rejected."""
+    def test_is_authorized_ed25519_signature_replay_attack(self) -> None:
+        """Test that expired signatures strictly trigger a 401 Unauthorized rejection."""
         from cryptography.hazmat.primitives.asymmetric import (
             ed25519,  # pyright: ignore[reportUnknownVariableType]
         )
@@ -644,6 +703,7 @@ class TestHandlerAuthentication:
 
         handler: Any = self._create_handler()
         handler.path = "/status.json"
+        handler.send_error = MagicMock()
 
         timestamp = int(time.time()) - 6  # Trigger strict 5-second replay validation window
         message = f"{timestamp}:/status.json".encode()
@@ -656,6 +716,8 @@ class TestHandlerAuthentication:
                 "X-Timestamp": str(timestamp),
             }
             assert handler._is_authorized() is False
+            handler.do_GET()
+            handler.send_error.assert_called_with(401, "Unauthorized")
 
 
 class TestEdgeCasesAndSecurity:
@@ -663,7 +725,9 @@ class TestEdgeCasesAndSecurity:
 
     def test_timing_safe_token_comparison(self) -> None:
         """Test that token comparison uses timing-safe comparison."""
-        handler: Any = Handler.__new__(Handler)
+        from typing import cast
+
+        handler: Any = cast(Any, Handler).__new__(Handler)
         handler.rfile = MagicMock()
         handler.wfile = MagicMock()
         handler.headers = {}
