@@ -23,6 +23,14 @@ dev = [
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+packages = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]
+addopts = "--strict-markers"
+
 # --- Tool Configurations ---
 
 [tool.ruff]
@@ -40,12 +48,16 @@ ignore_missing_imports = true
 pretty = true
 show_error_codes = true
 disable_error_code = ["import-untyped"]
+exclude = ["build/"]
 
 [tool.pyright]
 typeCheckingMode = "strict"
 reportMissingImports = false
 reportMissingTypeStubs = false
 pythonVersion = "3.14"
+include = ["backend", "tests"]
+exclude = ["**/node_modules", "**/__pycache__", "build", "dist"]
+extraPaths = ["backend"]
 
 [tool.codespell]
 skip = "*.min.js,*.min.css,*.lock,package-lock.json"

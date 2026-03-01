@@ -2,7 +2,7 @@
 # File: entrypoint.sh
 set -e
 
-# --- FIX: Ensure administrative commands (ip, iptables) are in PATH ---
+# --- FIX: Ensure administrative commands (ip, iptables, ipset) are in PATH ---
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # ==============================================================================
@@ -27,15 +27,13 @@ get_env_value() {
     echo "$val"
 }
 
-# Helper: Strip quotes and trim whitespace
-# Warning: Uses xargs, which will strip inner quotes and spaces. Unsafe for passwords.
+# Helper: Strip quotes and trim whitespace safely without collapsing internal spaces
 clean_val() {
     local val="$1"
-    val="${val%\"}"
-    val="${val#\"}"
-    val="${val%\'}"
-    val="${val#\'}"
-    echo "$val" | xargs
+    # Remove all single and double quotes
+    val="${val//[\"\']/}"
+    # Safely trim leading and trailing spaces only
+    echo "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
 # Helper: Strip outer quotes and trim leading/trailing whitespace ONLY
@@ -78,7 +76,9 @@ export VPN_GATEWAY
 # 5. DNS_SERVERS
 RAW_DNS=$(get_env_value "DNS_SERVERS" "dns_servers" "VPN_DNS" "vpn_dns")
 CLEAN_DNS=$(clean_val "$RAW_DNS")
-DNS_SERVERS=$(echo "$CLEAN_DNS" | tr ',' ' ' | xargs)
+# Translate commas to spaces natively before stripping edge whitespace
+CLEAN_DNS="${CLEAN_DNS//,/ }"
+DNS_SERVERS=$(echo "$CLEAN_DNS" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 export DNS_SERVERS
 
 # 6. GP_ARGS (Custom)
@@ -153,17 +153,53 @@ RAW_SUBNETS=$(get_env_value "ALLOWED_SUBNETS" "allowed_subnets")
 ALLOWED_SUBNETS=$(clean_val "$RAW_SUBNETS")
 export ALLOWED_SUBNETS
 
-# 16. Gost Auth
-RAW_GOST_AUTH=$(get_env_value "GOST_AUTH" "gost_auth")
-GOST_AUTH=$(clean_val_preserve_inner "$RAW_GOST_AUTH")
-export GOST_AUTH
+# 16. Proxy Auth (Accepts GOST_AUTH as legacy fallback)
+RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth" "GOST_AUTH" "gost_auth")
+PROXY_AUTH=$(clean_val_preserve_inner "$RAW_PROXY_AUTH")
 
-# 17. API Token (Optional Legacy Override)
+# 17. Shadowsocks Auth
+RAW_SS_AUTH=$(get_env_value "SS_AUTH" "ss_auth")
+SS_AUTH=$(clean_val_preserve_inner "$RAW_SS_AUTH")
+
+# Initialize a global fallback password variable for the crash redaction watchdog
+SS_DEFAULT_PASS=""
+
+# 18. API Token (Optional Legacy Override)
 RAW_API_TOKEN=$(get_env_value "API_TOKEN" "api_token")
 API_TOKEN=$(clean_val_preserve_inner "$RAW_API_TOKEN")
 if [[ -n "$API_TOKEN" ]]; then
     export API_TOKEN
 fi
+
+# 19. Proxy Mode (Multi-Protocol Support)
+RAW_PROXY_MODE=$(get_env_value "PROXY_MODE" "proxy_mode")
+CLEAN_PROXY_MODE=$(clean_val "$RAW_PROXY_MODE")
+PROXY_MODE="${CLEAN_PROXY_MODE,,}"
+[[ -z "$PROXY_MODE" ]] && PROXY_MODE="socks5"
+export PROXY_MODE
+
+# 20. Split Tunneling
+RAW_SPLIT_TUNNEL=$(get_env_value "SPLIT_TUNNEL" "split_tunnel")
+CLEAN_SPLIT=$(clean_val "$RAW_SPLIT_TUNNEL")
+if [[ "${CLEAN_SPLIT,,}" == "true" || "${CLEAN_SPLIT}" == "1" ]]; then
+    SPLIT_TUNNEL="true"
+else
+    SPLIT_TUNNEL="false"
+fi
+export SPLIT_TUNNEL
+
+# Optional Manual Overrides (Auto-detected if left empty)
+RAW_LOCAL_DNS=$(get_env_value "LOCAL_DNS" "local_dns")
+LOCAL_DNS=$(clean_val "$RAW_LOCAL_DNS")
+export LOCAL_DNS
+
+RAW_VPN_DOMAINS=$(get_env_value "VPN_DOMAINS" "vpn_domains")
+VPN_DOMAINS=$(clean_val "$RAW_VPN_DOMAINS")
+export VPN_DOMAINS
+
+RAW_VPN_SUBNETS=$(get_env_value "VPN_SUBNETS" "vpn_subnets")
+VPN_SUBNETS=$(clean_val "$RAW_VPN_SUBNETS")
+export VPN_SUBNETS
 
 # ==============================================================================
 # 2. RUNTIME SETUP
@@ -202,6 +238,17 @@ log() {
     fi
 }
 
+# --- PROXY HELPER ---
+# Parses the comma-delimited PROXY_MODE string and applies a provided callback
+for_each_proxy_mode() {
+    local callback="$1"
+    IFS=',' read -ra PROXIES <<<"$PROXY_MODE"
+    for p in "${PROXIES[@]}"; do
+        p="$(echo "$p" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+        [[ -n "$p" ]] && "$callback" "$p"
+    done
+}
+
 # --- VERBOSITY MAPPING ---
 GP_VERBOSITY=""
 if [[ "$LOG_LEVEL" == "DEBUG" ]]; then
@@ -215,9 +262,13 @@ log "INFO" "=========================================="
 log "INFO" "          GP Proxy Startup               "
 log "INFO" "=========================================="
 log "INFO" "Mode:        $VPN_MODE"
+if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+    log "INFO" "Proxy Types: $PROXY_MODE"
+fi
 log "INFO" "Log Level:   $LOG_LEVEL"
 log "INFO" "Verbosity:   ${GP_VERBOSITY:-None}"
 log "INFO" "Portal:      ${VPN_PORTAL:-[Not Set]}"
+log "INFO" "Split Route: ${SPLIT_TUNNEL} (Smart Auto-Detection)"
 if [[ -n "$VPN_GATEWAY" ]]; then
     log "INFO" "Gateway:     $VPN_GATEWAY"
 fi
@@ -233,11 +284,22 @@ else
 fi
 log "INFO" "------------------------------------------"
 
+# --- PRIVILEGE DETECTION FOR TEARDOWN ---
+SUDO_CMD=""
+if [[ "$(id -u)" -ne "0" ]]; then
+    # Dynamically inject non-interactive sudo flag if executing unprivileged and sudo is available
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        SUDO_CMD="sudo -n"
+    fi
+fi
+
 # --- GRACEFUL SHUTDOWN ---
 cleanup() {
     log "WARN" "Received Shutdown Signal"
-    sudo pkill gpclient || true
-    sudo pkill gpservice || true
+    $SUDO_CMD pkill -x gpclient || true
+    $SUDO_CMD pkill -x gpservice || true
+    $SUDO_CMD pkill -x gost || true
+    $SUDO_CMD pkill -x dnsmasq || true
     kill "$(jobs -p)" 2>/dev/null || true
     exit 0
 }
@@ -257,11 +319,86 @@ check_log_size() {
     done
 }
 
+# --- DYNAMIC PROCESS MANAGEMENT ---
+start_proxies() {
+    if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+        if ! pgrep -x gost >/dev/null; then
+            log "INFO" "Starting proxy handlers..."
+            local -a proxy_args=()
+            local auth_prefix=""
+            local ss_auth_prefix=""
+
+            if [[ -n "$PROXY_AUTH" ]]; then
+                if [[ "$PROXY_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
+                    log "INFO" "Standard Proxy Authentication Enabled."
+                    auth_prefix="${PROXY_AUTH}@"
+                else
+                    log "ERROR" "PROXY_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
+                fi
+            fi
+
+            if [[ -n "$SS_AUTH" ]]; then
+                if [[ "$SS_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
+                    log "INFO" "Shadowsocks Authentication Enabled."
+                    ss_auth_prefix="${SS_AUTH}@"
+                else
+                    log "ERROR" "SS_AUTH must be in 'cipher:password' format with no special URL characters. Ignoring."
+                fi
+            fi
+
+            # Dynamically attach multiple listeners based on PROXY_MODE using a callback closure
+            build_proxy_args() {
+                local p="$1"
+                case "$p" in
+                    socks5) proxy_args+=("-L=socks5://${auth_prefix}:1080?udp=true") ;;
+                    socks4) proxy_args+=("-L=socks4://${auth_prefix}:1084") ;;
+                    socks4a) proxy_args+=("-L=socks4a://${auth_prefix}:1085") ;;
+                    http) proxy_args+=("-L=http://${auth_prefix}:8080") ;;
+                    https) proxy_args+=("-L=https://${auth_prefix}:8443") ;;
+                    ss)
+                        if [[ -z "$ss_auth_prefix" ]]; then
+                            SS_DEFAULT_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
+
+                            # Save credentials securely inside the container so the user can retrieve them
+                            echo "Cipher: chacha20" >"$RUNTIME_DIR/ss_credentials.txt"
+                            echo "Password: ${SS_DEFAULT_PASS}" >>"$RUNTIME_DIR/ss_credentials.txt"
+                            chown gpuser:gpuser "$RUNTIME_DIR/ss_credentials.txt"
+                            chmod 600 "$RUNTIME_DIR/ss_credentials.txt"
+
+                            log "WARN" "Shadowsocks auth missing. Auto-generated credentials saved securely."
+                            log "WARN" "-> To view them, run: docker exec -it $(hostname) cat $RUNTIME_DIR/ss_credentials.txt"
+
+                            proxy_args+=("-L=ss://chacha20:${SS_DEFAULT_PASS}@:8388")
+                        else
+                            proxy_args+=("-L=ss://${ss_auth_prefix}:8388")
+                        fi
+                        ;;
+                    *) log "WARN" "Unknown proxy mode: $p" ;;
+                esac
+            }
+
+            for_each_proxy_mode build_proxy_args
+
+            if [[ ${#proxy_args[@]} -gt 0 ]]; then
+                runuser -u gpuser -- gost "${proxy_args[@]}" >>"$SERVICE_LOG" 2>&1 &
+            else
+                log "WARN" "No valid proxy modes matched. Proxy engine will not start."
+            fi
+        fi
+    fi
+}
+
 # --- WATCHDOG ---
 check_services() {
     if ! pgrep -f server.py >/dev/null; then
         log "ERROR" "CRITICAL: Web UI (server.py) died."
         exit 1
+    fi
+
+    # Liveness check for dnsmasq resolver
+    if ! pgrep -x dnsmasq >/dev/null; then
+        log "ERROR" "CRITICAL: dnsmasq died. Restarting..."
+        dnsmasq --user=root >>"$SERVICE_LOG" 2>&1 &
     fi
 
     # Liveness check for control listener to prevent pipe deadlocks
@@ -270,71 +407,57 @@ check_services() {
         runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
     fi
 
-    if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
-        if ! pgrep -x gost >/dev/null; then
-            log "ERROR" "CRITICAL: gost SOCKS proxy died unexpectedly."
-            exit 1
-        fi
-    fi
-
     local mode
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
     if [[ "$mode" == "active" ]]; then
+        if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+            if ! pgrep -x gost >/dev/null; then
+                log "ERROR" "CRITICAL: proxy engine died while VPN was active. Restarting..."
+                start_proxies
+            fi
+        fi
+
         if ! pgrep -f "gpservice" >/dev/null; then
             log "ERROR" "CRITICAL: gpservice died while VPN was active."
             log "ERROR" "--- PROCESS LIST (DEBUG) ---"
+
             # Safely escape credentials and redact from the process dump
-            if [[ -n "$GOST_AUTH" ]]; then
-                ESCAPED_AUTH=$(printf "%s" "$GOST_AUTH" | sed 's/[\/&\\]/\\&/g')
-                ps aux | sed "s/${ESCAPED_AUTH}/***REDACTED***/g" >&2
-            else
-                ps aux >&2
+            local process_dump
+            process_dump=$(ps aux)
+
+            if [[ -n "$PROXY_AUTH" ]]; then
+                process_dump="${process_dump//"$PROXY_AUTH"/***REDACTED***}"
             fi
+
+            if [[ -n "$SS_AUTH" ]]; then
+                process_dump="${process_dump//"$SS_AUTH"/***REDACTED***}"
+            fi
+
+            # Redact the dynamically generated fallback password if it was used
+            if [[ -n "$SS_DEFAULT_PASS" ]]; then
+                process_dump="${process_dump//"$SS_DEFAULT_PASS"/***REDACTED***}"
+            fi
+
+            # Defense-in-depth: Regex strip any remaining full ss:// URIs
+            process_dump=$(echo "$process_dump" | sed -E 's|ss://[^[:space:]]+|ss://***REDACTED***|g')
+
+            echo "$process_dump" >&2
             log "ERROR" "--- DUMPING LOGS (Last 50 lines) ---"
             tail -n 50 "$SERVICE_LOG" >&2
         fi
     fi
 }
 
-# --- DNS WATCHDOG ---
-dns_watchdog() {
-    local last_dns=""
-    while true; do
-        local current_dns=""
-        if [[ -f /etc/resolv.conf ]]; then
-            while read -r line; do
-                if [[ "$line" =~ ^nameserver\ +([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
-                    local ip="${BASH_REMATCH[1]}"
-                    if [[ "$ip" != "127.0.0.1" ]]; then
-                        current_dns="$ip"
-                        break
-                    fi
-                fi
-            done </etc/resolv.conf
-        fi
-
-        if [[ -n "$current_dns" ]] && [[ "$current_dns" != "$last_dns" ]]; then
-            if [[ "$current_dns" != "8.8.8.8" && "$current_dns" != "1.1.1.1" ]]; then
-                if [[ "$VPN_MODE" != "socks" ]]; then
-                    log "INFO" "VPN DNS Detected: $current_dns. Enabling Forwarding..."
-                    if [[ -n "$last_dns" ]]; then
-                        iptables -t nat -D PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
-                        iptables -t nat -D PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$last_dns" 2>/dev/null || true
-                    fi
-                    iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j DNAT --to-destination "$current_dns"
-                    iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j DNAT --to-destination "$current_dns"
-                    last_dns="$current_dns"
-                fi
-            fi
-        fi
-        sleep 5
-    done
-}
-
 # --- 1. SETUP ---
 if [[ -n "$PUID" ]]; then usermod -u "$PUID" gpuser; fi
 if [[ -n "$PGID" ]]; then groupmod -g "$PGID" gpuser; fi
+
+# Verify backend translation layer immediately and fail-fast
+if ! command -v iptables &>/dev/null; then
+    log "ERROR" "iptables command not found. Ensure iptables-nft translation is installed for correct container routing."
+    exit 1
+fi
 
 # --- 2. NETWORK & MODE DETECTION ---
 log "INFO" "Inspecting network environment..."
@@ -350,29 +473,58 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     if [[ "$IS_MACVLAN" == false ]]; then
         log "WARN" "Configuration Mismatch: '$VPN_MODE' mode requested but no Macvlan interface found."
         log "WARN" "Gateway features require a direct routable IP (Macvlan)."
-        log "WARN" ">>> REVERTING TO 'socks' MODE to ensure functionality. <<<"
-        VPN_MODE="socks"
+        log "WARN" ">>> REVERTING TO 'proxy' MODE to ensure functionality. <<<"
+        VPN_MODE="proxy"
     fi
 fi
 
-# --- 3. DNS CONFIGURATION ---
+# --- 3. BASE DNSMASQ CONFIGURATION ---
 DNS_TO_APPLY=""
-if [[ -n "$DNS_SERVERS" ]]; then
+if [[ -n "$LOCAL_DNS" ]]; then
+    DNS_TO_APPLY="$LOCAL_DNS"
+elif [[ -n "$DNS_SERVERS" ]]; then
     DNS_TO_APPLY="$DNS_SERVERS"
 elif [[ "$IS_MACVLAN" == true ]]; then
     log "INFO" "Macvlan detected. Applying fallback defaults."
     DNS_TO_APPLY="8.8.8.8 1.1.1.1"
+else
+    # Extract the original docker container DNS to use as the local fallback
+    DNS_TO_APPLY=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | grep -v "127.0.0.1" | head -n 2 | paste -sd " " || echo "8.8.8.8 1.1.1.1")
 fi
 
+log "INFO" "Base Upstream Local DNS identified as: $DNS_TO_APPLY"
+
+mkdir -p /etc/dnsmasq.d
+cat <<EOF >/etc/dnsmasq.conf
+port=53
+listen-address=0.0.0.0
+bind-interfaces
+keep-in-foreground
+conf-dir=/etc/dnsmasq.d/,*.conf
+EOF
+
 if [[ -n "$DNS_TO_APPLY" ]]; then
-    log "INFO" "Overwriting /etc/resolv.conf"
-    echo "options ndots:0" >/etc/resolv.conf
     # Using read -ra to safely split by spaces to appease shellcheck SC2086
     read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
     for ip in "${DNS_ARRAY[@]}"; do
-        echo "nameserver $ip" >>/etc/resolv.conf
+        echo "server=$ip" >>/etc/dnsmasq.conf
     done
 fi
+
+# Initialize ipset for Dynamic DNS-based Policy Routing
+if ! ipset create vpn_domains hash:ip 2>/dev/null; then
+    if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+        log "ERROR" "Failed to create ipset 'vpn_domains'. Split-tunneling requires the 'ipset' kernel module."
+        exit 1
+    fi
+fi
+
+# Instruct local container apps (like Gost) to use the dnsmasq split-router natively
+echo "options ndots:0" >/etc/resolv.conf
+echo "nameserver 127.0.0.1" >>/etc/resolv.conf
+
+# Run dnsmasq as root so it can modify the ipsets dynamically
+dnsmasq --user=root &
 
 # --- 4. NETWORK SETUP ---
 iptables -F
@@ -390,8 +542,8 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
         log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
         IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
         for subnet_raw in "${SUBNETS[@]}"; do
-            # Trim whitespace to prevent regex mismatch
-            subnet="$(echo "$subnet_raw" | xargs)"
+            # Trim whitespace safely
+            subnet="$(echo "$subnet_raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             [[ -z "$subnet" ]] && continue
 
             # Secure CIDR Validation enforcing 0-255 octets and 0-32 prefix
@@ -407,16 +559,33 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     fi
 
     iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
-elif [[ "$VPN_MODE" == "socks" ]]; then
+elif [[ "$VPN_MODE" == "proxy" ]]; then
     # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]]; then
         echo 0 >/proc/sys/net/ipv4/ip_forward
     fi
 fi
 
-if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
-    iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
-    iptables -A INPUT -p udp --dport 1080 -j ACCEPT
+if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+    setup_proxy_iptables() {
+        local p="$1"
+        case "$p" in
+            socks5)
+                iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
+                iptables -A INPUT -p udp --dport 1080 -j ACCEPT
+                ;;
+            socks4) iptables -A INPUT -p tcp --dport 1084 -j ACCEPT ;;
+            socks4a) iptables -A INPUT -p tcp --dport 1085 -j ACCEPT ;;
+            http) iptables -A INPUT -p tcp --dport 8080 -j ACCEPT ;;
+            https) iptables -A INPUT -p tcp --dport 8443 -j ACCEPT ;;
+            ss)
+                iptables -A INPUT -p tcp --dport 8388 -j ACCEPT
+                iptables -A INPUT -p udp --dport 8388 -j ACCEPT
+                ;;
+        esac
+    }
+
+    for_each_proxy_mode setup_proxy_iptables
 fi
 
 # --- 5. INIT ENVIRONMENT ---
@@ -435,7 +604,6 @@ chmod 644 "$MODE_FILE"
 
 # --- 6. START SERVICES ---
 log "INFO" "Starting Services..."
-dns_watchdog &
 
 # Setup persistent control pipe to eliminate Python interpreter startup overhead in the polling loop
 # Note: The FIFO is intentionally created and opened as root before chown so child processes
@@ -444,22 +612,22 @@ mkfifo "$RUNTIME_DIR/gp_control_pipe"
 exec 3<>"$RUNTIME_DIR/gp_control_pipe"
 chown gpuser:gpuser "$RUNTIME_DIR/gp_control_pipe"
 
-if [[ "$VPN_MODE" == "socks" || "$VPN_MODE" == "standard" ]]; then
-    gost_args="-L=socks5://:1080?udp=true"
-    if [[ -n "$GOST_AUTH" ]]; then
-        if [[ "$GOST_AUTH" =~ ^[^:@/?#]+:[^@/?#]+$ ]]; then
-            log "INFO" "SOCKS5 Authentication Enabled."
-            gost_args="-L=socks5://${GOST_AUTH}@:1080?udp=true"
-        else
-            log "ERROR" "GOST_AUTH must be in 'user:password' format with no special URL characters. Ignoring."
-            GOST_AUTH=""
-        fi
-    fi
-    runuser -u gpuser -- gost "$gost_args" >>"$SERVICE_LOG" 2>&1 &
+# Determine boolean presence of auth variables for the web UI
+PROXY_AUTH_ENABLED="false"
+if [[ -n "$PROXY_AUTH" ]] && [[ "$PROXY_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
+    PROXY_AUTH_ENABLED="true"
 fi
 
-# Ensure API_TOKEN and GOST_AUTH states are definitively passed down to the server context
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" GOST_AUTH="$GOST_AUTH" \
+SS_AUTH_ENABLED="false"
+if [[ -n "$SS_AUTH" ]] && [[ "$SS_AUTH" =~ ^[^[:space:]@/?#]+:[^[:space:]@/?#]+$ ]]; then
+    SS_AUTH_ENABLED="true"
+elif [[ "$PROXY_MODE" == *"ss"* ]]; then
+    # Shadowsocks automatically creates secure credentials entirely when omitted/invalid
+    SS_AUTH_ENABLED="true"
+fi
+
+# Ensure API_TOKEN and state booleans are definitively passed down to the server context without leaking secrets
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" PROXY_AUTH_ENABLED="$PROXY_AUTH_ENABLED" SS_AUTH_ENABLED="$SS_AUTH_ENABLED" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
 # Start persistent control listener directly bound to the pipe descriptor
@@ -481,6 +649,8 @@ while true; do
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 
+        start_proxies
+
         # 1. Start gpservice
         log "INFO" "Starting gpservice..."
         runuser -u gpuser -- bash -c "
@@ -497,6 +667,7 @@ while true; do
             VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
             VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
+            BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" \
             bash -c '
             set -o pipefail
             > "$CLIENT_LOG"
@@ -522,7 +693,7 @@ while true; do
 
             if [[ -n "$GP_ARGS" ]]; then
                 # Trust boundary: GP_ARGS is operator-controlled. Reject dangerous shell metacharacters before eval.
-                if [[ "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\] ]]; then
+                if [[ "$GP_ARGS" == *"$BASH_NL"* || "$GP_ARGS" == *"$BASH_CR"* || "$GP_ARGS" =~ [\$\(\)\;\&\|\<\>\`\\*?\{\}] ]]; then
                     echo "[Entrypoint] CRITICAL: Unsafe shell metacharacters detected. GP_ARGS rejected." >> "$SERVICE_LOG"
                 else
                     eval "set -- $GP_ARGS"
@@ -539,9 +710,10 @@ while true; do
         '
 
         # 3. Cleanup after disconnect
-        log "WARN" "gpclient exited. Cleaning up services..."
+        log "WARN" "gpclient pipeline resolved. Cleaning up services..."
         echo "idle" >"$MODE_FILE"
-        sudo pkill gpservice || true
-        log "INFO" "gpservice stopped. System Idle."
+        $SUDO_CMD pkill -x gpservice || true
+        $SUDO_CMD pkill -x gost || true
+        log "INFO" "Services stopped. System Idle."
     fi
 done

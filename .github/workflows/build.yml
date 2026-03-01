@@ -21,8 +21,12 @@ jobs:
   lint:
     uses: ./.github/workflows/lint.yml
 
-  build-and-push:
+  test:
     needs: lint
+    uses: ./.github/workflows/test.yml
+
+  build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

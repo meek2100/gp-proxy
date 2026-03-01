@@ -38,7 +38,7 @@
 
 html,
 body {
-    height: 100%;
+    min-height: 100vh;
     margin: 0;
     padding: 0;
     font-family: var(--font-family);
@@ -48,28 +48,28 @@ body {
         background-color 0.3s ease,
         color 0.3s ease;
     display: flex;
-    justify-content: center;
-    align-items: center;
+    flex-direction: column;
 }
 
 .app-container {
+    flex: 1;
     width: 100%;
-    padding: 16px;
+    /* Replaced flex vertical centering with a responsive padding calculation
+       to guarantee the top of the card is NEVER clipped off-screen */
+    padding: max(6vh, 32px) 16px 32px 16px;
     box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    display: block;
 }
 
 .card {
+    /* Margin auto centers horizontally within the block layout */
+    margin: 0 auto;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
     width: 100%;
     max-width: 480px;
-    /* Default mobile-friendly width */
     padding: 40px 32px;
     position: relative;
     text-align: center;
@@ -103,20 +103,19 @@ body {
 @media (max-width: 480px) {
     .app-container {
         padding: 0;
-        height: 100%;
-        align-items: flex-start;
     }
 
     .card {
+        margin: 0;
         border: none;
         box-shadow: none;
         border-radius: 0;
-        padding: 24px;
+        padding: 32px 24px;
         min-height: 100vh;
         min-height: 100dvh;
         display: flex;
         flex-direction: column;
-        justify-content: center;
+        justify-content: flex-start;
     }
 }
 
@@ -355,28 +354,6 @@ select:focus {
     margin-bottom: 24px;
 }
 
-/* Desktop: Side by Side */
-@media (min-width: 640px) {
-    .conn-container {
-        flex-direction: row;
-        align-items: stretch;
-    }
-
-    .conn-section {
-        flex: 1;
-    }
-
-    /* Hide tab buttons on desktop */
-    .conn-tabs {
-        display: none !important;
-    }
-
-    /* Show all contents on desktop */
-    .conn-content {
-        display: block !important;
-    }
-}
-
 .conn-section {
     background: var(--bg-body);
     border: 1px solid var(--border-color);
@@ -388,18 +365,27 @@ select:focus {
 .conn-tabs {
     display: flex;
     border-bottom: 1px solid var(--border-color);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    max-width: 100%;
+}
+
+.conn-tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .conn-tab-btn {
-    flex: 1;
+    flex: 1 0 auto;
     background: none;
     border: none;
-    padding: 12px;
+    padding: 12px 16px;
     font-size: 0.9rem;
     font-weight: 600;
     color: var(--text-secondary);
     cursor: pointer;
     border-bottom: 2px solid transparent;
+    white-space: nowrap;
 }
 
 .conn-tab-btn.active {
@@ -451,6 +437,7 @@ select:focus {
     color: var(--text-primary);
     font-size: 0.9rem;
     transition: background-color 0.2s;
+    max-width: 60%; /* Ensure long domains don't cause horizontal overflow */
 }
 
 [data-theme="dark"] .conn-val-btn {
@@ -472,11 +459,18 @@ select:focus {
     opacity: 0.4;
     width: 14px;
     height: 14px;
+    flex-shrink: 0;
 }
 
 .conn-val-btn:hover .copy-icon,
 .conn-val-btn:focus .copy-icon {
     opacity: 1;
+}
+
+.dyn-ip {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .helper-text {
@@ -490,6 +484,11 @@ select:focus {
 
 /* Utilities */
 .hidden {
+    display: none !important;
+}
+
+/* Required for JS API syncing of dynamic proxy UI containers */
+.hidden-mode {
     display: none !important;
 }
 
@@ -544,9 +543,33 @@ select:focus {
 
 .legal-footer {
     margin-top: 24px;
+    margin-bottom: 24px;
     font-size: 0.7rem;
     color: var(--text-secondary);
     max-width: 480px;
     text-align: center;
     line-height: 1.4;
+}
+
+/* Desktop: Side by Side Fluid Grid */
+@media (min-width: 640px) {
+    .conn-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+    }
+
+    /* Hide mobile tab buttons on desktop layout */
+    .conn-tabs {
+        display: none !important;
+    }
+
+    /* Reveal dynamically visible cards on desktop bypassing mobile tab restrictions */
+    .conn-section:not(.hidden-mode) {
+        display: block !important;
+    }
+
+    .conn-content {
+        display: block !important;
+    }
 }

@@ -160,98 +160,29 @@
                     <h2 style="font-size: 1.25rem; margin-bottom: 24px" tabindex="-1">Tunnel Active</h2>
 
                     <div class="conn-container">
-                        <div id="sec-socks" class="conn-section hidden">
-                            <div class="conn-tabs">
-                                <button class="conn-tab-btn active" data-tab="socks" onclick="switchTab('socks')">
-                                    SOCKS5 Proxy
-                                </button>
-                                <button class="conn-tab-btn" data-tab="gateway" onclick="switchTab('gateway')">
-                                    Transparent Gateway
-                                </button>
-                            </div>
-
-                            <div class="conn-content">
-                                <div class="conn-header">
-                                    <svg
-                                        width="20"
-                                        height="20"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        viewBox="0 0 24 24"
-                                    >
-                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                                    </svg>
-                                    SOCKS5 Proxy
-                                </div>
-                                <div class="conn-row">
-                                    <span class="conn-label">Server IP</span>
-                                    <button
-                                        type="button"
-                                        class="conn-val-btn"
-                                        onclick="copyToClip(this)"
-                                        aria-label="Copy Server IP"
-                                    >
-                                        <span class="dyn-ip">...</span>
-                                        <svg
-                                            class="copy-icon"
-                                            viewBox="0 0 24 24"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                        >
-                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                        </svg>
-                                    </button>
-                                </div>
-                                <div class="conn-row">
-                                    <span class="conn-label">Port</span>
-                                    <button
-                                        type="button"
-                                        class="conn-val-btn"
-                                        onclick="copyToClip(this)"
-                                        aria-label="Copy Port"
-                                    >
-                                        <span id="socks-port">1080</span>
-                                        <svg
-                                            class="copy-icon"
-                                            viewBox="0 0 24 24"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                        >
-                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                        </svg>
-                                    </button>
-                                </div>
-                                <div class="conn-row">
-                                    <span class="conn-label">Auth</span>
-                                    <span
-                                        id="socks-auth-text"
-                                        class="conn-val-btn"
-                                        style="cursor: default; font-size: 0.8rem"
-                                        >None (Network Allowed)</span
-                                    >
-                                </div>
-                                <div class="helper-text">
-                                    Configure your browser or app to use this SOCKS5 proxy to tunnel traffic through the
-                                    VPN.
-                                </div>
-                            </div>
+                        <div class="conn-tabs" id="tabs-container">
+                            <button class="conn-tab-btn hidden" data-tab="gateway" onclick="switchTab('gateway')">
+                                Gateway
+                            </button>
+                            <button class="conn-tab-btn hidden active" data-tab="socks5" onclick="switchTab('socks5')">
+                                SOCKS5
+                            </button>
+                            <button class="conn-tab-btn hidden" data-tab="socks4" onclick="switchTab('socks4')">
+                                SOCKS4
+                            </button>
+                            <button class="conn-tab-btn hidden" data-tab="socks4a" onclick="switchTab('socks4a')">
+                                SOCKS4A
+                            </button>
+                            <button class="conn-tab-btn hidden" data-tab="http" onclick="switchTab('http')">
+                                HTTP
+                            </button>
+                            <button class="conn-tab-btn hidden" data-tab="https" onclick="switchTab('https')">
+                                HTTPS
+                            </button>
+                            <button class="conn-tab-btn hidden" data-tab="ss" onclick="switchTab('ss')">SS</button>
                         </div>
 
-                        <div id="sec-gateway" class="conn-section hidden">
-                            <div class="conn-tabs">
-                                <button class="conn-tab-btn" data-tab="socks" onclick="switchTab('socks')">
-                                    SOCKS5 Proxy
-                                </button>
-                                <button class="conn-tab-btn active" data-tab="gateway" onclick="switchTab('gateway')">
-                                    Transparent Gateway
-                                </button>
-                            </div>
-
+                        <div id="sec-gateway" class="conn-section hidden-mode" data-tab="gateway">
                             <div class="conn-content">
                                 <div class="conn-header">
                                     <svg
@@ -266,7 +197,7 @@
                                         <path d="M4 4a16 16 0 0 1 16 16"></path>
                                         <circle cx="5" cy="19" r="1"></circle>
                                     </svg>
-                                    Gateway
+                                    Transparent Gateway
                                 </div>
                                 <div class="conn-row">
                                     <span class="conn-label">Gateway IP</span>
@@ -334,6 +265,419 @@
                                 <div class="helper-text">
                                     Set your device's <b>Default Gateway</b> and <b>DNS</b> to this IP to route all
                                     traffic through VPN.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-socks5" class="conn-section hidden-mode" data-tab="socks5">
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    </svg>
+                                    SOCKS5 Proxy
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Proxy IP</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Proxy IP"
+                                    >
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Port</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Port"
+                                    >
+                                        <span id="socks-port">1080</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Auth</span>
+                                    <span
+                                        class="conn-val-btn proxy-auth-text"
+                                        style="cursor: default; font-size: 0.8rem"
+                                        >None (Network Allowed)</span
+                                    >
+                                </div>
+                                <div class="helper-text">
+                                    Configure your browser or app to use this SOCKS5 proxy to tunnel traffic through the
+                                    VPN.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-socks4" class="conn-section hidden-mode" data-tab="socks4">
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    </svg>
+                                    SOCKS4 Proxy
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Proxy IP</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Proxy IP"
+                                    >
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Port</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Port"
+                                    >
+                                        <span>1084</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="helper-text">
+                                    Configure your legacy app to use this TCP SOCKS4 proxy to tunnel traffic through the
+                                    VPN.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-socks4a" class="conn-section hidden-mode" data-tab="socks4a">
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    </svg>
+                                    SOCKS4A Proxy
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Proxy IP</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Proxy IP"
+                                    >
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Port</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Port"
+                                    >
+                                        <span>1085</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="helper-text">
+                                    Configure your legacy app to use this TCP SOCKS4a proxy to tunnel traffic through
+                                    the VPN.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-http" class="conn-section hidden-mode" data-tab="http">
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    </svg>
+                                    HTTP Proxy
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Proxy IP</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Proxy IP"
+                                    >
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Port</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Port"
+                                    >
+                                        <span>8080</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Auth</span>
+                                    <span
+                                        class="conn-val-btn proxy-auth-text"
+                                        style="cursor: default; font-size: 0.8rem"
+                                        >None (Network Allowed)</span
+                                    >
+                                </div>
+                                <div class="helper-text">
+                                    Configure your browser or system to use this standard HTTP proxy.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-https" class="conn-section hidden-mode" data-tab="https">
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    </svg>
+                                    HTTPS Proxy
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Proxy IP</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Proxy IP"
+                                    >
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Port</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Port"
+                                    >
+                                        <span>8443</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Auth</span>
+                                    <span
+                                        class="conn-val-btn proxy-auth-text"
+                                        style="cursor: default; font-size: 0.8rem"
+                                        >None (Network Allowed)</span
+                                    >
+                                </div>
+                                <div class="helper-text">
+                                    Configure your system to use this TLS-encrypted HTTP proxy.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="sec-ss" class="conn-section hidden-mode" data-tab="ss">
+                            <div class="conn-content">
+                                <div class="conn-header">
+                                    <svg
+                                        width="20"
+                                        height="20"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                    </svg>
+                                    Shadowsocks
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Proxy IP</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Proxy IP"
+                                    >
+                                        <span class="dyn-ip">...</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Port</span>
+                                    <button
+                                        type="button"
+                                        class="conn-val-btn"
+                                        onclick="copyToClip(this)"
+                                        aria-label="Copy Port"
+                                    >
+                                        <span>8388</span>
+                                        <svg
+                                            class="copy-icon"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="2"
+                                        >
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="conn-row">
+                                    <span class="conn-label">Cipher</span>
+                                    <span
+                                        class="conn-val-btn proxy-auth-text"
+                                        style="cursor: default; font-size: 0.8rem"
+                                        >See Env Config</span
+                                    >
+                                </div>
+                                <div class="helper-text">
+                                    Shadowsocks encrypted proxy. Your GOST_AUTH acts as the method:password variable.
                                 </div>
                             </div>
                         </div>

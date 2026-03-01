@@ -35,7 +35,7 @@ def _process_connection(c: socket.socket) -> None:
         while b"\n" in buffer:
             line_bytes, buffer = buffer.split(b"\n", 1)
             try:
-                cleaned: str = line_bytes.decode("utf-8").strip()
+                cleaned: str = line_bytes.decode("utf-8", errors="replace").strip()
                 if cleaned:
                     sys.stdout.write(cleaned + "\n")
                     sys.stdout.flush()
@@ -45,7 +45,7 @@ def _process_connection(c: socket.socket) -> None:
     # Process any remaining buffer content after the connection cleanly closes
     if buffer:
         try:
-            cleaned_rem: str = buffer.decode("utf-8").strip()
+            cleaned_rem: str = buffer.decode("utf-8", errors="replace").strip()
             if cleaned_rem:
                 sys.stdout.write(cleaned_rem + "\n")
                 sys.stdout.flush()
@@ -55,7 +55,13 @@ def _process_connection(c: socket.socket) -> None:
 
 def _run_server_loop(s: socket.socket) -> None:
     """
-    Maintains the non-blocking accept loop for incoming IPC connections.
+    Run the non-blocking accept loop that handles incoming IPC connections.
+
+    Polls the listening socket with a 2.0 second timeout to remain interruptible,
+    accepts ready connections, sets a 5.0 second timeout on each client socket,
+    and processes each connection via _process_connection. Transient socket errors
+    (e.g., OSError or TimeoutError) are logged and the loop continues; a KeyboardInterrupt
+    triggers a clean exit.
     """
     while True:
         try:
@@ -67,7 +73,7 @@ def _run_server_loop(s: socket.socket) -> None:
                 c.settimeout(5.0)  # Prevent zombie connections from dead senders
                 with c:
                     _process_connection(c)
-        except OSError as exc:
+        except (OSError, TimeoutError) as exc:  # fmt: skip
             # Log transient socket errors and continue the daemon loop
             logger.warning(f"Socket error: {exc}")
         except KeyboardInterrupt:

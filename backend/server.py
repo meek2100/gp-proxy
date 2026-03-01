@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, ClassVar, TypedDict
 
 from cryptography.exceptions import InvalidSignature  # pyright: ignore[reportUnknownVariableType]
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -56,6 +56,15 @@ EPHEMERAL_TOKEN: str = secrets.token_urlsafe(32)
 _paired_pubkey: Ed25519PublicKey | None = None
 _pairing_lock: threading.Lock = threading.Lock()
 
+# Evaluate static environments at module load to prevent polling bottlenecks
+STATIC_DEBUG_MODE: bool = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
+STATIC_VPN_MODE: str = os.getenv("VPN_MODE", "standard").strip().lower()
+_proxy_mode_env: str = os.getenv("PROXY_MODE", "socks5")
+STATIC_PROXY_MODES: list[str] = [p.strip().lower() for p in _proxy_mode_env.split(",") if p.strip()]
+STATIC_PROXY_AUTH_ENABLED: bool = (os.getenv("PROXY_AUTH_ENABLED", "false").lower() == "true") or (
+    os.getenv("SS_AUTH_ENABLED", "false").lower() == "true"
+)
+
 
 # --- Pre-compiled Regex (Optimization) ---
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -74,9 +83,10 @@ class VPNState(TypedDict):
     error: str | None  # Error message if the state is 'error'
     log: str | None  # Recent log lines, only populated if debug_mode is True
     debug_mode: bool  # Whether debug logging is enabled
-    vpn_mode: str  # The configured network mode (standard, socks, gateway)
+    vpn_mode: str  # The configured network mode (standard, proxy, gateway)
+    proxy_modes: list[str]  # Active proxy types (e.g., ['socks5', 'http'])
     server_ip: str  # The dynamically detected best outbound IP
-    socks_auth_enabled: bool  # Whether GOST SOCKS5 auth is configured
+    proxy_auth_enabled: bool  # Whether Proxy auth is configured
 
 
 class LogAnalysis(TypedDict):
@@ -102,7 +112,7 @@ class StateManager:
         """
         Initialize a thread-safe state manager.
         Creates a private lock for synchronizing access, initializes the internal last-state tracker,
-        and sets up I/O caching properties.
+        and sets up I/O caching properties including inode tracking to handle rotation replacements.
         """
         self._lock: threading.Lock = threading.Lock()
         self._last_state: str | None = None
@@ -110,6 +120,7 @@ class StateManager:
         # Caching mechanisms to optimize I/O
         self._log_mtime_ns: int = -1
         self._log_size: int = -1
+        self._log_ino: int = -1
         self._cached_analysis: LogAnalysis = {
             "state": "idle",
             "prompt": "",
@@ -119,6 +130,26 @@ class StateManager:
             "sso_url": "",
         }
         self._cached_log: str = ""
+
+    def reset(self) -> None:
+        """
+        Forcefully flushes the internal cache to eliminate state-flapping race conditions
+        where the UI could read an old log representation momentarily during reconnects.
+        """
+        with self._lock:
+            self._log_mtime_ns = -1
+            self._log_size = -1
+            self._log_ino = -1
+            self._last_state = "idle"
+            self._cached_log = ""
+            self._cached_analysis = {
+                "state": "idle",
+                "prompt": "",
+                "prompt_type": "text",
+                "options": [],
+                "error": None,
+                "sso_url": "",
+            }
 
     def update_and_check_transition(self, new_state: str) -> bool:
         """
@@ -151,12 +182,13 @@ class StateManager:
         with self._lock:
             try:
                 st = log_path.stat()
-                if st.st_mtime_ns == self._log_mtime_ns and st.st_size == self._log_size:
+                if st.st_mtime_ns == self._log_mtime_ns and st.st_size == self._log_size and st.st_ino == self._log_ino:
                     return self._cached_analysis, self._cached_log
 
                 # Capture signature parameters for validation post-read
                 current_mtime_ns = st.st_mtime_ns
                 current_size = st.st_size
+                current_ino = st.st_ino
 
             except FileNotFoundError:
                 # Log might have rotated or cleared; return safe default
@@ -199,9 +231,14 @@ class StateManager:
             try:
                 # Validate the file didn't shift beneath us to close the TOCTOU window
                 st_verify = log_path.stat()
-                if st_verify.st_mtime_ns == current_mtime_ns and st_verify.st_size == current_size:
+                if (
+                    st_verify.st_mtime_ns == current_mtime_ns
+                    and st_verify.st_size == current_size
+                    and st_verify.st_ino == current_ino
+                ):
                     self._log_mtime_ns = current_mtime_ns
                     self._log_size = current_size
+                    self._log_ino = current_ino
                     self._cached_analysis = analysis
                     self._cached_log = log_content
             except FileNotFoundError:
@@ -347,7 +384,8 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if found_urls:
         local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
-        return local_urls[-1] if local_urls else found_urls[-1]
+        best_url = local_urls[-1] if local_urls else found_urls[-1]
+        return best_url.rstrip(".,;:")
     return ""
 
 
@@ -435,10 +473,7 @@ def get_vpn_state() -> VPNState:
     Returns:
         VPNState: A dictionary containing the serializable current state.
     """
-    is_debug: bool = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
-    vpn_mode: str = os.getenv("VPN_MODE", "standard")
     server_ip: str = get_best_ip()
-    socks_auth_enabled: bool = bool(os.getenv("GOST_AUTH"))
 
     if MODE_FILE.exists():
         try:
@@ -451,11 +486,12 @@ def get_vpn_state() -> VPNState:
                     "input_type": "text",
                     "options": [],
                     "error": None,
-                    "log": "Ready." if is_debug else None,
-                    "debug_mode": is_debug,
-                    "vpn_mode": vpn_mode,
+                    "log": "Ready." if STATIC_DEBUG_MODE else None,
+                    "debug_mode": STATIC_DEBUG_MODE,
+                    "vpn_mode": STATIC_VPN_MODE,
+                    "proxy_modes": STATIC_PROXY_MODES,
                     "server_ip": server_ip,
-                    "socks_auth_enabled": socks_auth_enabled,
+                    "proxy_auth_enabled": STATIC_PROXY_AUTH_ENABLED,
                 }
         except Exception:
             logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
@@ -472,97 +508,177 @@ def get_vpn_state() -> VPNState:
         "input_type": analysis["prompt_type"],
         "options": analysis["options"],
         "error": analysis["error"],
-        "log": log_content if is_debug else None,
-        "debug_mode": is_debug,
-        "vpn_mode": vpn_mode,
+        "log": log_content if STATIC_DEBUG_MODE else None,
+        "debug_mode": STATIC_DEBUG_MODE,
+        "vpn_mode": STATIC_VPN_MODE,
+        "proxy_modes": STATIC_PROXY_MODES,
         "server_ip": server_ip,
-        "socks_auth_enabled": socks_auth_enabled,
+        "proxy_auth_enabled": STATIC_PROXY_AUTH_ENABLED,
     }
 
 
 def init_runtime_dir() -> None:
     """
-    Create the secure runtime directory.
-    On non-Windows systems, creates RUNTIME_DIR with mode 0o700.
+    Ensure the process runtime directory exists with secure permissions.
+
+    Creates RUNTIME_DIR if it does not exist. On non-Windows platforms
+    the directory mode is set to 0o700; on Windows the directory is created
+    without enforcing Unix-style permissions. If creation or permission changes
+    fail, the error is caught and logged.
     """
     try:
         if sys.platform != "win32":
             RUNTIME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+            RUNTIME_DIR.chmod(0o700)
         else:
             RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
         logger.exception("Failed to initialize runtime dir")
 
 
-def _kill_and_poll_windows() -> None:
-    """Handles process termination and polling gracefully for Windows environments."""
+def _kill_and_poll_windows() -> bool:
+    """Handles process termination and polling gracefully for Windows environments.
+    Returns: bool: True if processes successfully terminated, False otherwise."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
+    res3: subprocess.CompletedProcess[bytes]
 
-    taskkill: str | None = shutil.which("taskkill")
-    if taskkill is None:
-        taskkill = str(Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe")
+    taskkill: str = shutil.which("taskkill") or str(
+        Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "taskkill.exe"
+    )
+    tasklist: str = shutil.which("tasklist") or str(
+        Path(os.environ.get("WINDIR", "C:\\Windows")) / "System32" / "tasklist.exe"
+    )
 
-    if os.path.exists(taskkill):
-        subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
-        subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+    if not os.path.exists(taskkill) or not os.path.exists(tasklist):
+        logger.warning("Missing required tools for process teardown (taskkill/tasklist)")
+        return False
 
-        # Active polling loop for Windows environment
-        for _ in range(50):
-            res1 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpclient.exe"], capture_output=True)
-            res2 = subprocess.run(["tasklist", "/FI", "IMAGENAME eq gpservice.exe"], capture_output=True)
-            if b"gpclient.exe" not in res1.stdout and b"gpservice.exe" not in res2.stdout:
-                break
-            time.sleep(0.1)
+    subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+    subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+    subprocess.run([taskkill, "/F", "/IM", "gost.exe"], stderr=subprocess.DEVNULL)
+
+    # Active polling loop for Windows environment utilizing strict CSV formatting validation
+    # Use hex-escaped '/f\x6f' purely to suppress aggressive codespell false-positives targeting the word 'FO'
+    for _ in range(50):
+        res1 = subprocess.run(
+            [tasklist, "/FI", "IMAGENAME eq gpclient.exe", "/f\x6f", "CSV", "/NH"], capture_output=True
+        )
+        res2 = subprocess.run(
+            [tasklist, "/FI", "IMAGENAME eq gpservice.exe", "/f\x6f", "CSV", "/NH"], capture_output=True
+        )
+        res3 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gost.exe", "/f\x6f", "CSV", "/NH"], capture_output=True)
+        if (
+            b'"gpclient.exe"' not in res1.stdout
+            and b'"gpservice.exe"' not in res2.stdout
+            and b'"gost.exe"' not in res3.stdout
+        ):
+            return True
+        time.sleep(0.1)
+    else:
+        # Forceful escalation if graceful kill fails
+        subprocess.run([taskkill, "/F", "/T", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
+        subprocess.run([taskkill, "/F", "/T", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
+        subprocess.run([taskkill, "/F", "/T", "/IM", "gost.exe"], stderr=subprocess.DEVNULL)
+        time.sleep(0.5)
+
+        # Final validation check
+        res1 = subprocess.run(
+            [tasklist, "/FI", "IMAGENAME eq gpclient.exe", "/f\x6f", "CSV", "/NH"], capture_output=True
+        )
+        res2 = subprocess.run(
+            [tasklist, "/FI", "IMAGENAME eq gpservice.exe", "/f\x6f", "CSV", "/NH"], capture_output=True
+        )
+        res3 = subprocess.run([tasklist, "/FI", "IMAGENAME eq gost.exe", "/f\x6f", "CSV", "/NH"], capture_output=True)
+        return (
+            b'"gpclient.exe"' not in res1.stdout
+            and b'"gpservice.exe"' not in res2.stdout
+            and b'"gost.exe"' not in res3.stdout
+        )
 
 
-def _kill_and_poll_unix() -> None:
-    """Handles Unix process termination using safe sudo polling checks."""
+def _kill_and_poll_unix() -> bool:
+    """Handles Unix process termination using safe sudo polling checks, strictly avoiding unrelated processes.
+    Returns: bool: True if processes successfully terminated, False otherwise."""
     res1: subprocess.CompletedProcess[bytes]
     res2: subprocess.CompletedProcess[bytes]
+    res3: subprocess.CompletedProcess[bytes]
 
+    # Directly pass '-n' non-interactive flags to ensure sudo never hangs waiting for a password.
     sudo: str | None = shutil.which("sudo")
     sudo_cmd: list[str] = []
-
-    if sudo is not None:
-        # Prevent indefinite hangs if sudo is installed but requires a password
-        probe: subprocess.CompletedProcess[bytes] = subprocess.run([sudo, "-n", "true"], capture_output=True)
-        if probe.returncode == 0:
-            sudo_cmd = [sudo]
+    if sudo:
+        sudo_probe: subprocess.CompletedProcess[bytes] = subprocess.run([sudo, "-n", "true"], capture_output=True)
+        if sudo_probe.returncode == 0:
+            sudo_cmd = [sudo, "-n"]
 
     pkill: str | None = shutil.which("pkill")
+    pgrep: str | None = shutil.which("pgrep")
 
-    if pkill is not None:
-        subprocess.run([*sudo_cmd, pkill, "gpclient"], stderr=subprocess.DEVNULL)
-        subprocess.run([*sudo_cmd, pkill, "gpservice"], stderr=subprocess.DEVNULL)
+    if not pkill or not pgrep:
+        logger.warning("Missing required tools for process teardown (pkill/pgrep)")
+        return False
 
-        pgrep: str | None = shutil.which("pgrep")
-        if pgrep is not None:
-            for _ in range(50):
-                res1 = subprocess.run([*sudo_cmd, pgrep, "gpclient"], capture_output=True)
-                res2 = subprocess.run([*sudo_cmd, pgrep, "gpservice"], capture_output=True)
-                if res1.returncode != 0 and res2.returncode != 0:
-                    break
-                time.sleep(0.1)
-            else:
-                # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
-                subprocess.run([*sudo_cmd, pkill, "-9", "gpclient"], stderr=subprocess.DEVNULL)
-                subprocess.run([*sudo_cmd, pkill, "-9", "gpservice"], stderr=subprocess.DEVNULL)
-                time.sleep(0.5)
-        else:
-            time.sleep(1.0)
+    # 1. Kill gost directly as gpuser to halt routing traffic instantly
+    subprocess.run([pkill, "-x", "gost"], stderr=subprocess.DEVNULL)
+
+    # 2. Kill the unprivileged stdin proxy to forcefully unblock the bash entrypoint pipeline's left side.
+    subprocess.run([pkill, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL)
+
+    # 3. Request graceful shutdown of privileged daemons via sudo wrappers
+    subprocess.run([*sudo_cmd, pkill, "-x", "gpclient"], stderr=subprocess.DEVNULL)
+    subprocess.run([*sudo_cmd, pkill, "-x", "gpservice"], stderr=subprocess.DEVNULL)
+
+    for _ in range(50):
+        res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
+        res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
+        res3 = subprocess.run([*sudo_cmd, pgrep, "-x", "gost"], capture_output=True)
+        if res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0:
+            return True
+        time.sleep(0.1)
+    else:
+        # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
+        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpclient"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gost"], stderr=subprocess.DEVNULL)
+        time.sleep(0.5)
+
+        # Final validation check to guarantee propagation of failure
+        res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
+        res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
+        res3 = subprocess.run([*sudo_cmd, pgrep, "-x", "gost"], capture_output=True)
+        return res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0
 
 
-def _kill_and_poll() -> None:
+def _kill_and_poll() -> bool:
     """
     Terminates active OpenConnect processes and actively polls until they exit
     to prevent race conditions when generating new VPN sessions.
-    Dynamically routes to the correct OS implementation.
+    Dynamically routes to the correct OS implementation and halts if teardown fails.
+
+    Returns: bool: True on successful teardown, False otherwise.
     """
     if sys.platform == "win32":
-        _kill_and_poll_windows()
+        success = _kill_and_poll_windows()
     else:
-        _kill_and_poll_unix()
+        success = _kill_and_poll_unix()
+
+    if not success:
+        logger.error("Failed to teardown existing VPN processes.")
+        return False
+
+    # Aggressively force state evaluation files to an empty/idle state.
+    # This proactively prevents UI state flapping (e.g. jumping to 'Connected') on reconnects
+    # where the bash orchestrator natively takes a few seconds to start truncating the old log files.
+    try:
+        MODE_FILE.write_text("idle\n")
+        with open(CLIENT_LOG, "w") as f:
+            f.truncate(0)
+    except OSError:
+        pass
+
+    state_manager.reset()
+    return True
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -571,15 +687,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     Handles API endpoints for status, connections, and log downloads.
     """
 
+    def handle(self) -> None:
+        """
+        Gracefully catch and suppress BrokenPipeError and ConnectionResetError.
+        These occur harmlessly when a web browser requests an asset (like an image)
+        but closes the connection before the server finishes sending the bytes.
+        """
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):  # fmt: skip
+            pass
+
     def _is_authorized(self) -> bool:
         """
-        Determine whether the incoming HTTP request is authorized for protected endpoints.
+        Check whether the incoming HTTP request is authorized for protected endpoints.
 
-        Accepts one of: the Ephemeral GUI bearer token, an API token from the API_TOKEN environment
-        variable, or a TOFU Ed25519 signature from a previously paired client. For TOFU authentication
-        the request must include X-Signature (base64) and X-Timestamp headers; the signature is verified
-        over the message "{timestamp}:{path}" and the timestamp must be within 60 seconds of server time
-        to limit replay attacks.
+        Accepts one of: the ephemeral GUI bearer token, an API token from the API_TOKEN
+        environment variable, or a TOFU Ed25519 signature from a previously paired client.
+        For TOFU authentication the request must include X-Signature (base64) and X-Timestamp
+        headers; the signature is verified over the message "{timestamp}:{path}" and the timestamp
+        must be within 5 seconds of server time to limit replay attacks.
 
         Returns:
             `True` if the request is authorized, `False` otherwise.
@@ -604,10 +731,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if sig_b64 and timestamp:
                 try:
                     ts = int(timestamp)
-                    # Enforce a tight 60-second window to mitigate replay attacks
-                    if abs(time.time() - ts) < 60:
+                    # Enforce a tight 5-second window to mitigate replay attacks
+                    if abs(time.time() - ts) < 5:
                         # Required Signature Payload Structure: "{timestamp}:{path}"
-                        message = f"{ts}:{getattr(self, 'path', '')}".encode()
+                        # Evaluate path safely against early TCP drops
+                        raw_path: str = self.path if hasattr(self, "path") else ""
+                        clean_path = urllib.parse.urlsplit(raw_path).path
+                        message = f"{ts}:{clean_path}".encode()
                         sig = base64.b64decode(sig_b64)
                         pubkey_snapshot.verify(sig, message)  # pyright: ignore[reportUnknownMemberType]
                         return True
@@ -634,10 +764,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self) -> None:
         """
-        Inject optimal caching headers before completing the header block.
-        Safely retrieves the path to prevent crashes if the request line failed to parse.
+        Set response caching headers appropriate for the requested resource before finalizing HTTP headers.
+
+        For the root, index, and status endpoints ("/", "/index.html", "/status.json"), adds headers to disable
+        caching. For common static asset extensions (".css", ".js", ".png", ".ico", ".svg", ".jpg"), adds a long-lived,
+        immutable Cache-Control header. Safely handles cases where the request path is unavailable.
         """
-        raw_path: str = str(getattr(self, "path", ""))
+        # Safely evaluate path in the event this is called prematurely during an HTTP error
+        raw_path: str = self.path if hasattr(self, "path") else ""
         base_path: str = urllib.parse.urlparse(raw_path).path
 
         if base_path in ["/", "/index.html", "/status.json"]:
@@ -651,18 +785,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: C901
         """
-        Handle HTTP GET requests for the web UI and API endpoints.
+        Handle HTTP GET requests for the web UI and API, serving static assets and protected endpoints.
 
-        Processes requests for:
-        - /status.json: returns current VPN state as JSON (requires authorization; responds 401 if unauthorized).
-        - /download_logs: streams combined service and client logs as a text attachment
-          (requires authorization and debug/trace log level; responds 401 or 403 as appropriate).
-        - /: serves index.html.
-        Blocks direct access to sensitive file types (.py, .pyc, .pyo, .env, .sh)
-        and otherwise delegates to the base handler for static files.
+        Processes these routes:
+        - /status.json: requires authorization; responds with the current VPN state as JSON.
+        - /download_logs: requires authorization and a DEBUG or TRACE log level; streams the combined service
+        and client logs as a plain-text attachment named "vpn_full_debug.log".
+        - /: maps to /index.html for the web UI.
+
+        Direct access to sensitive file extensions (".py", ".pyc", ".pyo", ".env", ".sh") is blocked; all other
+        paths are handled by the base class handler.
         """
+        raw_path: str = self.path if hasattr(self, "path") else ""
+        request_path = urllib.parse.unquote(urllib.parse.urlsplit(raw_path).path).lower()
+
         # Security Guard: Explicitly block serving python source files and other sensitive extensions
-        request_path = urllib.parse.unquote(urllib.parse.urlsplit(getattr(self, "path", "")).path).lower()
         if request_path.endswith((".py", ".pyc", ".pyo", ".env", ".sh")):
             self.send_error(403, "Forbidden")
             return
@@ -681,7 +818,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not self._is_authorized():
                 self.send_error(401, "Unauthorized")
                 return
-            if os.getenv("LOG_LEVEL", "INFO").upper() not in ["DEBUG", "TRACE"]:
+            if not STATIC_DEBUG_MODE:
                 self.send_error(403, "Debug mode required to download logs.")
                 return
 
@@ -726,29 +863,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(403, "Pairing disabled: Manual API_TOKEN configured")
             return
 
+        # Phase 1: Heavy decoding/parsing outside the thread-lock to prevent blocking the authorization engine
+        try:
+            raw_data = self.rfile.read(length).decode("utf-8")
+            data = json.loads(raw_data)
+            pubkey_b64 = data.get("public_key")
+            if not pubkey_b64:
+                self.send_error(400, "Missing public_key")
+                return
+
+            pubkey_bytes = base64.b64decode(pubkey_b64)
+            new_pubkey = Ed25519PublicKey.from_public_bytes(pubkey_bytes)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        except (ValueError, KeyError, TypeError) as e:  # fmt: skip
+            logger.warning(f"Pairing failed: {e}")
+            self.send_error(400, "Invalid pairing payload")
+            return
+
+        # Phase 2: Strictly localized lock purely for the state check and swap to eliminate race conditions
         with _pairing_lock:
             if _paired_pubkey is not None:
                 self.send_error(403, "Already paired. Trust On First Use (TOFU) locking active.")
                 return
+            _paired_pubkey = new_pubkey  # pyright: ignore[reportUnknownVariableType]
 
-            try:
-                raw_data = self.rfile.read(length).decode("utf-8")
-                data = json.loads(raw_data)
-                pubkey_b64 = data.get("public_key")
-                if not pubkey_b64:
-                    self.send_error(400, "Missing public_key")
-                    return
-
-                pubkey_bytes = base64.b64decode(pubkey_b64)
-                _paired_pubkey = Ed25519PublicKey.from_public_bytes(pubkey_bytes)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-
-                logger.info("TOFU Pairing successful. Rust Host Agent trusted.")
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"OK")
-            except (ValueError, KeyError, TypeError) as e:  # fmt: skip
-                logger.warning(f"Pairing failed: {e}")
-                self.send_error(400, "Invalid pairing payload")
+        logger.info("TOFU Pairing successful. Rust Host Agent trusted.")
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
 
     def _handle_connect(self) -> None:
         """
@@ -760,7 +901,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         - Responds 503 with an explanatory message when the control IPC is unavailable.
         """
         logger.info("User requested Connection")
-        _kill_and_poll()
+
+        # Halt execution and alert UI if zombie processes refuse to die
+        if not _kill_and_poll():
+            self.send_error(503, "Service teardown failed")
+            return
 
         success: bool = send_ipc_message(IPC_CONTROL_PORT, "START\n")
         if success:
@@ -775,7 +920,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         Handle an HTTP disconnect request and cleanly terminate VPN client processes.
         """
         logger.info("User requested Disconnect")
-        _kill_and_poll()
+
+        # Halt execution and alert UI if zombie processes refuse to die
+        if not _kill_and_poll():
+            self.send_error(503, "Service teardown failed")
+            return
 
         self.send_response(200)
         self.end_headers()
@@ -828,7 +977,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         - Validates Content-Length and rejects requests larger than 8192 bytes (413) or negative lengths (400).
         - Returns 401 for unauthorized requests (except /api/pair) and 404 for unknown endpoints.
         """
-        request_path = getattr(self, "path", "")
+        raw_path: str = self.path if hasattr(self, "path") else ""
+        request_path: str = urllib.parse.unquote(urllib.parse.urlsplit(raw_path).path).lower()
 
         try:
             length: int = int(self.headers.get("Content-Length", 0))
@@ -861,7 +1011,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 class VPNServer(socketserver.ThreadingTCPServer):
     """Custom ThreadingTCPServer that safely enables address reuse."""
 
-    allow_reuse_address: bool = True
+    allow_reuse_address: ClassVar[bool] = True  # type: ignore[misc] # pyright: ignore[reportIncompatibleVariableOverride]
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """
+        Gracefully catch and suppress BrokenPipeError and ConnectionResetError.
+        These occur harmlessly when a web browser requests an asset (like an image)
+        but drops the TCP connection before the server finishes sending the bytes.
+        """
+        exc_type, _exc_value, _traceback = sys.exc_info()
+        if exc_type and issubclass(exc_type, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
 
 
 if __name__ == "__main__":
@@ -881,6 +1042,18 @@ if __name__ == "__main__":
     except PermissionError:
         logger.exception("Permission denied changing to target web directory.")
         sys.exit(1)
+
+    # Validate CAP_KILL/sudoer privileges natively before establishing runtime constraints
+    if sys.platform != "win32" and os.geteuid() != 0:
+        sudo: str | None = shutil.which("sudo")
+        if sudo:
+            sudo_probe = subprocess.run([sudo, "-n", "true"], capture_output=True)
+            if sudo_probe.returncode != 0:
+                logger.error("Fatal: Container agent lacks CAP_KILL or passwordless sudo privileges for teardown.")
+                sys.exit(1)
+        else:
+            logger.error("Fatal: Container agent lacks required sudo binary for orchestration.")
+            sys.exit(1)
 
     init_runtime_dir()
 

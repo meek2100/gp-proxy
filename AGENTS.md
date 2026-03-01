@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-This project encapsulates a GP-compatible VPN client inside a Docker container, exposing it via a SOCKS5 proxy (`gost`) on port 1080 and a Transparent Gateway. It utilizes a "Split-Agent" architecture where a secure **Container Agent** handles the networking/VPN and a **Host Agent** (Desktop App) handles the SSO authentication flow and management.
+This project encapsulates a GP-compatible VPN client inside a Docker container, exposing it via various proxy protocols and/or a Transparent Gateway. It utilizes a "Split-Agent" architecture where a secure **Container Agent** handles the networking/VPN and a **Host Agent** (Desktop App) handles the SSO authentication flow and management.
 
 ## Development Standards (Crucial)
 
@@ -12,11 +12,13 @@ This project encapsulates a GP-compatible VPN client inside a Docker container, 
 
 - **Python:** Uses `ruff` for formatting (line length 120) and linting. **Strict typing (Mypy/Pyright) is required.** The project uses Python 3.14.
     - Do not use subscripted generics for `socket.socket` as `typeshed` strictness will reject type arguments like `[Any, Any]`.
+    - Overriding class attributes must utilize `typing.ClassVar` to satisfy strict Pyright/Mypy checks.
     - Discarded process standard outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]`. To satisfy this under strict Mypy checks without discarding typing, use `capture_output=True` when polling processes.
     - **Exception Syntax Constraint:** Multi-target exceptions must strictly utilize the Python 3 tuple syntax `except (ValueError, KeyError, TypeError):`. The comma-separated Python 2 syntax will invoke an immediate container-crashing `SyntaxError`. **If the `ruff format` pre-commit hook aggressively strips these required parentheses, you must apply a `# fmt: skip` suppression comment directly at the end of the line being stripped to lock the syntax and pass `mypy` checks.**
+    - **Network Resilience:** Socket loops utilizing `.settimeout()` must explicitly catch `(OSError, TimeoutError)` tuples to prevent ungraceful daemon crashes during dead client timeouts.
     - All module-level files must include descriptive docstrings.
 - **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
-- **Shell:** Uses `shellcheck` (gcc format). **Do not use `xargs` to trim sensitive strings like API Tokens or Passwords, as it silently mangles internal spaces.**
+- **Shell:** Uses `shellcheck` (gcc format). **Do not use `xargs` to trim strings, as it silently collapses internal whitespace.** Rely exclusively on native bash parameter expansion or `sed` for sanitization.
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.
 - **YAML:** Uses `yamllint` (relaxed mode, max 120 chars).
 - **Docker:** Uses `hadolint` (ignores DL3008). Multi-arch support should be handled via dynamic arguments like `TARGETARCH` when downloading specific binaries.
@@ -56,7 +58,7 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
     - **Auto-Discovery & Pairing:** Broadcasts `GP_DISCOVER` on UDP 32800 to find the container IP automatically. On first run, it generates an Ed25519 keypair and issues `POST /api/pair` to securely lock the container identity. For subsequent queries, it signs a Unix timestamp and the URL path (e.g. `1710000000:/status.json`) and passes `X-Signature` and `X-Timestamp` HTTP headers to authorize itself.
     - **Management:** Displays real-time status (polled from `status.json`) and allows Connect/Disconnect actions.
     - **Browser Launch:** Automatically opens the system default browser to the Auth URL when required.
-    - **Connection Info:** Displays the calculated Gateway IP and SOCKS port when connected.
+    - **Connection Info:** Displays the calculated Gateway IP and proxy ports when connected.
 2.  **Handler Mode (Background):**
     - Triggered by the OS when a `globalprotect://` link is clicked.
     - Captures the callback URL.
@@ -70,20 +72,41 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - The user authenticates (Okta, Microsoft, etc.) in their native browser.
 - The portal redirects to `globalprotect://...`, handing control back to the Host Agent.
 
-## Network Modes (`VPN_MODE`)
+## Network Modes (`VPN_MODE` & `PROXY_MODE`)
 
-- **`standard`:** Starts `gost` (port 1080) AND configures `iptables` for NAT/IP Forwarding. Best for general use.
-- **`socks`:** Starts `gost` ONLY. Disables IP Forwarding and NAT. Locked down.
-- **`gateway`:** Configures NAT/IP Forwarding ONLY. No SOCKS proxy. Requires `macvlan` network driver.
+The application supports simultaneous proxy and gateway topologies. Configure the overarching network stance via the `VPN_MODE` variable:
+
+- **`standard`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Best for general use.
+- **`proxy`:** Starts proxy handler(s) ONLY. Explicitly disables IP Forwarding and NAT. Locked down.
+- **`gateway`:** Configures NAT/IP Forwarding ONLY. No proxy listeners. Requires `macvlan` network driver.
+
+When the mode is set to `standard` or `proxy`, you can configure exactly which proxy endpoints are active simultaneously via the `PROXY_MODE` environment variable. Provide a comma-separated list of values (e.g. `socks5,socks4,socks4a,http,https,ss`).
+
+- **`socks5`:** Standard UDP/TCP SOCKS5 proxy on Port 1080.
+- **`socks4`:** Standard TCP SOCKS4 proxy on Port 1084.
+- **`socks4a`:** SOCKS4a proxy (supports remote DNS) on Port 1085.
+- **`http`:** Standard HTTP proxy on Port 8080.
+- **`https`:** TLS-encrypted proxy on Port 8443. Auto-generates a local certificate.
+- **`ss`:** Shadowsocks encrypted proxy on Port 8388. (Note: Use `SS_AUTH` environment variable for `cipher-method:password`. Defaults to `chacha20:password` if omitted).
+
+## Advanced Networking: Smart Split-Tunneling
+
+The container features a "Smart Detection Engine" that automatically implements split-tunneling and split-DNS by analyzing the connection payloads from the GlobalProtect server.
+
+To isolate corporate VPN traffic from standard local internet traffic, you only need to provide a single environment variable:
+
+- **`SPLIT_TUNNEL=true`**: When enabled, the container automatically strips the default `0.0.0.0/0` internet route pushed by the VPN. It then dynamically reads the DNS servers, Split-Include Subnets, and Split-DNS Domains from the OpenConnect environment. It configures an internal `dnsmasq` instance to route corporate domains to the VPN DNS, and uses dynamic `ipset` routing to transparently forward traffic for those resolved addresses through the tunnel. All other traffic (like personal domains or standard internet) remains safely on your local network.
+
+_(Note: Advanced power users can still optionally declare `VPN_DOMAINS`, `LOCAL_DNS`, or `VPN_SUBNETS` to forcefully inject custom overrides into the smart detection tables)._
 
 ## Key Files
 
 ### Container (Server)
 
-- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `GOST_AUTH`, `ALLOWED_SUBNETS`, DNS Watchdog, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`.
-- **`backend/server.py`:** Python Control Server. Handles Trust-On-First-Use (TOFU) Ed25519 pairing, dynamic HTML cache busting, and ephemeral UI token injection. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management dynamically delegates (`sys.platform == "win32"`) to explicit OS handlers, enabling native Windows development while securely isolating Unix orchestration constraints. Contains an explicit `str()` cast guard in `log_message` to prevent Python 3.14+ `HTTPStatus` enum objects from crashing the polling loop handler during syntax parsing errors.
-- **`backend/utils.py`:** Shared Python utility library. Centralizes cross-process configuration constants (`IPC_CONTROL_PORT`, `IPC_STDIN_PORT`), normalizes the execution environment paths (`CLIENT_LOG`, `SERVICE_LOG`), standardizes the `logging` format outputs across all background daemons, and contains the cross-platform TCP socket transmission logic (`send_ipc_message`).
-- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. The server dynamically rewrites the `<meta name="session-token">` tag in `index.html` on startup so the JS layer automatically picks up authorized access.
+- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `PROXY_MODE`, `PROXY_AUTH`, `ALLOWED_SUBNETS`, `SPLIT_TUNNEL` watchdog logic, cleanup traps, builds cross-platform Python IPC listener endpoints, and invokes `gpclient`. Strict globbing rejections are enforced on environment parameters. It injects a smart `vpnc-script` wrapper to process GlobalProtect payloads dynamically.
+- **`backend/server.py`:** Python Control Server. Handles Trust-On-First-Use (TOFU) Ed25519 pairing, dynamic HTML cache busting, and ephemeral UI token injection. Control endpoints rely on OS-agnostic local TCP sockets (`IPC_CONTROL_PORT` and `IPC_STDIN_PORT`). Process lifecycle management dynamically delegates (`sys.platform == "win32"`) to explicit OS handlers, enabling native Windows development while securely isolating Unix orchestration constraints.
+- **`backend/utils.py`:** Shared Python utility library. Centralizes cross-process configuration constants (`IPC_CONTROL_PORT`, `IPC_STDIN_PORT`), normalizes the execution environment paths with dynamic `.env` overrides and OS-specific fallbacks to prevent Windows crash bugs, standardizes the `logging` format outputs securely behind thread-locks to prevent race conditions, and contains the cross-platform TCP socket transmission logic.
+- **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets. Separated for maintainability and Docker layer caching. The server dynamically rewrites the `<meta name="session-token">` tag in `index.html` on startup so the JS layer automatically picks up authorized access. The UI uses strict DOM diffing against a JSON array to natively support concurrent multi-proxy rendering.
 
 ### Host (Client)
 
@@ -101,18 +124,21 @@ This is a cross-platform binary (`gp-client-proxy`) that operates in two modes:
 - **Frontend DOM Diffing:** `index.js` leverages HTML `dataset` attributes (`data.prompt`, `data.type`, `data.options`) on the dynamic input container. Elements are compared against stringified array structures `JSON.stringify()` to ensure they are only rebuilt when types or options fundamentally change; otherwise, only text labels are updated.
 - **Frontend Network Resilience:** All UI actions that invoke API endpoints (`triggerConnect`, `handleFormSubmit`, etc.) must be wrapped in `try/catch/finally` blocks to ensure the frontend polling loop (`resetPoll`) resurrects if a network exception occurs. This prevents the UI from becoming permanently locked in a 'loading' state.
 - **Rust Connection Pooling:** The Host Agent must utilize a single, globally instantiated `ureq::Agent` for standard connections and a separate fast `ureq::Agent` for status polling. Do not instantiate new HTTP agents inside loops, as this discards TCP connection pooling and exhausts system ports.
-- **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. In addition, 401 exceptions forcefully command `resetPoll(5000)` to ensure background loop resurrection upon credential fixing.
+- **Frontend State Deadlock Prevention:** Generating new SSO links briefly toggles an `isRestarting` safety flag to suspend polling jitter. In addition, 401 exceptions forcefully command `window.location.reload()` to ensure background loop resurrection and ephemeral token extraction upon credential fixing.
 - **Agent HTTP Timeouts (Rust):** The Host Agent utilizes two specialized timeout profiles. Routine requests (connect, disconnect, submit) use a standard 10-second agent. Status polling utilizes a localized 2-second fast agent (`get_fast_agent`).
-- **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll_unix()` dynamically determines container privileges by executing a passwordless `sudo -n true` probe to invoke `pkill` and `pgrep` safely without indefinitely hanging the orchestrator. It relies on a blocking loop alongside `subprocess.run(..., capture_output=True)` to natively return byte streams that satisfy strict Mypy types, verifying that processes have exited before reinitializing logic. If processes refuse to terminate gracefully within the polling window, it automatically escalates to a `SIGKILL` (-9) payload to prevent zombie state races.
-- **Dynamic SOCKS5 UI Rendering:** The backend dynamically evaluates the presence of `GOST_AUTH` and surfaces a `socks_auth_enabled` boolean in `/status.json`. The frontend must rely exclusively on this flag to update the SOCKS5 Authentication UI text (e.g., "See Env Config" vs "None"), avoiding hardcoded assumptions about the proxy's security state.
+- **Dynamic Proxy UI Rendering:** The backend dynamically evaluates the configured proxies and network boundaries, surfacing them as JSON arrays (`proxy_modes`) along with a `proxy_auth_enabled` boolean. The frontend strictly relies on array matching (`ALL_TABS.includes()`) and DOM class toggling (`hidden-mode`) to safely control layout scaling and proxy info display.
 
 ## System Optimizations & Guardrails (DO NOT REMOVE)
 
 - **Frontend DOM Diffing Scope:** Query selectors managing the UI state must strictly target exact classes (e.g. `.conn-tab-btn`) rather than raw elements (e.g. `<button>`) to prevent dynamic UI injections from hijacking unrelated states. Elements managed dynamically (like `btn`) must employ optional chaining (`?.classList`) to prevent crashes during conditional rendering.
-- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime` and `.st_size`. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests. Additionally, the `get_best_ip()` routine caches the outbound local UDP IP string behind a 60-second TTL to avoid exhausting host system sockets during high-frequency API polling.
-- **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows. The listener endpoints (`control_listener.py` and `stdin_proxy.py`) must utilize a non-blocking `select.select` wait approach inside a `while True` loop to act as persistent daemons capable of receiving graceful interrupt signals. IPC byte streams must be buffered and split strictly on newlines (`\n`) prior to UTF-8 decoding to prevent multi-byte characters from being mangled across TCP chunk boundaries.
+- **Strict I/O Caching (`server.py`):** The `StateManager` restricts disk reads for `CLIENT_LOG` by verifying the file's `.stat().st_mtime`, `.st_size`, and the inode (`.st_ino`) to defend against high-speed rotation replacements. Doing direct reads on 1-second polling intervals triggers critical CPU/GIL degradation. The file read operation must execute strictly _outside_ the `StateManager` thread lock to prevent serializing concurrent web UI requests.
+- **Concurrency & Thread Safety:** Python web server instantiation via `socketserver.ThreadingTCPServer` naturally causes concurrent multi-threaded requests. Background utility functions, especially module-level initialization blocks like `setup_logger`, MUST be wrapped in explicit `threading.Lock()` acquisitions to prevent duplication.
+- **HTTP Network Resiliency (`server.py`):** HTTP Handlers must evaluate `getattr(self, "path", "")` instead of direct `self.path` access to prevent `AttributeError` thread crashes if clients drop the TCP handshake early before the base class populates routing properties.
+- **IPC Execution (`entrypoint.sh`):** Control endpoints rely on OS-agnostic local TCP sockets (`127.0.0.1:32801`, `127.0.0.1:32802`) instead of POSIX FIFOs to guarantee out-of-container testing compatibility on Windows. The listener endpoints (`control_listener.py` and `stdin_proxy.py`) must utilize a non-blocking `select.select` wait approach inside a `while True` loop to act as persistent daemons capable of receiving graceful interrupt signals. IPC byte streams must be buffered and split strictly on newlines (`\n`) prior to UTF-8 decoding.
+- **Replay Attack Window:** TOFU authentication dynamically validates Ed25519 payload `X-Timestamp` strings against a strictly enforced **5-second boundary window** `abs(time.time() - ts) < 5`. Exceeding this window aggressively invalidates requests to prevent intercepted local-proxy tokens from being re-issued.
 - **IPC Payload Sanitization:** All HTTP `/submit` parameters mapped into IPC streams MUST be rigorously sanitized for internal newline injections (`\r`, `\n`) prior to socket dispatch. Unfiltered payloads permit arbitrary shell interaction escapes. Handlers must strictly filter standard HTTP errors (`ValueError`, `KeyError`, `TypeError`) before catching generic `Exception` objects to avoid masking underlying API implementation issues in `500` HTTP blocks.
-- **Shell Injection Boundaries:** `eval` is utilized in `entrypoint.sh` strictly to parse quoted string flags passed dynamically via the `GP_ARGS` environment variable. This constitutes a trust boundary; the operator is responsible for sanitizing `GP_ARGS` at the orchestrator level.
+- **Shell Injection Boundaries:** `eval` is utilized in `entrypoint.sh` strictly to parse quoted string flags passed dynamically via the `GP_ARGS` environment variable. This constitutes a trust boundary; the operator is responsible for sanitizing `GP_ARGS` at the orchestrator level. Safe interpolation is protected via evaluated environment variables (`$BASH_NL`). For deduplicating bash arrays safely without triggering word-splitting logic, `mapfile` or `readarray` must be used over standard command substitution.
+- **Process Orchestration:** When destroying VPN tunnels, `server.py`'s `_kill_and_poll_unix()` dynamically determines container privileges. The Container Agent strictly verifies `CAP_KILL` or passwordless `sudo` privileges at boot. If it lacks permission to terminate network daemons, it will forcefully exit with a fatal error instead of failing silently during user disconnect requests. It relies on a blocking loop alongside `subprocess.run(..., capture_output=True)` to natively return byte streams that satisfy strict Mypy types. If processes refuse to terminate gracefully within the polling window, it automatically escalates to a `SIGKILL` (-9) payload.
 - **System Privileges:** Sudoers permissions inside the Dockerfile strictly utilize `Cmnd_Alias` to lock down `/usr/bin/pkill` and `/usr/bin/pgrep` to precise `gpclient` and `gpservice` arguments, preventing arbitrary process termination or systemic container disruption.
 - **Atomic API State:** The nil-check (`_paired_pubkey is None`) **and** the assignment to `_paired_pubkey` must occur inside a single `with _pairing_lock:` acquisition. Splitting the guard across lock boundaries reopens the TOCTOU race this lock is intended to prevent. Reject any pairing request if `_paired_pubkey` is already set within the same critical section.
 - **TOFU Lifecycle & Restarts:** The Container Agent stores `_paired_pubkey` strictly in memory. If the container restarts, the key is lost, and the Host Agent will receive `401 Unauthorized` errors. This is a known limitation. To recover, the user must re-run the Host Agent setup wizard to wipe the local keypair and re-issue `POST /api/pair`.
