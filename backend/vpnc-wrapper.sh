@@ -16,10 +16,14 @@ if [[ "$reason" == "connect" ]]; then
 
     # 4. Smart Auto-Detect VPN Domains
     DOMAINS=()
-    if [[ -n "$CISCO_DEF_DOMAIN" ]]; then DOMAINS+=("$CISCO_DEF_DOMAIN"); fi
+
+    # Handle both comma-separated and space-separated payloads robustly
+    if [[ -n "$CISCO_DEF_DOMAIN" ]]; then
+        for i in ${CISCO_DEF_DOMAIN//,/ }; do DOMAINS+=("$i"); done
+    fi
+
     if [[ -n "$CISCO_SPLIT_DNS" ]]; then
-        IFS=',' read -ra ADDR <<<"$CISCO_SPLIT_DNS"
-        for i in "${ADDR[@]}"; do DOMAINS+=("$i"); done
+        for i in ${CISCO_SPLIT_DNS//,/ }; do DOMAINS+=("$i"); done
     fi
 
     # Fallback: Parse the raw client log to catch GlobalProtect-specific XML split-domains that
@@ -33,8 +37,7 @@ if [[ "$reason" == "connect" ]]; then
 
     # Manual Override support
     if [[ -n "$VPN_DOMAINS" ]]; then
-        IFS=',' read -ra ADDR <<<"$VPN_DOMAINS"
-        for i in "${ADDR[@]}"; do DOMAINS+=("$i"); done
+        for i in ${VPN_DOMAINS//,/ }; do DOMAINS+=("$i"); done
     fi
 
     mapfile -t UNIQUE_DOMAINS < <(printf "%s\n" "${DOMAINS[@]}" | sort -u | grep -v "^$")
