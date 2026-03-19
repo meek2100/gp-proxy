@@ -26,33 +26,31 @@ if [[ "$reason" == "connect" ]]; then
     fi
 
     # Fallback: Parse the raw client log to catch GlobalProtect-specific XML split-domains that
-    # OpenConnect marks as "Unknown" and fails to export to standard env variables.
-    if grep -q "include-split-tunneling-domain" /tmp/gp-logs/gp-client.log 2>/dev/null; then
-        # Use awk to extract only deeply indented lines following the tag, stopping at the next log entry.
-        # This is more robust against ANSI color codes and varying log formats.
-        EXTRA_DOMAINS=$(awk '/include-split-tunneling-domain/ {flag=1; next}
-                             flag && (/\[/ || /Unknown/ || /<[^/]/) {flag=0}
-                             flag && /^[[:space:]]+[*.]?[a-zA-Z0-9.-]+$/ {print $1}' /tmp/gp-logs/gp-client.log |
-            sed 's/^[*.]*//')
-        for d in $EXTRA_DOMAINS; do
-            if [[ -n "$d" ]]; then DOMAINS+=("$d"); fi
-        done
-    fi
+    # 4. Refine Domain Extraction and Sanitization (V4)
+    # Corrected: Pass the WHOLE file to awk to handle multi-line XML tags properly.
+    GP_LOG_DOMAINS=$(awk '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/ { gsub(/<[^>]+>/, ""); gsub(/[ \t\r\n]+/, " "); print }' /tmp/gp-logs/gp-client.log | tr -d '\r')
 
-    # Manual Override support
-    if [[ -n "$VPN_DOMAINS" ]]; then
-        for i in ${VPN_DOMAINS//,/ }; do DOMAINS+=("$i"); done
-    fi
+    # Collect ALL potential domains from logs, split-dns, and search domains
+    # Aggressively strip leading '*', '.', and trailing whitespace.
+    mapfile -t UNIQUE_DOMAINS < <(echo "$GP_LOG_DOMAINS" "$CISCO_DEF_DOMAIN" "$CISCO_SPLIT_DNS" | sed 's/[,[:space:]]/\n/g' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^\*[.]*//' -e 's/^\.//' | sort -u | grep -v '^$')
 
-    mapfile -t UNIQUE_DOMAINS < <(printf "%s\n" "${DOMAINS[@]}" | sort -u | grep -v "^$")
+    if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 ]]; then
+        echo "[vpnc-wrapper] Extraction Success. Resolved VPN Domains: ${UNIQUE_DOMAINS[*]}" >>/tmp/gp-logs/gp-service.log
+    fi
 
     # 5. Dynamically configure Split-DNS (High Priority)
     rm -f /etc/dnsmasq.d/10-vpn.conf
     if [[ ${#VPN_DNS_SERVERS[@]} -gt 0 ]]; then
+        # Ensure we can reach these DNS servers with the correct source IP (tun0 IP)
+        # Internal DNS servers often reject queries from local 192.168.x.x IPs.
+        TUN0_IP=$(ip -4 addr show tun0 | awk '/inet / {print $2}' | cut -d/ -f1)
+
         # If full-tunnel is active, set all VPN DNS servers as catch-all upstreams in the high-priority file
         if [[ "$SPLIT_TUNNEL" != "true" ]]; then
             for ip in "${VPN_DNS_SERVERS[@]}"; do
                 echo "server=$ip" >>/etc/dnsmasq.d/10-vpn.conf
+                # Force source IP for DNS queries to this upstream
+                ip route replace "$ip" dev tun0 src "$TUN0_IP" 2>/dev/null || true
             done
             echo "[vpnc-wrapper] Full-Tunnel DNS upstreams configured (Priority 10): ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
         fi
@@ -66,10 +64,12 @@ if [[ "$reason" == "connect" ]]; then
                 fi
                 for ip in "${VPN_DNS_SERVERS[@]}"; do
                     echo "server=/$d/$ip" >>/etc/dnsmasq.d/10-vpn.conf
+                    # Ensure route to DNS exists with correct source
+                    ip route replace "$ip" dev tun0 src "$TUN0_IP" 2>/dev/null || true
                 done
                 echo "ipset=/$d/vpn_domains" >>/etc/dnsmasq.d/10-vpn.conf
             done
-            echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
+            echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for domains: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
         fi
         pkill -HUP dnsmasq || true
     fi

@@ -517,6 +517,7 @@ fi
 
 # Enable query logging for easier troubleshooting if in debug mode
 if [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]]; then
+    echo "log-facility=-" >>/etc/dnsmasq.conf
     echo "log-queries" >>/etc/dnsmasq.conf
 fi
 
