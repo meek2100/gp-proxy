@@ -29,8 +29,8 @@ if [[ "$reason" == "connect" ]]; then
     # OpenConnect marks as "Unknown" and fails to export to standard env variables.
     if grep -q "include-split-tunneling-domain" /tmp/gp-logs/gp-client.log 2>/dev/null; then
         # Robustly extract domains even if log contains ANSI escape codes or varying whitespace
-        EXTRA_DOMAINS=$(sed -n '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/p' /tmp/gp-logs/gp-client.log | \
-                        grep -v "<" | tr -d '\t\r ' | sed 's/^[*.]*//' | grep -v "^$")
+        EXTRA_DOMAINS=$(sed -n '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/p' /tmp/gp-logs/gp-client.log |
+            grep -v "<" | tr -d '\t\r ' | sed 's/^[*.]*//' | grep -v "^$")
         for d in $EXTRA_DOMAINS; do
             if [[ -n "$d" ]]; then DOMAINS+=("$d"); fi
         done

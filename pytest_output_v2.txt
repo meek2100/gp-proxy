@@ -1,0 +1,16 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\dtheurer\GitHub\gp-proxy
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.0.0
+collected 135 items
+
+tests\test_control_listener.py .........................                 [ 18%]
+tests\test_server.py ................................................... [ 56%]
+.........                                                                [ 62%]
+tests\test_server_api.py .........                                       [ 69%]
+tests\test_stdin_proxy.py ....................                           [ 84%]
+tests\test_utils.py .....................                                [100%]
+
+============================= 135 passed in 2.31s =============================
