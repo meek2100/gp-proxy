@@ -501,15 +501,18 @@ listen-address=0.0.0.0
 bind-interfaces
 no-resolv
 no-poll
-keep-in-foreground
+strict-order
 conf-dir=/etc/dnsmasq.d/,*.conf
 EOF
 
+# 6. Configure Local Upstream DNS (Low Priority)
 if [[ -n "$DNS_TO_APPLY" ]]; then
+    rm -f /etc/dnsmasq.d/90-local.conf
     read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
     for ip in "${DNS_ARRAY[@]}"; do
-        echo "server=$ip" >>/etc/dnsmasq.conf
+        echo "server=$ip" >>/etc/dnsmasq.d/90-local.conf
     done
+    log "INFO" "Local DNS upstreams written to 90-local.conf: $DNS_TO_APPLY"
 fi
 
 # Enable query logging for easier troubleshooting if in debug mode
