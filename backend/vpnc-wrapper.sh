@@ -28,9 +28,12 @@ if [[ "$reason" == "connect" ]]; then
     # Fallback: Parse the raw client log to catch GlobalProtect-specific XML split-domains that
     # OpenConnect marks as "Unknown" and fails to export to standard env variables.
     if grep -q "include-split-tunneling-domain" /tmp/gp-logs/gp-client.log 2>/dev/null; then
-        # Robustly extract domains even if log contains ANSI escape codes or varying whitespace
-        EXTRA_DOMAINS=$(sed -n '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/p' /tmp/gp-logs/gp-client.log |
-            grep -v "<" | tr -d '\t\r ' | sed 's/^[*.]*//' | grep -v "^$")
+        # Robustly extract domains even if log contains ANSI escape codes or varying whitespace.
+        # We match from the tag until the next line containing a bracketed timestamp.
+        EXTRA_DOMAINS=$(sed -n '/include-split-tunneling-domain/,/\[[0-9]\{4\}-/p' /tmp/gp-logs/gp-client.log |
+            grep -v "include-split-tunneling-domain" |
+            grep -v "\[[0-9]\{4\}-" |
+            tr -d '\t\r ' | sed 's/^[*.]*//' | grep -v "^$")
         for d in $EXTRA_DOMAINS; do
             if [[ -n "$d" ]]; then DOMAINS+=("$d"); fi
         done
@@ -45,18 +48,27 @@ if [[ "$reason" == "connect" ]]; then
 
     # 5. Dynamically configure Split-DNS
     rm -f /etc/dnsmasq.d/vpn.conf
-    if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 && ${#VPN_DNS_SERVERS[@]} -gt 0 ]]; then
+    if [[ ${#VPN_DNS_SERVERS[@]} -gt 0 ]]; then
         PRIMARY_VPN_DNS="${VPN_DNS_SERVERS[0]}"
-        for d in "${UNIQUE_DOMAINS[@]}"; do
-            # Validate domain to prevent dnsmasq config corruption (allow letters, numbers, hyphens, and dots)
-            if [[ ! "$d" =~ ^[\.a-zA-Z0-9-]+$ ]]; then
-                echo "[vpnc-wrapper] Skipping invalid split-domain value: $d" >>/tmp/gp-logs/gp-service.log
-                continue
-            fi
-            echo "server=/$d/$PRIMARY_VPN_DNS" >>/etc/dnsmasq.d/vpn.conf
-            echo "ipset=/$d/vpn_domains" >>/etc/dnsmasq.d/vpn.conf
-        done
-        echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for: ${UNIQUE_DOMAINS[*]} -> $PRIMARY_VPN_DNS" >>/tmp/gp-logs/gp-service.log
+
+        # If full-tunnel is active, set the VPN DNS as the catch-all upstream for dnsmasq
+        if [[ "$SPLIT_TUNNEL" != "true" ]]; then
+            echo "server=$PRIMARY_VPN_DNS" >>/etc/dnsmasq.d/vpn.conf
+            echo "[vpnc-wrapper] Full-Tunnel DNS upstream configured: $PRIMARY_VPN_DNS" >>/tmp/gp-logs/gp-service.log
+        fi
+
+        if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 ]]; then
+            for d in "${UNIQUE_DOMAINS[@]}"; do
+                # Validate domain to prevent dnsmasq config corruption (allow letters, numbers, hyphens, and dots)
+                if [[ ! "$d" =~ ^[\.a-zA-Z0-9-]+$ ]]; then
+                    echo "[vpnc-wrapper] Skipping invalid split-domain value: $d" >>/tmp/gp-logs/gp-service.log
+                    continue
+                fi
+                echo "server=/$d/$PRIMARY_VPN_DNS" >>/etc/dnsmasq.d/vpn.conf
+                echo "ipset=/$d/vpn_domains" >>/etc/dnsmasq.d/vpn.conf
+            done
+            echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for: ${UNIQUE_DOMAINS[*]} -> $PRIMARY_VPN_DNS" >>/tmp/gp-logs/gp-service.log
+        fi
         pkill -HUP dnsmasq || true
     fi
 

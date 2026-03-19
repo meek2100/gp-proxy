@@ -497,7 +497,7 @@ log "INFO" "Base Upstream Local DNS identified as: $DNS_TO_APPLY"
 mkdir -p /etc/dnsmasq.d
 cat <<EOF >/etc/dnsmasq.conf
 port=53
-listen-address=127.0.0.1
+listen-address=0.0.0.0
 bind-interfaces
 no-resolv
 no-poll
