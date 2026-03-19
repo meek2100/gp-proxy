@@ -4,6 +4,10 @@
 # 1. Execute original script to initialize tun0 and standard IP allocations
 /usr/share/vpnc-scripts/vpnc-script-orig "$@"
 
+# Single Source of Truth: Prefer environment variables exported by entrypoint.sh
+: "${SERVICE_LOG:=/tmp/gp-logs/gp-service.log}"
+: "${CLIENT_LOG:=/tmp/gp-logs/gp-client.log}"
+
 # OpenConnect dynamically injects the lowercase $reason variable into the environment
 # shellcheck disable=SC2154
 if [[ "$reason" == "connect" ]]; then
@@ -29,12 +33,12 @@ if [[ "$reason" == "connect" ]]; then
     # 4. Refine Domain Extraction and Sanitization (V5)
     # Strip ANSI codes, extract XML content, filter out log metadata, and sanitize.
     # We use a robust pipeline to handle log-prefixes and noise.
-    GP_LOG_DOMAINS=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/gp-logs/gp-client.log |
+    GP_LOG_DOMAINS=$(sed 's/\x1b\[[0-9;]*m//g' "$CLIENT_LOG" |
         awk '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/' |
         sed 's/<[^>]*>//g' |
         tr -s '[:space:]' '\n' |
         grep '\.' |
-        grep -vE '\[|\]|INFO|DEBUG|WARN|ERROR|Mar|202[4-9]' |
+        grep -vE '\[|\]|INFO|DEBUG|WARN|ERROR|Mar|202[4-9]|HTTP' |
         sed 's/^\*//; s/^\.//' |
         sort -u |
         tr '\n' ' ')
@@ -44,7 +48,7 @@ if [[ "$reason" == "connect" ]]; then
     mapfile -t UNIQUE_DOMAINS < <(echo "$GP_LOG_DOMAINS" "$CISCO_DEF_DOMAIN" "$CISCO_SPLIT_DNS" | sed 's/[,[:space:]]/\n/g' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^\*[.]*//' -e 's/^\.//' | sort -u | grep -v '^$')
 
     if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 ]]; then
-        echo "[vpnc-wrapper] Extraction Success. Resolved VPN Domains: ${UNIQUE_DOMAINS[*]}" >>/tmp/gp-logs/gp-service.log
+        echo "[vpnc-wrapper] Extraction Success. Resolved VPN Domains: ${UNIQUE_DOMAINS[*]}" >>"$SERVICE_LOG"
     fi
 
     # 5. Dynamically configure Split-DNS (High Priority)
@@ -61,14 +65,14 @@ if [[ "$reason" == "connect" ]]; then
                 # Force source IP for DNS queries to this upstream
                 ip route replace "$ip" dev tun0 src "$TUN0_IP" 2>/dev/null || true
             done
-            echo "[vpnc-wrapper] Full-Tunnel DNS upstreams configured (Priority 10): ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
+            echo "[vpnc-wrapper] Full-Tunnel DNS upstreams configured (Priority 10): ${VPN_DNS_SERVERS[*]}" >>"$SERVICE_LOG"
         fi
 
         if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 ]]; then
             for d in "${UNIQUE_DOMAINS[@]}"; do
                 # Validate domain to prevent dnsmasq config corruption (allow letters, numbers, hyphens, and dots)
                 if [[ ! "$d" =~ ^[\.a-zA-Z0-9-]+$ ]]; then
-                    echo "[vpnc-wrapper] Skipping invalid split-domain value: $d" >>/tmp/gp-logs/gp-service.log
+                    echo "[vpnc-wrapper] Skipping invalid split-domain value: $d" >>"$SERVICE_LOG"
                     continue
                 fi
                 for ip in "${VPN_DNS_SERVERS[@]}"; do
@@ -78,7 +82,7 @@ if [[ "$reason" == "connect" ]]; then
                 done
                 echo "ipset=/$d/vpn_domains" >>/etc/dnsmasq.d/10-vpn.conf
             done
-            echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for domains: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
+            echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for domains: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>"$SERVICE_LOG"
         fi
         # Restart dnsmasq to apply /etc/dnsmasq.d/ changes (SIGHUP is insufficient for directory configs)
         pkill dnsmasq || true
@@ -92,7 +96,7 @@ if [[ "$reason" == "connect" ]]; then
 
     # 6. Smart Split Routing Implementation
     if [[ "$SPLIT_TUNNEL" == "true" ]]; then
-        echo "[vpnc-wrapper] Enforcing Split-Tunnel: Stripping default route (0.0.0.0/0) from tun0" >>/tmp/gp-logs/gp-service.log
+        echo "[vpnc-wrapper] Enforcing Split-Tunnel: Stripping default route (0.0.0.0/0) from tun0" >>"$SERVICE_LOG"
         ip route del default dev tun0 2>/dev/null || true
     fi
 
@@ -104,13 +108,13 @@ if [[ "$reason" == "connect" ]]; then
             sub="$(echo "$sub" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             [[ -z "$sub" ]] && continue
             ip route add "$sub" dev tun0 2>/dev/null || true
-            echo "[vpnc-wrapper] Added explicit manual split route: $sub -> tun0" >>/tmp/gp-logs/gp-service.log
+            echo "[vpnc-wrapper] Added explicit manual split route: $sub -> tun0" >>"$SERVICE_LOG"
         done
     fi
 
     # 7. Enable IPSet routing for dynamic domains so resolved targets bypass the local network
     if ipset list vpn_domains >/dev/null 2>&1; then
-        echo "[vpnc-wrapper] Enabling dynamic policy routing for auto-detected VPN domains" >>/tmp/gp-logs/gp-service.log
+        echo "[vpnc-wrapper] Enabling dynamic policy routing for auto-detected VPN domains" >>"$SERVICE_LOG"
 
         # Make rules idempotent
         ip rule show | grep -q "fwmark 0x10 lookup 100" || ip rule add fwmark 0x10 lookup 100 2>/dev/null || true

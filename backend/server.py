@@ -36,6 +36,7 @@ from utils import (
     CLIENT_LOG,
     IPC_CONTROL_PORT,
     IPC_STDIN_PORT,
+    MODE_FILE,
     RUNTIME_DIR,
     SERVICE_LOG,
     send_ipc_message,
@@ -47,7 +48,7 @@ logger: logging.Logger = setup_logger("server")
 # --- Configuration & Security Globals ---
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
-MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
+# MODE_FILE: Path imported from utils
 
 # Ephemeral session token for local Web GUI authorization
 EPHEMERAL_TOKEN: str = secrets.token_urlsafe(32)

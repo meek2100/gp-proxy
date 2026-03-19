@@ -205,10 +205,15 @@ export VPN_SUBNETS
 # 2. RUNTIME SETUP
 # ==============================================================================
 
-RUNTIME_DIR="/tmp/gp-runtime"
-CLIENT_LOG="/tmp/gp-logs/gp-client.log"
-SERVICE_LOG="/tmp/gp-logs/gp-service.log"
-MODE_FILE="$RUNTIME_DIR/gp-mode"
+# --- RESOLVE & EXPORT RUNTIME PATHS ---
+export RUNTIME_DIR="/tmp/gp-runtime"
+export CLIENT_LOG="/tmp/gp-logs/gp-client.log"
+export SERVICE_LOG="/tmp/gp-logs/gp-service.log"
+export MODE_FILE="$RUNTIME_DIR/gp-mode"
+
+# --- RESOLVE & EXPORT IPC PORTS ---
+export IPC_CONTROL_PORT=32801
+export IPC_STDIN_PORT=32802
 
 # Disable ANSI colors in Rust binaries
 export RUST_LOG_STYLE=never
@@ -636,11 +641,16 @@ elif [[ "$PROXY_MODE" == *"ss"* ]]; then
 fi
 
 # Ensure API_TOKEN and state booleans are definitively passed down to the server context without leaking secrets
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" PROXY_AUTH_ENABLED="$PROXY_AUTH_ENABLED" SS_AUTH_ENABLED="$SS_AUTH_ENABLED" \
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" \
+    PROXY_AUTH_ENABLED="$PROXY_AUTH_ENABLED" SS_AUTH_ENABLED="$SS_AUTH_ENABLED" \
+    RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
+    IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
 # Start persistent control listener directly bound to the pipe descriptor
-runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
+runuser -u gpuser -- env RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
+    IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
+    python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
 
 tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
@@ -676,6 +686,7 @@ while true; do
             VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
             VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
+            RUNTIME_DIR="$RUNTIME_DIR" MODE_FILE="$MODE_FILE" IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
             BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" \
             bash -c '
             set -o pipefail
@@ -715,7 +726,10 @@ while true; do
             SAFE_CMD=$(printf "%q " "${args[@]}")
 
             echo "[Entrypoint] Executing: $SAFE_CMD" >> "$SERVICE_LOG"
-            python3 /opt/gp-proxy/stdin_proxy.py | script -q -c "$SAFE_CMD" /dev/null >> "$CLIENT_LOG" 2>&1
+            # Ensure the stdin proxy inherits the environment correctly
+            runuser -u gpuser -- env RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
+                IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
+                python3 /opt/gp-proxy/stdin_proxy.py | script -q -c "$SAFE_CMD" /dev/null >> "$CLIENT_LOG" 2>&1
         '
 
         # 3. Cleanup after disconnect
