@@ -71,6 +71,7 @@ STATIC_PROXY_AUTH_ENABLED: bool = (os.getenv("PROXY_AUTH_ENABLED", "false").lowe
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 GATEWAY_REGEX = re.compile(r"(?:>|\s)*([A-Za-z0-9\-\.]+\s+\([A-Za-z0-9\-\.]+\))")
 URL_PATTERN = re.compile(r'(https?://[^\s"<>]+)')
+SAML_REGEX = re.compile(r"<saml-request>([A-Za-z0-9+/=]+)</saml-request>")
 
 
 class VPNState(TypedDict):
@@ -374,6 +375,7 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
 def _extract_sso_url(full_log_content: str, port: int) -> str:
     """
     Parses the complete log string to extract the most recent valid SAML SSO callback URL.
+    Prioritizes decoding raw SAML request XML blocks to find the direct login provider.
 
     Parameters:
         full_log_content (str): The entire readable log context as a string.
@@ -382,9 +384,28 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
     Returns:
         str: The most recent SSO URL found, or an empty string if none exist.
     """
+    # 1. Look for SAML XML block first (Most reliable for direct SSO)
+    saml_match = SAML_REGEX.search(full_log_content)
+    if saml_match:
+        try:
+            # Decode the base64 blob to get the direct SAML redirect URL
+            decoded = base64.b64decode(saml_match.group(1)).decode("utf-8")
+            # Extract URL from decoded XML or text
+            urls = URL_PATTERN.findall(decoded)
+            if urls:
+                return urls[0].rstrip(".,;:")
+        except Exception:
+            logger.debug("Failed to decode SAML request blob")
+
+    # 2. Fallback to scraping URLs from the log text
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if found_urls:
-        local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
+        # Filter out self-referential callback URLs and prioritize HTTPS for the provider
+        remote_urls = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u and u.startswith("https")]
+        if remote_urls:
+            return remote_urls[-1].rstrip(".,;:")
+
+        local_urls = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
         best_url = local_urls[-1] if local_urls else found_urls[-1]
         return best_url.rstrip(".,;:")
     return ""
@@ -476,6 +497,7 @@ def get_vpn_state() -> VPNState:
     """
     server_ip: str = get_best_ip()
 
+    mode_is_active: bool = False
     if MODE_FILE.exists():
         try:
             content: str = MODE_FILE.read_text().strip()
@@ -494,10 +516,15 @@ def get_vpn_state() -> VPNState:
                     "server_ip": server_ip,
                     "proxy_auth_enabled": STATIC_PROXY_AUTH_ENABLED,
                 }
+            mode_is_active = content == "active"
         except Exception:
             logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
 
     analysis, log_content = state_manager.get_cached_log_analysis(CLIENT_LOG)
+
+    # Guard against "idle" flicker when the service is active but log is still being wiped/populated
+    if mode_is_active and analysis["state"] == "idle":
+        analysis["state"] = "starting"
 
     if state_manager.update_and_check_transition(analysis["state"]):
         logger.info(f"State Transition: -> {analysis['state']}")

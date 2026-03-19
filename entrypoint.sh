@@ -734,7 +734,9 @@ while true; do
 
         # 3. Cleanup after disconnect
         log "WARN" "gpclient pipeline resolved. Cleaning up services..."
+        sleep 2
         echo "idle" >"$MODE_FILE"
+
         $SUDO_CMD pkill -x gpservice || true
         $SUDO_CMD pkill -x gost || true
         log "INFO" "Services stopped. System Idle."
