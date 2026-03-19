@@ -393,7 +393,9 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
             # Extract URL from decoded XML or text
             urls = URL_PATTERN.findall(decoded)
             if urls:
-                return urls[0].rstrip(".,;:")
+                # Cast to str to satisfy strict mypy [no-any-return]
+                return str(urls[0]).rstrip(".,;:")
+
         except Exception:
             logger.debug("Failed to decode SAML request blob")
 
