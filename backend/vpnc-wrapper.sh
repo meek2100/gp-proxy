@@ -86,7 +86,7 @@ if [[ "$reason" == "connect" ]]; then
         LOG_FLAGS=""
         [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]] && LOG_FLAGS="--log-queries --log-facility=-"
         # shellcheck disable=SC2086
-        dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS &
+        dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS >>"$SERVICE_LOG" 2>&1 &
 
     fi
 
@@ -130,7 +130,7 @@ elif [[ "$reason" == "disconnect" ]]; then
     LOG_FLAGS=""
     [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]] && LOG_FLAGS="--log-queries --log-facility=-"
     # shellcheck disable=SC2086
-    dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS &
+    dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS >>"$SERVICE_LOG" 2>&1 &
 
     # Safely clear dynamic policy routing to prevent state-bloat on rapid disconnects
     iptables -t mangle -D OUTPUT -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
