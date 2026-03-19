@@ -943,7 +943,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"OK")
         else:
-            self.send_error(503, "Service not ready (IPC absent)")
+            self.send_error(503, "Control IPC unavailable (service not running?)")
 
     def _handle_disconnect(self) -> None:
         """
@@ -981,7 +981,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(b"OK")
                 else:
-                    self.send_error(503, "Service not ready (IPC absent)")
+                    self.send_error(503, "Stdin IPC unavailable (is VPN starting?)")
             else:
                 self.send_error(400, "Empty input")
         except (ValueError, KeyError, TypeError):  # fmt: skip

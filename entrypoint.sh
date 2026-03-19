@@ -727,7 +727,7 @@ while true; do
 
             echo "[Entrypoint] Executing: $SAFE_CMD" >> "$SERVICE_LOG"
             # Ensure the stdin proxy inherits the environment correctly
-            runuser -u gpuser -- env RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
+            PYTHONPATH="/opt/gp-proxy" RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
                 IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
                 python3 /opt/gp-proxy/stdin_proxy.py | script -q -c "$SAFE_CMD" /dev/null >> "$CLIENT_LOG" 2>&1
         '

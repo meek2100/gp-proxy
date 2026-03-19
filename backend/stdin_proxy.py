@@ -35,6 +35,8 @@ def main() -> None:
             s.bind(("127.0.0.1", IPC_STDIN_PORT))
             s.listen(1)
 
+            logger.info(f"Stdin Proxy active on port {IPC_STDIN_PORT}")
+
             while True:
                 try:
                     # Non-blocking wait for 2 seconds to ensure interruptibility
