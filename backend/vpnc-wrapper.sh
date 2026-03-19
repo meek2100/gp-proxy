@@ -49,12 +49,12 @@ if [[ "$reason" == "connect" ]]; then
     # 5. Dynamically configure Split-DNS (High Priority)
     rm -f /etc/dnsmasq.d/10-vpn.conf
     if [[ ${#VPN_DNS_SERVERS[@]} -gt 0 ]]; then
-        PRIMARY_VPN_DNS="${VPN_DNS_SERVERS[0]}"
-
-        # If full-tunnel is active, set the VPN DNS as the catch-all upstream in the high-priority file
+        # If full-tunnel is active, set all VPN DNS servers as catch-all upstreams in the high-priority file
         if [[ "$SPLIT_TUNNEL" != "true" ]]; then
-            echo "server=$PRIMARY_VPN_DNS" >>/etc/dnsmasq.d/10-vpn.conf
-            echo "[vpnc-wrapper] Full-Tunnel DNS upstream configured (Priority 10): $PRIMARY_VPN_DNS" >>/tmp/gp-logs/gp-service.log
+            for ip in "${VPN_DNS_SERVERS[@]}"; do
+                echo "server=$ip" >>/etc/dnsmasq.d/10-vpn.conf
+            done
+            echo "[vpnc-wrapper] Full-Tunnel DNS upstreams configured (Priority 10): ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
         fi
 
         if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 ]]; then
@@ -64,10 +64,12 @@ if [[ "$reason" == "connect" ]]; then
                     echo "[vpnc-wrapper] Skipping invalid split-domain value: $d" >>/tmp/gp-logs/gp-service.log
                     continue
                 fi
-                echo "server=/$d/$PRIMARY_VPN_DNS" >>/etc/dnsmasq.d/10-vpn.conf
+                for ip in "${VPN_DNS_SERVERS[@]}"; do
+                    echo "server=/$d/$ip" >>/etc/dnsmasq.d/10-vpn.conf
+                done
                 echo "ipset=/$d/vpn_domains" >>/etc/dnsmasq.d/10-vpn.conf
             done
-            echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for: ${UNIQUE_DOMAINS[*]} -> $PRIMARY_VPN_DNS" >>/tmp/gp-logs/gp-service.log
+            echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
         fi
         pkill -HUP dnsmasq || true
     fi
@@ -106,7 +108,7 @@ if [[ "$reason" == "connect" ]]; then
     fi
 
 elif [[ "$reason" == "disconnect" ]]; then
-    rm -f /etc/dnsmasq.d/vpn.conf
+    rm -f /etc/dnsmasq.d/10-vpn.conf
     pkill -HUP dnsmasq || true
 
     # Safely clear dynamic policy routing to prevent state-bloat on rapid disconnects
