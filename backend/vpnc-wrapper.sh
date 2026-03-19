@@ -26,9 +26,18 @@ if [[ "$reason" == "connect" ]]; then
     fi
 
     # Fallback: Parse the raw client log to catch GlobalProtect-specific XML split-domains that
-    # 4. Refine Domain Extraction and Sanitization (V4)
-    # Corrected: Pass the WHOLE file to awk to handle multi-line XML tags properly.
-    GP_LOG_DOMAINS=$(awk '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/ { gsub(/<[^>]+>/, ""); gsub(/[ \t\r\n]+/, " "); print }' /tmp/gp-logs/gp-client.log | tr -d '\r')
+    # 4. Refine Domain Extraction and Sanitization (V5)
+    # Strip ANSI codes, extract XML content, filter out log metadata, and sanitize.
+    # We use a robust pipeline to handle log-prefixes and noise.
+    GP_LOG_DOMAINS=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/gp-logs/gp-client.log |
+        awk '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/' |
+        sed 's/<[^>]*>//g' |
+        tr -s '[:space:]' '\n' |
+        grep '\.' |
+        grep -vE '\[|\]|INFO|DEBUG|WARN|ERROR|Mar|202[4-9]' |
+        sed 's/^\*//; s/^\.//' |
+        sort -u |
+        tr '\n' ' ')
 
     # Collect ALL potential domains from logs, split-dns, and search domains
     # Aggressively strip leading '*', '.', and trailing whitespace.
@@ -71,7 +80,14 @@ if [[ "$reason" == "connect" ]]; then
             done
             echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for domains: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>/tmp/gp-logs/gp-service.log
         fi
-        pkill -HUP dnsmasq || true
+        # Restart dnsmasq to apply /etc/dnsmasq.d/ changes (SIGHUP is insufficient for directory configs)
+        pkill dnsmasq || true
+        # Restart with the same settings as entrypoint.sh (verbose logging if enabled)
+        LOG_FLAGS=""
+        [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]] && LOG_FLAGS="--log-queries --log-facility=-"
+        # shellcheck disable=SC2086
+        dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS &
+
     fi
 
     # 6. Smart Split Routing Implementation
@@ -109,7 +125,12 @@ if [[ "$reason" == "connect" ]]; then
 
 elif [[ "$reason" == "disconnect" ]]; then
     rm -f /etc/dnsmasq.d/10-vpn.conf
-    pkill -HUP dnsmasq || true
+    # Reload dnsmasq configuration (restart is safer to ensure cleanup)
+    pkill dnsmasq || true
+    LOG_FLAGS=""
+    [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]] && LOG_FLAGS="--log-queries --log-facility=-"
+    # shellcheck disable=SC2086
+    dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS &
 
     # Safely clear dynamic policy routing to prevent state-bloat on rapid disconnects
     iptables -t mangle -D OUTPUT -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
