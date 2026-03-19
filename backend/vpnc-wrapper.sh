@@ -8,8 +8,7 @@
 # shellcheck disable=SC2154
 if [[ "$reason" == "connect" ]]; then
     # 2. Prevent vpnc-script from overriding our container resolver
-    echo "options ndots:0" >/etc/resolv.conf
-    echo "nameserver 127.0.0.1" >>/etc/resolv.conf
+    echo "nameserver 127.0.0.1" >/etc/resolv.conf
 
     # 3. Detect VPN DNS Servers
     IFS=' ' read -ra VPN_DNS_SERVERS <<<"$INTERNAL_IP4_DNS"
@@ -28,8 +27,10 @@ if [[ "$reason" == "connect" ]]; then
 
     # Fallback: Parse the raw client log to catch GlobalProtect-specific XML split-domains that
     # OpenConnect marks as "Unknown" and fails to export to standard env variables.
-    if grep -q "<include-split-tunneling-domain>" /tmp/gp-logs/gp-client.log 2>/dev/null; then
-        EXTRA_DOMAINS=$(awk '/<include-split-tunneling-domain>:/ {flag=1; next} /</ {flag=0} flag {print}' /tmp/gp-logs/gp-client.log | tr -d '\t\r ' | sed 's/^[*.]*//')
+    if grep -q "include-split-tunneling-domain" /tmp/gp-logs/gp-client.log 2>/dev/null; then
+        # Robustly extract domains even if log contains ANSI escape codes or varying whitespace
+        EXTRA_DOMAINS=$(sed -n '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/p' /tmp/gp-logs/gp-client.log | \
+                        grep -v "<" | tr -d '\t\r ' | sed 's/^[*.]*//' | grep -v "^$")
         for d in $EXTRA_DOMAINS; do
             if [[ -n "$d" ]]; then DOMAINS+=("$d"); fi
         done

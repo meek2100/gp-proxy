@@ -497,18 +497,24 @@ log "INFO" "Base Upstream Local DNS identified as: $DNS_TO_APPLY"
 mkdir -p /etc/dnsmasq.d
 cat <<EOF >/etc/dnsmasq.conf
 port=53
-listen-address=0.0.0.0
+listen-address=127.0.0.1
 bind-interfaces
+no-resolv
+no-poll
 keep-in-foreground
 conf-dir=/etc/dnsmasq.d/,*.conf
 EOF
 
 if [[ -n "$DNS_TO_APPLY" ]]; then
-    # Using read -ra to safely split by spaces to appease shellcheck SC2086
     read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
     for ip in "${DNS_ARRAY[@]}"; do
         echo "server=$ip" >>/etc/dnsmasq.conf
     done
+fi
+
+# Enable query logging for easier troubleshooting if in debug mode
+if [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]]; then
+    echo "log-queries" >>/etc/dnsmasq.conf
 fi
 
 # Initialize ipset for Dynamic DNS-based Policy Routing
@@ -520,11 +526,10 @@ if ! ipset create vpn_domains hash:ip 2>/dev/null; then
 fi
 
 # Instruct local container apps (like Gost) to use the dnsmasq split-router natively
-echo "options ndots:0" >/etc/resolv.conf
-echo "nameserver 127.0.0.1" >>/etc/resolv.conf
+echo "nameserver 127.0.0.1" >/etc/resolv.conf
 
 # Run dnsmasq as root so it can modify the ipsets dynamically
-dnsmasq --user=root &
+dnsmasq --user=root >>"$SERVICE_LOG" 2>&1 &
 
 # --- 4. NETWORK SETUP ---
 iptables -F
