@@ -321,6 +321,11 @@ function resetSSOButtonState(newUrl) {
  * Triggers a new VPN connection sequence.
  */
 async function triggerConnect() {
+    const btn = document.getElementById("btn-connect");
+    if (btn) {
+        btn.classList.add("btn-disabled");
+        btn.innerText = "Starting...";
+    }
     setBadge("Starting...", "connecting");
     setView("connecting");
     window.expectedNextState = "connecting";
@@ -572,6 +577,15 @@ async function updateStatus() {
             setView(data.state);
             setBadge(data.state.toUpperCase(), data.state === "auth" || data.state === "input" ? "auth" : data.state);
             window.vpnState = data.state;
+
+            // Re-enable connect button if we return to idle
+            if (data.state === "idle") {
+                const btn = document.getElementById("btn-connect");
+                if (btn) {
+                    btn.classList.remove("btn-disabled");
+                    btn.innerText = "Connect to VPN";
+                }
+            }
         }
 
         if (data.url) {

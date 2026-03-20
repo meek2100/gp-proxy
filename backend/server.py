@@ -931,6 +931,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         - Responds 503 with an explanatory message when the control IPC is unavailable.
         """
         logger.info("User requested Connection")
+        state_data = get_vpn_state()
+        current_state = state_data.get("state", "idle")
+
+        # Idempotency Guard: If already active, starting, or connected, don't restart services.
+        if current_state in ["active", "starting", "auth", "input", "connected"]:
+            logger.info(f"Connection already in progress (State: {current_state}). Ignoring request.")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
 
         # Halt execution and alert UI if zombie processes refuse to die
         if not _kill_and_poll():

@@ -665,6 +665,12 @@ while true; do
     CMD=""
     read -r -t 2 CMD <&3 || true
     if [[ "$CMD" == "START" ]]; then
+        # Idempotency Guard: Ignore if already active or processes are spinning up
+        if [[ "$(cat "$MODE_FILE" 2>/dev/null)" == "active" ]] || pgrep -x gpservice >/dev/null || pgrep -x gpclient >/dev/null; then
+            log "WARN" "Received START signal but connection is already active or starting. Ignoring."
+            continue
+        fi
+
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 
