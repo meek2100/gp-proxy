@@ -733,7 +733,7 @@ while true; do
 
             echo "[Entrypoint] Executing: $SAFE_CMD" >> "$SERVICE_LOG"
             # Ensure the stdin proxy inherits the environment correctly and outputs unbuffered
-            # Removing 'script' to eliminate potential buffering/TTY issues in the pipeline
+            # Removing script command to eliminate potential buffering/TTY issues in the pipeline
             PYTHONPATH="/opt/gp-proxy" RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
                 IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
                 python3 -u /opt/gp-proxy/stdin_proxy.py | $SAFE_CMD >> "$CLIENT_LOG" 2>&1
