@@ -985,6 +985,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 sanitized_input: str = user_input.strip().replace("\r", "").replace("\n", "")
                 logger.info(f"User submitted input (Length: {len(sanitized_input)})")
 
+                # Tiny safety delay to ensure the pipe is ready in the background loop
+                import time
+
+                time.sleep(0.5)
+
                 success: bool = send_ipc_message(IPC_STDIN_PORT, sanitized_input + "\n")
                 if success:
                     self.send_response(200)

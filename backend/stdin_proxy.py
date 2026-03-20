@@ -50,6 +50,7 @@ def main() -> None:
                                 data: bytes = c.recv(4096)
                                 if not data:
                                     break
+                                logger.info(f"Stdin Proxy received {len(data)} bytes, forwarding to stdout")
                                 sys.stdout.buffer.write(data)
                                 sys.stdout.buffer.flush()
                 except (OSError, TimeoutError):  # fmt: skip
