@@ -87,7 +87,7 @@ When the mode is set to `standard` or `proxy`, you can configure exactly which p
 - **`socks4a`:** SOCKS4a proxy (supports remote DNS) on Port 1085.
 - **`http`:** Standard HTTP proxy on Port 8080.
 - **`https`:** TLS-encrypted proxy on Port 8443. Auto-generates a local certificate.
-- **`ss`:** Shadowsocks encrypted proxy on Port 8388. (Note: Use `SS_AUTH` environment variable for `cipher-method:password`. Defaults to `chacha20:password` if omitted).
+- **`ss`:** Shadowsocks encrypted proxy on Port 8388. (Note: Use `SS_AUTH` environment variable for `cipher-method:password`. Defaults to `chacha20-ietf-poly1305:password` if omitted).
 
 ## Advanced Networking: Smart Split-Tunneling
 

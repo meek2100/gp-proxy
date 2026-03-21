@@ -365,7 +365,7 @@ start_proxies() {
                             SS_DEFAULT_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
 
                             # Save credentials securely inside the container so the user can retrieve them
-                            echo "Cipher: chacha20" >"$RUNTIME_DIR/ss_credentials.txt"
+                            echo "Cipher: chacha20-ietf-poly1305" >"$RUNTIME_DIR/ss_credentials.txt"
                             echo "Password: ${SS_DEFAULT_PASS}" >>"$RUNTIME_DIR/ss_credentials.txt"
                             chown gpuser:gpuser "$RUNTIME_DIR/ss_credentials.txt"
                             chmod 600 "$RUNTIME_DIR/ss_credentials.txt"
@@ -373,7 +373,7 @@ start_proxies() {
                             log "WARN" "Shadowsocks auth missing. Auto-generated credentials saved securely."
                             log "WARN" "-> To view them, run: docker exec -it $(hostname) cat $RUNTIME_DIR/ss_credentials.txt"
 
-                            proxy_args+=("-L=ss://chacha20:${SS_DEFAULT_PASS}@:8388")
+                            proxy_args+=("-L=ss://chacha20-ietf-poly1305:${SS_DEFAULT_PASS}@:8388")
                         else
                             proxy_args+=("-L=ss://${ss_auth_prefix}:8388")
                         fi

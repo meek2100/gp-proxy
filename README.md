@@ -2,7 +2,7 @@
 
 # GP Proxy & Client
 
-A Dockerized VPN client that provides a **SOCKS5 proxy** and a **Transparent Gateway** for GP-compatible VPNs. It features a modern Web UI, SSO (SAML) authentication support, and a cross-platform desktop companion app (`gp-client-proxy`) to manage connections seamlessly.
+A Dockerized VPN client that provides **multiple proxy protocols** (SOCKS5, SOCKS4/4a, HTTP/S, Shadowsocks) and a **Transparent Gateway** for GP-compatible VPNs. It features a modern Web UI, SSO (SAML) authentication support, and a cross-platform desktop companion app (`gp-client-proxy`) to manage connections seamlessly.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-build-blue)
@@ -12,7 +12,7 @@ A Dockerized VPN client that provides a **SOCKS5 proxy** and a **Transparent Gat
 
 - **Full SSO Support:** Works with MFA/2FA and SAML authentication (Okta, Microsoft Entra ID, etc.).
 - **Two Operation Modes:**
-    - **SOCKS5 Proxy:** Route specific apps' traffic through the VPN (Port 1080).
+    - **Multiple Proxy Protocols:** Simultaneously run SOCKS5 (1080), SOCKS4 (1084), SOCKS4a (1085), HTTP (8080), HTTPS (8443), and Shadowsocks (8388) via the `PROXY_MODE` variable.
     - **Transparent Gateway:** Route entire devices (AppleTV, PlayStation, etc.) through the VPN by setting their Gateway IP.
 - **Desktop Companion App:** A Rust-based CLI dashboard (`gp-client-proxy`) for Windows, Linux, and macOS that handles protocol links and manages connection state.
 - **Web Dashboard:** A responsive web UI to view status, logs, and connection details.
@@ -113,27 +113,32 @@ DNS Server:    192.168.1.50
 
 ### Environment Variables (Docker)
 
-| Variable         | Description                                        | Default    |
-| ---------------- | -------------------------------------------------- | ---------- |
-| `VPN_PORTAL`     | **Required.** The URL of your VPN portal.          | `None`     |
-| `VPN_MODE`       | `standard` (Socks+Gateway), `socks`, or `gateway`. | `standard` |
-| `VPN_GATEWAY`    | Manually specify a GP Gateway IP (advanced).       | `None`     |
-| `VPN_HIP_REPORT` | Enable Host Integrity Protocol (HIP) reporting.    | `false`    |
-| `VPN_OS`         | Spoof client OS (`Linux`, `Windows`, `Mac`).       | `Linux`    |
-| `LOG_LEVEL`      | Logging verbosity (`INFO`, `DEBUG`, `TRACE`).      | `INFO`     |
+| Variable       | Description                                                                        | Default    |
+| -------------- | ---------------------------------------------------------------------------------- | ---------- |
+| `VPN_PORTAL`   | **Required.** The URL of your VPN portal.                                          | `None`     |
+| `VPN_MODE`     | `standard` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent only). | `standard` |
+| `PROXY_MODE`   | Comma-separated: `socks5,socks4,socks4a,http,https,ss`. Controls active proxies.   | `socks5`   |
+| `SPLIT_TUNNEL` | `true` enables Smart Split-Tunneling (corp traffic via VPN, personal via LAN).     | `false`    |
+| `PROXY_AUTH`   | Basic proxy auth `user:password` (applies to SOCKS5/4/4a, HTTP/S).                 | `None`     |
+| `SS_AUTH`      | Shadowsocks auth `cipher:password`. Default cipher: `chacha20-ietf-poly1305`.      | Auto       |
+| `API_TOKEN`    | Static token to lock down the API. Disables TOFU pairing when set.                 | `None`     |
+| `LOG_LEVEL`    | Logging verbosity (`INFO`, `DEBUG`).                                               | `INFO`     |
 
 ---
 
 ## 🔒 Security Considerations
 
-**Token Storage in the Desktop App:**
-If you configure an `API_TOKEN` to lock down your Docker container, the Desktop Companion App (`gp-client-proxy`) will prompt you for this token during setup. The app stores the proxy URL and your session token in plaintext within the OS's standard user configuration directory:
+**Security Model:**
+The Desktop Companion App (`gp-client-proxy`) uses a **Trust On First Use (TOFU)** Ed25519 keypair to authenticate with the container — no static passwords or plaintext tokens are ever stored.
 
-- **Windows:** `%APPDATA%\gpproxy\client\proxy_url.txt`
-- **macOS:** `~/Library/Application Support/com.gpproxy.client/proxy_url.txt`
-- **Linux:** `~/.config/gpproxy/client/proxy_url.txt`
+- **On first run**, the app generates an Ed25519 keypair and issues a one-time `POST /api/pair` to register the public key with the container.
+- **On all subsequent requests**, the app signs `"{timestamp}:{path}"` with its private key and attaches `X-Signature` and `X-Timestamp` headers. The container verifies these to authorize commands.
+- The private key is stored on disk with **`0600` permissions** (owner-only read/write) inside the OS user config directory:
+    - **Windows:** `%APPDATA%\gpproxy\client\`
+    - **macOS:** `~/Library/Application Support/com.gpproxy.client/`
+    - **Linux:** `~/.config/gpproxy/client/`
 
-It relies on the inherent OS-level file permissions to protect this file from other users on the system. Security-conscious users operating in shared environments should ensure appropriate directory permissions are set, or provide the token dynamically via environment variables if strict zero-footprint operation is required.
+If you prefer a static credential, set `API_TOKEN` in the container environment. This disables TOFU pairing and requires all clients to pass the token as a `Bearer` header instead.
 
 ---
 
@@ -173,7 +178,7 @@ The GP Proxy system consists of two primary "Agents" working in tandem: the **Co
 This agent runs inside the Docker container and is responsible for maintaining the actual VPN connection and routing traffic.
 
 - **Components:**
-- `entrypoint.sh`: The supervisor. It manages network interfaces (`iptables`, `tun0`), starts the SOCKS proxy (`microsocks`), and monitors process health.
+- `entrypoint.sh`: The supervisor. It manages network interfaces (`iptables`, `tun0`), starts the multi-protocol proxy engine (`gost`), and monitors process health.
 - `server.py`: A Python-based HTTP control server (Port 8001). It serves the Web UI and listens for commands.
 - `gpclient`: The underlying OpenConnect wrapper that speaks the proprietary GP protocol.
 - **Responsibilities:**
