@@ -67,4 +67,4 @@ def test_callback_content_verification() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    pytest.main([__file__])  # pyright: ignore[reportUnknownMemberType]
