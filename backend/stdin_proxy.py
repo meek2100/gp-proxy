@@ -8,7 +8,9 @@ via the web UI, and pipes them directly into stdout. The bash entrypoint capture
 stream and injects it securely into the running VPN client's stdin.
 """
 
+import datetime
 import logging
+import os
 import select
 import socket
 import sys
@@ -50,10 +52,14 @@ def main() -> None:
                                 data: bytes = c.recv(4096)
                                 if not data:
                                     break
-                                logger.info(f"Stdin Proxy received {len(data)} bytes, forwarding to stdout")
+                                timestamp = datetime.datetime.now().isoformat()
+                                logger.info(
+                                    f"Stdin Proxy received {len(data)} bytes at {timestamp}, forwarding to stdout"
+                                )
                                 sys.stdout.buffer.write(data)
                                 sys.stdout.buffer.flush()
                                 sys.stdout.flush()
+                                logger.info(f"Stdin Proxy write to stdout complete (PID: {os.getpid()})")
                 except (OSError, TimeoutError):  # fmt: skip
                     # Log transient socket errors and continue the daemon loop
                     logger.exception("Socket error during accept/recv")

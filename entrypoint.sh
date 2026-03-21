@@ -737,15 +737,16 @@ while true; do
             rm -f "$VPN_FIFO"
             mkfifo "$VPN_FIFO"
             chmod 666 "$VPN_FIFO"
+            echo "[Entrypoint] Created FIFO at $VPN_FIFO" >> "$SERVICE_LOG"
 
             # Start the python proxy in the background, writing to the FIFO
             PYTHONPATH="/opt/gp-proxy" RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
                 IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
                 python3 -u /opt/gp-proxy/stdin_proxy.py > "$VPN_FIFO" &
 
-            # Start gpclient in the background, reading from the FIFO
+            # Start gpclient in the background, reading from the FIFO via cat to keep it stable
             # We use eval/runuser to ensure it inherits environment correctly
-            $SAFE_CMD < "$VPN_FIFO" >> "$CLIENT_LOG" 2>&1
+            (cat "$VPN_FIFO") | $SAFE_CMD >> "$CLIENT_LOG" 2>&1
         '
 
         # 3. Cleanup after disconnect

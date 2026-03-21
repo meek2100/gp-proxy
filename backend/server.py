@@ -988,7 +988,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # Tiny safety delay to ensure the pipe is ready in the background loop
                 import time
 
-                time.sleep(0.5)
+                time.sleep(1.0)
 
                 success: bool = send_ipc_message(IPC_STDIN_PORT, sanitized_input + "\n")
                 if success:
