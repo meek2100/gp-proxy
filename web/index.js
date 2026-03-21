@@ -326,7 +326,7 @@ async function triggerConnect() {
         btn.classList.add("btn-disabled");
         btn.innerText = "Starting...";
     }
-    setBadge("Starting...", "connecting");
+    setBadge("CONNECTING...", "connecting");
     setView("connecting");
     window.expectedNextState = "connecting";
     isRestarting = true;
@@ -418,7 +418,7 @@ async function handleFormSubmit(event) {
         await fetch("/submit", getFetchOptions("POST", formData));
         setView("connecting");
         window.vpnState = "connecting";
-        setBadge("Connecting...", "connecting");
+        setBadge("CONNECTING...", "connecting");
         event.target.reset();
     } catch (e) {
         console.error("Form submit failed:", e);
