@@ -1,11 +1,7 @@
 # File: backend/stdin_proxy.py
 """
-Container Agent - Standard Input Proxy.
-
-Bridges the Python HTTP server and the OpenConnect subprocess. It listens on a local
-TCP port for sensitive authentication payloads (like passwords or SAML callbacks) submitted
-via the web UI, and pipes them directly into stdout. The bash entrypoint captures this
-stream and injects it securely into the running VPN client's stdin.
+Stdin Proxy: Receives data from a local TCP socket and forwards it to the
+running VPN client's standard input.
 """
 
 import datetime
@@ -15,7 +11,13 @@ import select
 import socket
 import sys
 
-from utils import IPC_STDIN_PORT, setup_logger
+# Ensure we can import from the parent directory if run as a script
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from backend.utils import IPC_STDIN_PORT, setup_logger
+except ImportError:
+    from utils import IPC_STDIN_PORT, setup_logger  # type: ignore
 
 logger: logging.Logger = setup_logger("stdin_proxy")
 

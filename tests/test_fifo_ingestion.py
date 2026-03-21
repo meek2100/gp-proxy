@@ -15,7 +15,7 @@ import pytest
 from backend.utils import IPC_STDIN_PORT
 
 
-def test_pipe_pipeline_flow():
+def test_pipe_pipeline_flow() -> None:
     """
     Verifies that data sent via IPC reaches a consumer reading from a pipe.
     Simulates the entrypoint.sh architecture using cross-platform pipes.
@@ -23,9 +23,9 @@ def test_pipe_pipeline_flow():
     # Use os.pipe() which works on both Unix and Windows for redirection
     r, w = os.pipe()
 
-    received_data = []
+    received_data: list[str] = []
 
-    def mock_client_reader():
+    def mock_client_reader() -> None:
         # Simulation of the background reader
         with os.fdopen(r, "rb") as f:
             while True:
@@ -41,7 +41,9 @@ def test_pipe_pipeline_flow():
     # Start the stdin_proxy in a subprocess
     # We pass the write end of the pipe as stdout
     proxy_proc = subprocess.Popen(
-        [sys.executable, "-u", "backend/stdin_proxy.py"], stdout=w, env={**os.environ, "PYTHONPATH": "."}
+        [sys.executable, "-u", "backend/stdin_proxy.py"],
+        stdout=w,
+        env=dict(os.environ, PYTHONPATH="."),
     )
 
     try:

@@ -15,7 +15,7 @@ import pytest
 from backend.utils import IPC_STDIN_PORT
 
 
-def test_callback_content_verification():
+def test_callback_content_verification() -> None:
     """
     Verifies that the exact callback content travels from the server/socket
     all the way to a consumer using in-memory verification to avoid Windows file locks.
@@ -24,9 +24,9 @@ def test_callback_content_verification():
 
     # Use a real globalprotectcallback string
     expected_callback = "globalprotectcallback://lehvpn.snapone.com/SAML20/SP/ACS?v=1&t=12345"
-    received_content = []
+    received_content: list[str] = []
 
-    def mock_gpclient_consumer():
+    def mock_gpclient_consumer() -> None:
         with os.fdopen(r, "rb") as f_in:
             while True:
                 line = f_in.readline()
@@ -40,7 +40,9 @@ def test_callback_content_verification():
 
     # Start stdin_proxy redirected to pipe
     proxy_proc = subprocess.Popen(
-        [sys.executable, "-u", "backend/stdin_proxy.py"], stdout=w, env={**os.environ, "PYTHONPATH": "."}
+        [sys.executable, "-u", "backend/stdin_proxy.py"],
+        stdout=w,
+        env=dict(os.environ, PYTHONPATH="."),
     )
 
     try:

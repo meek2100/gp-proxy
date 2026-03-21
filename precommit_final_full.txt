@@ -1,0 +1,45 @@
+trim trailing whitespace.................................................Passed
+fix end of files.........................................................Passed
+check yaml...............................................................Passed
+check json...............................................................Passed
+check for added large files..............................................Passed
+mixed line ending........................................................Passed
+detect private key.......................................................Passed
+don't commit to branch...................................................Passed
+check for merge conflicts................................................Passed
+check that executables have shebangs.....................................Passed
+check that scripts with shebangs are executable..........................Passed
+Check/Add Context Headers................................................Passed
+ruff format..............................................................Passed
+prettier.................................................................Passed
+shfmt....................................................................Passed
+ruff check...............................................................Passed
+shellcheck...............................................................Passed
+codespell................................................................Passed
+yamllint.................................................................Passed
+Hadolint.................................................................Passed
+Lint GitHub Actions workflow files.......................................Passed
+Validate docker compose files...........................................Skipped
+mypy.....................................................................Failed
+- hook id: mypy
+- exit code: 2
+
+backend\utils.py: error: Source file found twice under different module names:
+"utils" and "backend.utils"
+backend\utils.py: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#mapping-file-paths-to-modules for more info
+backend\utils.py: note: Common resolutions include: a) adding `__init__.py` somewhere, b) using `--explicit-package-bases` or adjusting MYPYPATH
+Found 1 error in 1 file (errors prevented further checking)
+
+pyright..................................................................Failed
+- hook id: pyright
+- exit code: 1
+
+c:\Users\dtheurer\GitHub\gp-proxy\tests\test_callback_e2e.py
+  c:\Users\dtheurer\GitHub\gp-proxy\tests\test_callback_e2e.py:70:5 - error: Type of "main" is unknown (reportUnknownMemberType)
+c:\Users\dtheurer\GitHub\gp-proxy\tests\test_fifo_ingestion.py
+  c:\Users\dtheurer\GitHub\gp-proxy\tests\test_fifo_ingestion.py:70:5 - error: Type of "main" is unknown (reportUnknownMemberType)
+2 errors, 0 warnings, 0 informations
+
+rustfmt..................................................................Passed
+cargo check..............................................................Passed
+cargo clippy.............................................................Passed
