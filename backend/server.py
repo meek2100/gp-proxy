@@ -71,7 +71,6 @@ STATIC_PROXY_AUTH_ENABLED: bool = (os.getenv("PROXY_AUTH_ENABLED", "false").lowe
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 GATEWAY_REGEX = re.compile(r"(?:>|\s)*([A-Za-z0-9\-\.]+\s+\([A-Za-z0-9\-\.]+\))")
 URL_PATTERN = re.compile(r'(https?://[^\s"<>]+)')
-SAML_REGEX = re.compile(r"<saml-request>([A-Za-z0-9+/=]+)</saml-request>")
 
 
 class VPNState(TypedDict):
@@ -374,8 +373,9 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
 
 def _extract_sso_url(full_log_content: str, port: int) -> str:
     """
-    Parses the complete log string to extract the most recent valid SAML SSO callback URL.
-    Prioritizes decoding raw SAML request XML blocks to find the direct login provider.
+    Parses the complete log string to extract the most recent valid SSO URL.
+    Returns the last URL found in the log that is not from the local web server,
+    which naturally resolves to the gpauth embedded auth server URL.
 
     Parameters:
         full_log_content (str): The entire readable log context as a string.
@@ -384,30 +384,9 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
     Returns:
         str: The most recent SSO URL found, or an empty string if none exist.
     """
-    # 1. Look for SAML XML block first (Most reliable for direct SSO)
-    saml_match = SAML_REGEX.search(full_log_content)
-    if saml_match:
-        try:
-            # Decode the base64 blob to get the direct SAML redirect URL
-            decoded = base64.b64decode(saml_match.group(1)).decode("utf-8")
-            # Extract URL from decoded XML or text
-            urls = URL_PATTERN.findall(decoded)
-            if urls:
-                # Cast to str to satisfy strict mypy [no-any-return]
-                return str(urls[0]).rstrip(".,;:")
-
-        except Exception:
-            logger.debug("Failed to decode SAML request blob")
-
-    # 2. Fallback to scraping URLs from the log text
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if found_urls:
-        # Filter out self-referential callback URLs and prioritize HTTPS for the provider
-        remote_urls = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u and u.startswith("https")]
-        if remote_urls:
-            return remote_urls[-1].rstrip(".,;:")
-
-        local_urls = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
+        local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
         best_url = local_urls[-1] if local_urls else found_urls[-1]
         return best_url.rstrip(".,;:")
     return ""
@@ -479,10 +458,12 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
 
     # Overarching full-log context checks
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
-        if analysis_acc["state"] not in ["input", "error", "connected"]:
+        if analysis_acc["state"] not in ["input", "error", "connected", "connecting"]:
             analysis_acc["state"] = "auth"
 
-        analysis_acc["sso_url"] = _extract_sso_url(full_log_content, PORT)
+        # Only surface the SSO URL when actively in auth state — not after connecting
+        if analysis_acc["state"] == "auth":
+            analysis_acc["sso_url"] = _extract_sso_url(full_log_content, PORT)
 
     return analysis_acc
 
