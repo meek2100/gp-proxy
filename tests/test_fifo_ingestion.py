@@ -1,11 +1,19 @@
+# File: tests/test_fifo_ingestion.py
+"""
+Tests for verifying that data sent via IPC reaches a consumer reading from a pipe.
+"""
+
 import os
-import time
 import socket
-import threading
 import subprocess
-import pytest
 import sys
+import threading
+import time
+
+import pytest
+
 from backend.utils import IPC_STDIN_PORT
+
 
 def test_pipe_pipeline_flow():
     """
@@ -19,7 +27,7 @@ def test_pipe_pipeline_flow():
 
     def mock_client_reader():
         # Simulation of the background reader
-        with os.fdopen(r, 'rb') as f:
+        with os.fdopen(r, "rb") as f:
             while True:
                 line = f.readline()
                 if not line:
@@ -33,14 +41,12 @@ def test_pipe_pipeline_flow():
     # Start the stdin_proxy in a subprocess
     # We pass the write end of the pipe as stdout
     proxy_proc = subprocess.Popen(
-        [sys.executable, "-u", "backend/stdin_proxy.py"],
-        stdout=w,
-        env={**os.environ, "PYTHONPATH": "."}
+        [sys.executable, "-u", "backend/stdin_proxy.py"], stdout=w, env={**os.environ, "PYTHONPATH": "."}
     )
 
     try:
-        time.sleep(1) # Wait for proxy to bind
-        
+        time.sleep(1)  # Wait for proxy to bind
+
         # Send data to the proxy socket
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect(("127.0.0.1", IPC_STDIN_PORT))
@@ -49,13 +55,14 @@ def test_pipe_pipeline_flow():
 
         # Give it a moment to traverse
         time.sleep(1)
-        
+
         assert "globalprotectcallback://test-token" in received_data
-        
+
     finally:
         proxy_proc.terminate()
         proxy_proc.wait()
-        os.close(w) # Reader will see EOF
+        os.close(w)  # Reader will see EOF
+
 
 if __name__ == "__main__":
     pytest.main([__file__])
