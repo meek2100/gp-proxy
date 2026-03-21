@@ -732,11 +732,20 @@ while true; do
             SAFE_CMD=$(printf "%q " "${args[@]}")
 
             echo "[Entrypoint] Executing: $SAFE_CMD" >> "$SERVICE_LOG"
-            # Ensure the stdin proxy inherits the environment correctly and outputs unbuffered
-            # Removing script command to eliminate potential buffering/TTY issues in the pipeline
+            # Use a Named Pipe (FIFO) to bypass sudo native stdin consumption
+            VPN_FIFO="/tmp/vpn_input"
+            rm -f "$VPN_FIFO"
+            mkfifo "$VPN_FIFO"
+            chmod 666 "$VPN_FIFO"
+
+            # Start the python proxy in the background, writing to the FIFO
             PYTHONPATH="/opt/gp-proxy" RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
                 IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
-                python3 -u /opt/gp-proxy/stdin_proxy.py | $SAFE_CMD >> "$CLIENT_LOG" 2>&1
+                python3 -u /opt/gp-proxy/stdin_proxy.py > "$VPN_FIFO" &
+
+            # Start gpclient in the background, reading from the FIFO
+            # We use eval/runuser to ensure it inherits environment correctly
+            $SAFE_CMD < "$VPN_FIFO" >> "$CLIENT_LOG" 2>&1
         '
 
         # 3. Cleanup after disconnect

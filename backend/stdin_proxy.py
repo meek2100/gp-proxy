@@ -53,6 +53,7 @@ def main() -> None:
                                 logger.info(f"Stdin Proxy received {len(data)} bytes, forwarding to stdout")
                                 sys.stdout.buffer.write(data)
                                 sys.stdout.buffer.flush()
+                                sys.stdout.flush()
                 except (OSError, TimeoutError):  # fmt: skip
                     # Log transient socket errors and continue the daemon loop
                     logger.exception("Socket error during accept/recv")

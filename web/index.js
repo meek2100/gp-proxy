@@ -417,7 +417,8 @@ async function handleFormSubmit(event) {
     try {
         await fetch("/submit", getFetchOptions("POST", formData));
         setView("connecting");
-        setBadge("CONNECTING...", "connecting");
+        window.vpnState = "connecting";
+        setBadge("Connecting...", "connecting");
         event.target.reset();
     } catch (e) {
         console.error("Form submit failed:", e);
