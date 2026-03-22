@@ -698,7 +698,7 @@ while true; do
             set -o pipefail
             > "$CLIENT_LOG"
 
-            declare -a args=(sudo gpclient)
+            declare -a args=(sudo -E gpclient)
 
             [[ -n "$GP_VERBOSITY" ]] && args+=("$GP_VERBOSITY")
             args+=(--fix-openssl connect "$VPN_PORTAL" --browser remote)
