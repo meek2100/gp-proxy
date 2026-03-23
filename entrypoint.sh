@@ -205,6 +205,10 @@ RAW_LOCAL_SUBNETS=$(get_env_value "LOCAL_SUBNETS" "local_subnets")
 LOCAL_SUBNETS=$(clean_val "$RAW_LOCAL_SUBNETS")
 export LOCAL_SUBNETS
 
+RAW_LOCAL_DOMAINS=$(get_env_value "LOCAL_DOMAINS" "local_domains")
+LOCAL_DOMAINS=$(clean_val "$RAW_LOCAL_DOMAINS")
+export LOCAL_DOMAINS
+
 # ==============================================================================
 # 2. RUNTIME SETUP
 # ==============================================================================
@@ -500,6 +504,7 @@ else
     # Extract the original docker container DNS to use as the local fallback
     DNS_TO_APPLY=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | grep -v "127.0.0.1" | head -n 2 | paste -sd " " || echo "8.8.8.8 1.1.1.1")
 fi
+export DOCKER_DNS="$DNS_TO_APPLY"
 
 log "INFO" "Base Upstream Local DNS identified as: $DNS_TO_APPLY"
 
@@ -698,7 +703,7 @@ while true; do
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
             RUNTIME_DIR="$RUNTIME_DIR" MODE_FILE="$MODE_FILE" IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
             BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" \
-            LOG_LEVEL="$LOG_LEVEL" VPN_MODE="$VPN_MODE" LOCAL_SUBNETS="$LOCAL_SUBNETS" \
+            LOG_LEVEL="$LOG_LEVEL" VPN_MODE="$VPN_MODE" LOCAL_SUBNETS="$LOCAL_SUBNETS" LOCAL_DOMAINS="$LOCAL_DOMAINS" DOCKER_DNS="$DOCKER_DNS" \
             bash -c '
             set -o pipefail
             > "$CLIENT_LOG"

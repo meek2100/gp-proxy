@@ -85,6 +85,25 @@ if [[ "$reason" == "connect" ]]; then
             done
             echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for domains: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>"$SERVICE_LOG"
         fi
+
+        # 5.1 Manual Local Domain Overrides (Split-DNS Bypass)
+        # Force specific domains to resolve via the Local/LAN DNS instead of the VPN
+        if [[ -n "$LOCAL_DOMAINS" ]]; then
+            # Priority: Use LOCAL_DNS if explicitly set, otherwise use captured DOCKER_DNS from launch
+            RESOLVER_TO_USE="${LOCAL_DNS:-$DOCKER_DNS}"
+            if [[ -n "$RESOLVER_TO_USE" ]]; then
+                IFS=',' read -ra LDOMAINS <<<"$LOCAL_DOMAINS"
+                for d in "${LDOMAINS[@]}"; do
+                    for ip in $RESOLVER_TO_USE; do
+                        echo "server=/$d/$ip" >>/etc/dnsmasq.d/10-vpn.conf
+                        # Ensure these resolve via eth0 (local network)
+                        ip route add "$ip" dev eth0 2>/dev/null || ip route replace "$ip" dev eth0 2>/dev/null || true
+                    done
+                done
+                echo "[vpnc-wrapper] Local Domain Overrides configured: $LOCAL_DOMAINS -> $RESOLVER_TO_USE" >>"$SERVICE_LOG"
+            fi
+        fi
+
         # Restart dnsmasq to apply /etc/dnsmasq.d/ changes (SIGHUP is insufficient for directory configs)
         pkill dnsmasq || true
         # Restart with the same settings as entrypoint.sh (verbose logging if enabled)
