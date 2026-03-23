@@ -219,18 +219,30 @@ if [[ "$reason" == "connect" ]]; then
         done
     fi
 
+    # Log the current environment to debug variable pass-through issues (Sudo -E)
+    echo "[vpnc-wrapper] Reason: $reason, GW: $DOCKER_GATEWAY, DNS: $DOCKER_DNS" >>"$SERVICE_LOG"
+
     # 9. Global Fix-up for DNS Servers (Bridge Mode compatibility)
     # If the original vpnc-script added host routes for DNS servers as 'scope link' on eth0, they will fail ARP in bridge mode.
     # We force them to use the Docker Gateway.
-    if [[ -n "$DOCKER_GATEWAY" ]]; then
+    # Note: We fallback to DOCKER_GATEWAY detection here if it's missing from the environment.
+    GW_TO_USE="${DOCKER_GATEWAY:-$(ip route show default | awk '/default via / {print $3; exit}')}"
+    if [[ -n "$GW_TO_USE" ]]; then
         # Check both VPN DNS and Local DNS
         for dns_ip in "${VPN_DNS_SERVERS[@]}" $(echo "$DOCKER_DNS" | tr ',' ' '); do
+            [[ -z "$dns_ip" ]] && continue
             if ip route show "$dns_ip" | grep -q "dev eth0" | grep -v -q "via"; then
-                echo "[vpnc-wrapper] Correcting bridge-mode routing for DNS server: $dns_ip via $DOCKER_GATEWAY" >>"$SERVICE_LOG"
-                ip route replace "$dns_ip" via "$DOCKER_GATEWAY" dev eth0 2>/dev/null || true
+                echo "[vpnc-wrapper] Correcting bridge-mode routing for DNS server: $dns_ip via $GW_TO_USE" >>"$SERVICE_LOG"
+                ip route replace "$dns_ip" via "$GW_TO_USE" dev eth0 2>/dev/null || true
             fi
         done
     fi
+
+    # 10. Disable rp_filter (Reverse Path Filtering) to prevent packet drops in split-tunnel scenarios
+    # In multi-homed/ipset-routing environments, the kernel might drop packets arriving on tun0 if it thinks the route should be eth0.
+    for i in /proc/sys/net/ipv4/conf/*/rp_filter; do
+        echo 0 > "$i" 2>/dev/null || true
+    done
 
 elif [[ "$reason" == "disconnect" ]]; then
     rm -f /etc/dnsmasq.d/10-vpn.conf
