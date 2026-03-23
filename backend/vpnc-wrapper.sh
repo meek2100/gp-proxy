@@ -186,7 +186,7 @@ if [[ "$reason" == "connect" ]]; then
         for subnet in "${SUBNETS[@]}"; do
             subnet="$(echo "$subnet" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             [[ -z "$subnet" ]] && continue
-            
+
             # Do not overwrite native directly-connected physical subnets with a gateway route
             if ip route show dev eth0 proto kernel scope link | grep -q -F "$subnet"; then
                 echo "[vpnc-wrapper] Skipping directly-connected local subnet: $subnet" >>"$SERVICE_LOG"
