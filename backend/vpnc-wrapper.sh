@@ -124,6 +124,12 @@ if [[ "$reason" == "connect" ]]; then
         # OpenConnect often installs 0.0.0.0/1 and 128.0.0.0/1 to override the default route without deleting it
         ip route del 0.0.0.0/1 dev tun0 2>/dev/null || true
         ip route del 128.0.0.0/1 dev tun0 2>/dev/null || true
+
+        # Explicitly restore the original docker gateway for eth0 to ensure internet connectivity
+        if [[ -n "$DOCKER_GATEWAY" ]]; then
+            ip route add default via "$DOCKER_GATEWAY" dev eth0 2>/dev/null || ip route replace default via "$DOCKER_GATEWAY" dev eth0 2>/dev/null || true
+            echo "[vpnc-wrapper] Restored original default route: via $DOCKER_GATEWAY dev eth0" >>"$SERVICE_LOG"
+        fi
     else
         # Enforce Full-Tunnel: Ensure the default route points to tun0
         # vpnc-script-orig usually handles this, but we force it here to be certain in macvlan/bridge mixed environments
@@ -162,7 +168,8 @@ if [[ "$reason" == "connect" ]]; then
     # Ensure local subnets always use eth0 to prevent "Dead End" routing when VPN pushes broad 10.0.0.0/8 or 192.168.0.0/16 routes.
     if [[ -n "$LOCAL_SUBNETS" ]]; then
         echo "[vpnc-wrapper] Enforcing Local Network Bypass for: $LOCAL_SUBNETS" >>"$SERVICE_LOG"
-        DEFAULT_GW=$(ip route show default | awk '/default via / {print $3; exit}')
+        # Fallback to DOCKER_GATEWAY if the current table is dominated by tun0
+        DEFAULT_GW="${DOCKER_GATEWAY:-$(ip route show default | awk '/default via / {print $3; exit}')}"
         IFS=',' read -ra SUBNETS <<<"$LOCAL_SUBNETS"
         for subnet in "${SUBNETS[@]}"; do
             # Add with specific device and gateway to ensure eth0 precedence

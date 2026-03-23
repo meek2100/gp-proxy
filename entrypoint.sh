@@ -474,6 +474,14 @@ fi
 
 # --- 2. NETWORK & MODE DETECTION ---
 log "INFO" "Inspecting network environment..."
+
+# Capture the original default gateway before any network modifications
+DOCKER_GATEWAY=$(ip route show default | awk '/default via / {print $3; exit}')
+export DOCKER_GATEWAY
+if [[ -n "$DOCKER_GATEWAY" ]]; then
+    log "INFO" "Captured Original Gateway: $DOCKER_GATEWAY"
+fi
+
 IS_MACVLAN=false
 if ip -d link show eth0 | grep -q "macvlan"; then
     IS_MACVLAN=true
@@ -705,7 +713,7 @@ while true; do
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
             RUNTIME_DIR="$RUNTIME_DIR" MODE_FILE="$MODE_FILE" IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
             BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" \
-            LOG_LEVEL="$LOG_LEVEL" VPN_MODE="$VPN_MODE" LOCAL_SUBNETS="$LOCAL_SUBNETS" LOCAL_DOMAINS="$LOCAL_DOMAINS" DOCKER_DNS="$DOCKER_DNS" \
+            LOG_LEVEL="$LOG_LEVEL" VPN_MODE="$VPN_MODE" LOCAL_SUBNETS="$LOCAL_SUBNETS" LOCAL_DOMAINS="$LOCAL_DOMAINS" DOCKER_DNS="$DOCKER_DNS" DOCKER_GATEWAY="$DOCKER_GATEWAY" \
             bash -c '
             set -o pipefail
             > "$CLIENT_LOG"
