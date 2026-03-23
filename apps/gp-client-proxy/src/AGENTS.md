@@ -2,6 +2,8 @@
 applyTo: "**"
 ---
 
+<!-- File: apps/gp-client-proxy/src/AGENTS.md -->
+
 # apps/gp-client-proxy/src/ — main.rs Implementation Conventions
 
 Rules in this file apply to all source files in `src/` and its subdirectories.
@@ -37,7 +39,7 @@ Never set auth headers manually outside `with_auth()`.
 
 `proxy_url.txt` is a plain-text file with exactly three lines:
 
-```
+```text
 <base_url>          # line 1 — required, trailing slashes stripped on read/write
 <token>             # line 2 — empty string when using TOFU
 <base64_private_key># line 3 — optional, 32-byte Ed25519 key; omit line if not using TOFU

@@ -2,6 +2,8 @@
 applyTo: "**"
 ---
 
+<!-- File: backend/AGENTS.md -->
+
 # backend/ — Python Container Agent Conventions
 
 Rules in this file apply to all Python source files in `backend/` and its subdirectories.

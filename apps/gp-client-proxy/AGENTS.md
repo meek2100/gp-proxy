@@ -2,6 +2,8 @@
 applyTo: "**"
 ---
 
+<!-- File: apps/gp-client-proxy/AGENTS.md -->
+
 # apps/gp-client-proxy/ — Rust Host Agent Conventions
 
 Rules in this file apply to all Rust source files in `apps/gp-client-proxy/` and its subdirectories.

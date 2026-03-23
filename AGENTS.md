@@ -1,3 +1,5 @@
+<!-- File: AGENTS.md -->
+
 # AI Agent Guidelines & Project Architecture
 
 This file is the root constitution for any AI agent interacting with the `gp-proxy` repository.
@@ -145,14 +147,14 @@ The Container Agent stores `_paired_pubkey` strictly in memory. If the container
 
 ### 9. Key Files Reference
 
-**Container (Server)**
+#### Container (Server)
 
 - **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `PROXY_MODE`, `PROXY_AUTH`, `ALLOWED_SUBNETS`, `SPLIT_TUNNEL` watchdog logic, cleanup traps, Python IPC listener endpoints, and `gpclient` invocation.
 - **`backend/server.py`:** Python Control Server. Handles TOFU Ed25519 pairing, dynamic HTML cache busting, and ephemeral UI token injection.
 - **`backend/utils.py`:** Shared Python utility library. Centralizes `IPC_CONTROL_PORT`, `IPC_STDIN_PORT` constants, normalizes execution environment paths, standardizes logging, and contains the cross-platform TCP socket transmission logic.
 - **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets.
 
-**Host (Client)**
+#### Host (Client)
 
 - **`apps/gp-client-proxy/src/main.rs`:** The Rust source code. Implements the Manager TUI, Ed25519 TOFU pairing, auto-discovery, and browser-launch logic.
 - **`apps/gp-client-proxy/Cargo.toml`:** Dependency definitions.

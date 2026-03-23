@@ -2,6 +2,8 @@
 applyTo: "**"
 ---
 
+<!-- File: web/AGENTS.md -->
+
 # web/ — Frontend Conventions
 
 Rules in this file apply to all files in `web/` and its subdirectories.

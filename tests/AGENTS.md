@@ -2,6 +2,8 @@
 applyTo: "**"
 ---
 
+<!-- File: tests/AGENTS.md -->
+
 # tests/ — Python Test Suite Conventions
 
 Rules in this file apply to all files in `tests/` and its subdirectories.
@@ -27,9 +29,11 @@ See `backend/AGENTS.md` for production Python conventions, and the project root 
 ## Private Member Access
 
 - Module-level private functions (e.g., `server._evaluate_line_state`) must be aliased at module scope for readability:
-  ```python
-  evaluate_line_state = server._evaluate_line_state
-  ```
+
+    ```python
+    evaluate_line_state = server._evaluate_line_state
+    ```
+
 - Access private instance attributes (e.g., `manager._last_state`) using a cast to `Any` via `cast(Any, ...)` or a local `Any`-typed variable to satisfy Pyright without broad suppression.
 
 ## Mocking
