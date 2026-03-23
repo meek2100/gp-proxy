@@ -27,12 +27,20 @@ See the project root `AGENTS.md` for project-level architecture, the sandbox pro
 - **Atomic API State:** The nil-check (`_paired_pubkey is None`) **and** the assignment to `_paired_pubkey` must occur inside a single `with _pairing_lock:` acquisition. Splitting the guard across lock boundaries reopens the TOCTOU race.
 - **Idempotent Token Injection:** Operations that modify `index.html` on boot must use `re.sub` regex patterns rather than standard string `.replace()`. The payload must be idempotent to guarantee successful updates after container restarts.
 - **Deterministic Fallbacks:** When generating cache-busting `build_hash` identifiers, avoid stochastic elements like `time.time()`. Fallback identifiers must remain deterministic to preserve immutable cache semantics across restarts.
+- **SSO Intercept Cache:** Implement a thread-safe global cache for SAML redirect URLs. This cache must be populated by the SAML interceptor and exposed via `/api/status` to handle race conditions where the `gpclient` auth listener terminates early.
 - **Process Orchestration:** `_kill_and_poll_unix()` verifies `CAP_KILL` or passwordless `sudo` at boot. If lacking permission to terminate network daemons, it exits with a fatal error instead of failing silently. It relies on `subprocess.run(..., capture_output=True)` to return byte streams satisfying strict Mypy types. Processes refusing to terminate gracefully are escalated to `SIGKILL` (-9).
 
 ## Concurrency & Thread Safety
 
 - Python web server instantiation via `socketserver.ThreadingTCPServer` causes concurrent multi-threaded requests.
 - Background utility functions, especially module-level initialization blocks like `setup_logger`, MUST be wrapped in explicit `threading.Lock()` acquisitions to prevent duplication.
+
+## vpnc-wrapper.sh — Routing & Bridge Rules
+
+- **Universal Cleanup:** The script must iterate over all host routes on `eth0` that lack a gateway and transform them into routes via `DOCKER_GATEWAY`. This prevents ARP failures on LAN DNS and Gateway IPs in Bridge mode.
+- **Shadow Routes:** Broad, high-metric (1024+) routes for `10.0.0.0/8` and `172.16.0.0/12` must be added to the `main` table via `tun0`. This satisfies `rp_filter=1` (Strict) kernel checks when `/proc/sys` is read-only.
+- **Split-Tunnel Guard:** When `SPLIT_TUNNEL=true`, the script must aggressively strip `/1` routes (`0.0.0.0/1`, `128.0.0.0/1`) to prevent the VPN from hijacking all internet traffic, while preserving corporate routes via `ipset`.
+- **Policy Routing:** Ensure `ipset vpn_domains` is used with `fwmark 0x10` and `table 100` for all resolved VPN domains.
 
 ## IPC Execution (control_listener.py / stdin_proxy.py)
 

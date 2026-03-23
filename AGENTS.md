@@ -141,15 +141,27 @@ The SAML flow often ends with a redirect to `globalprotect://...`:
 
 TOFU authentication validates Ed25519 payload `X-Timestamp` strings against a strictly enforced **5-second boundary window** `abs(time.time() - ts) < 5`. Exceeding this window invalidates requests to prevent intercepted local-proxy tokens from being re-issued.
 
-### 7. UDP Beacon Discovery
+### 7. SSO Intercept Cache
+
+To handle race conditions where the `gpclient` auth server shuts down immediately after receiving a response (preventing the browser from following the redirect), `server.py` implements a global SSO interceptor. It caches the latest SAML redirect URL and provides it via `/api/status`, ensuring the Host Agent can always retrieve the correct login URL.
+
+### 8. UDP Beacon Discovery
 
 `server.py` listens on UDP port 32800 to auto-respond to discovery broadcasts from the Host Agent. The UDP Beacon broadcasts the container IP and Port. For security against LAN sniffing, credentials are intentionally omitted from the broadcast payload.
 
-### 8. TOFU Lifecycle & Restarts
+### 9. Bridge Mode Routing (Policy Routing & Shadow Routes)
+
+In Docker Bridge mode, the container must satisfy `rp_filter=1` (Strict Reverse Path Filtering). Since Docker often makes `/proc/sys` read-only, `vpnc-wrapper.sh` implements a **"Shadow Route"** workaround:
+
+1. **Scope Link Correction**: Any host route added to `eth0` without a gateway (common in VPN scripts) is transformed into a route via `DOCKER_GATEWAY` to prevent ARP failures.
+2. **Shadow Routes**: Broad, high-metric routes (e.g., `10.0.0.0/8 dev tun0 metric 1024`) are added to the `main` table. These satisfy the kernel's reverse path check for inbound VPN packets without overriding local network routes.
+3. **Policy Routing**: Traffic marked with `0x10` via `ipset vpn_domains` is forced through `table 100` (`dev tun0`).
+
+### 10. TOFU Lifecycle & Restarts
 
 The Container Agent stores `_paired_pubkey` strictly in memory. If the container restarts, the key is lost and the Host Agent will receive `401 Unauthorized` errors. To recover, the user must re-run the Host Agent setup wizard to wipe the local keypair and re-issue `POST /api/pair`.
 
-### 9. Key Files Reference
+### 11. Key Files Reference
 
 #### Container (Server)
 

@@ -22,9 +22,7 @@ A Dockerized VPN client that provides **multiple proxy protocols** (SOCKS5, SOCK
 
 ## 🛠️ Quick Start
 
-### 1. Start the Server (Docker)
-
-Create a `docker-compose.yml` (or use the one provided) and configure your VPN Portal URL.
+Create a `docker-compose.yml` and configure your VPN Portal.
 
 ```yaml
 services:
@@ -38,49 +36,51 @@ services:
             - /dev/net/tun
         environment:
             - VPN_PORTAL=vpn.yourcompany.com
-            - TZ=America/Los_Angeles
-        # Gateway Mode requires a macvlan or host network to expose a routable IP
-        networks:
-            vpn_net:
-                ipv4_address: 192.168.1.50
-
-networks:
-    vpn_net:
-        driver: macvlan
-        driver_opts:
-            parent: eth0
-        ipam:
-            config:
-                - subnet: 192.168.1.0/24
-                  gateway: 192.168.1.1
+            - SPLIT_TUNNEL=true
+            - LOCAL_SUBNETS=192.168.1.0/24 # Bypass VPN for your Home LAN
+            - PROXY_MODE=socks5,socks4,socks4a,http,https,ss
+            - PROXY_AUTH=user:password
+            - SS_AUTH=aes-256-gcm:password
+            - API_TOKEN=your-api-token
+            - LOG_LEVEL=INFO
+            - LOCAL_DOMAINS=local
+            - VPN_DOMAINS=vpn.yourcompany.com
+            - VPN_SUBNETS=192.168.1.0/24
+            - VPN_MODE=standard
+        ports:
+            - "8001:8001" # Web Dashboard
+            - "32800:32800/udp" # UDP Beacon
+            - "1080:1080" # SOCKS5
+            - "1084:1084" # SOCKS4
+            - "1085:1085" # SOCKS4a
+            - "8080:8080" # HTTP
+            - "8443:8443" # HTTPS
+            - "8388:8388" # Shadowsocks TCP
+            - "8388:8388/udp" # Shadowsocks UDP
 ```
 
 Run the container:
 
 ```bash
 docker-compose up -d
-
 ```
 
-### 2. Set Up the Desktop Client
+### 1. Set Up the Desktop Client
 
 To handle SSO logins (which require a browser), download the **GP Client Proxy** binary for your OS from the [Releases Page](https://github.com/meek2100/gp-proxy/releases).
 
 1. **Run the Application:**
-
-- **Windows:** Double-click `gp-client-proxy.exe`.
-- **Linux/macOS:** Run `./gp-client-proxy` in your terminal.
+    - **Windows:** Double-click `gp-client-proxy.exe`.
+    - **Linux/macOS:** Run `./gp-client-proxy` in your terminal.
 
 2. **Auto-Discovery:**
-
-- The tool will automatically scan your network for the Docker container.
-- If found, it saves the configuration and registers itself to handle `globalprotect://` links.
+    - The tool will automatically scan your network for the Docker container.
+    - If found, it saves the configuration and registers itself to handle `globalprotect://` links.
 
 3. **Connect:**
-
-- Select **[2] Connect VPN** from the menu.
-- Your default browser will open the Company Login page.
-- Once authenticated, the browser passes the token back to the tool, completing the connection.
+    - Select **[2] Connect VPN** from the menu.
+    - Your default browser will open the Company Login page.
+    - Once authenticated, the browser passes the token back to the tool, completing the connection.
 
 ---
 
@@ -94,7 +94,7 @@ Running `gp-client-proxy` opens the management dashboard in your terminal:
 ========================================
    GP Client Proxy Manager
 ========================================
-SERVER:    Online ([http://192.168.1.50:8001](http://192.168.1.50:8001))
+SERVER:    Online (http://192.168.1.50:8001)
 STATUS:    CONNECTED
 MODE:      STANDARD
 
@@ -108,21 +108,25 @@ DNS Server:    192.168.1.50
 3. Re-run Setup / Discovery
 4. Uninstall
 5. Exit
-
 ```
 
 ### Environment Variables (Docker)
 
-| Variable       | Description                                                                        | Default    |
-| -------------- | ---------------------------------------------------------------------------------- | ---------- |
-| `VPN_PORTAL`   | **Required.** The URL of your VPN portal.                                          | `None`     |
-| `VPN_MODE`     | `standard` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent only). | `standard` |
-| `PROXY_MODE`   | Comma-separated: `socks5,socks4,socks4a,http,https,ss`. Controls active proxies.   | `socks5`   |
-| `SPLIT_TUNNEL` | `true` enables Smart Split-Tunneling (corp traffic via VPN, personal via LAN).     | `false`    |
-| `PROXY_AUTH`   | Basic proxy auth `user:password` (applies to SOCKS5/4/4a, HTTP/S).                 | `None`     |
-| `SS_AUTH`      | Shadowsocks auth `cipher:password`. Default cipher: `chacha20-ietf-poly1305`.      | Auto       |
-| `API_TOKEN`    | Static token to lock down the API. Disables TOFU pairing when set.                 | `None`     |
-| `LOG_LEVEL`    | Logging verbosity (`INFO`, `DEBUG`).                                               | `INFO`     |
+| Variable        | Description                                                                        | Default    |
+| :-------------- | :--------------------------------------------------------------------------------- | :--------- |
+| `VPN_PORTAL`    | **Required.** The URL of your VPN portal.                                          | `None`     |
+| `VPN_MODE`      | `standard` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent only). | `standard` |
+| `PROXY_MODE`    | Comma-separated: `socks5,socks4,socks4a,http,https,ss`.                            | `socks5`   |
+| `SPLIT_TUNNEL`  | `true` enables Smart Split-Tunneling.                                              | `false`    |
+| `PROXY_AUTH`    | Basic proxy auth `user:password`.                                                  | `None`     |
+| `SS_AUTH`       | Shadowsocks auth `cipher:password`.                                                | Auto       |
+| `API_TOKEN`     | Static token to lock down the API.                                                 | `None`     |
+| `LOG_LEVEL`     | Logging verbosity (`INFO`, `DEBUG`).                                               | `INFO`     |
+| `LOCAL_SUBNETS` | Comma-separated CIDRs to bypass the VPN (e.g. `192.168.1.0/24`).                   | `None`     |
+| `LOCAL_DOMAINS` | Comma-separated domains to resolve via LAN DNS (e.g. `local`).                     | `None`     |
+| `LOCAL_DNS`     | Primary LAN DNS server for fallback.                                               | Auto       |
+| `VPN_DOMAINS`   | Forceful injection of domains into the VPN tunnel.                                 | Auto       |
+| `VPN_SUBNETS`   | Forceful injection of CIDRs into the VPN tunnel.                                   | Auto       |
 
 ---
 
@@ -132,13 +136,11 @@ DNS Server:    192.168.1.50
 The Desktop Companion App (`gp-client-proxy`) uses a **Trust On First Use (TOFU)** Ed25519 keypair to authenticate with the container — no static passwords or plaintext tokens are ever stored.
 
 - **On first run**, the app generates an Ed25519 keypair and issues a one-time `POST /api/pair` to register the public key with the container.
-- **On all subsequent requests**, the app signs `"{timestamp}:{path}"` with its private key and attaches `X-Signature` and `X-Timestamp` headers. The container verifies these to authorize commands.
-- The private key is stored on disk with **`0600` permissions** (owner-only read/write) inside the OS user config directory:
+- **On all subsequent requests**, the app signs `"{timestamp}:{path}"` with its private key and attaches `X-Signature` and `X-Timestamp` headers.
+- The private key is stored on disk with **`0600` permissions** inside:
     - **Windows:** `%APPDATA%\gpproxy\client\`
     - **macOS:** `~/Library/Application Support/com.gpproxy.client/`
     - **Linux:** `~/.config/gpproxy/client/`
-
-If you prefer a static credential, set `API_TOKEN` in the container environment. This disables TOFU pairing and requires all clients to pass the token as a `Bearer` header instead.
 
 ---
 
@@ -154,66 +156,54 @@ If you prefer a static credential, set `API_TOKEN` in the container environment.
 ```bash
 cd apps/gp-client-proxy
 cargo build --release
-
 ```
 
 **Build Docker Image:**
 
 ```bash
 docker build -t global-protect-proxy .
-
 ```
 
 ---
 
 _GlobalProtect is a trademark of Palo Alto Networks. This project is an unofficial open-source client and is not affiliated with, endorsed by, or authorized by Palo Alto Networks._
 
-# Agent Architecture
+---
+
+## 🧩 Agent Architecture
 
 The GP Proxy system consists of two primary "Agents" working in tandem: the **Container Agent** (running inside Docker) and the **Host Agent** (running on your desktop).
 
-## 1. The Container Agent (Server)
+### 1. The Container Agent (Server)
 
 **Role:** The Core Engine.
 This agent runs inside the Docker container and is responsible for maintaining the actual VPN connection and routing traffic.
 
 - **Components:**
-- `entrypoint.sh`: The supervisor. It manages network interfaces (`iptables`, `tun0`), starts the multi-protocol proxy engine (`gost`), and monitors process health.
-- `server.py`: A Python-based HTTP control server (Port 8001). It serves the Web UI and listens for commands.
-- `gpclient`: The underlying OpenConnect wrapper that speaks the proprietary GP protocol.
+    - `entrypoint.sh`: The supervisor. Manages network interfaces, proxies, and process health.
+    - `server.py`: Python-based HTTP control server (Port 8001).
+    - `gpclient`: Underlying OpenConnect wrapper.
 - **Responsibilities:**
-- Maintains the tunnel interface.
-- Performs Network Address Translation (NAT) for Gateway mode.
-- Receives authentication tokens via the `/submit` endpoint.
+    - Maintains the tunnel interface and NAT.
+    - Implements "Shadow Route" logic for Bridge mode compatibility.
 
-## 2. The Host Agent (GP Client Proxy)
+### 2. The Host Agent (GP Client Proxy)
 
 **Role:** The Bridge & Controller.
-This is the cross-platform Rust binary (`gp-client-proxy`) that runs on the user's physical machine (Windows/Mac/Linux). It bridges the gap between the secure container and the user's desktop environment.
+This is the cross-platform Rust binary (`gp-client-proxy`) that runs on the user's physical machine.
 
 - **Modes of Operation:**
-
-1. **Manager Dashboard (Interactive):**
-
-- Launches a CLI dashboard when run by the user.
-- Auto-discovers the Container Agent on the local network via UDP broadcast.
-- Displays real-time connection status and IP configuration details.
-- Allows the user to trigger "Connect" (launching the browser) or "Disconnect".
-
-2. **Protocol Handler (Background):**
-
-- Registered with the OS to handle `globalprotect://` links.
-- When a user authenticates in the browser, the portal redirects to this custom protocol.
-- The OS wakes up a background instance of the agent, which captures the token and instantly forwards it to the Container Agent's `/submit` endpoint via HTTP.
+    1. **Manager Dashboard (Interactive):** Displays real-time status and allows user control.
+    2. **Protocol Handler (Background):** Registered to handle `globalprotect://` links and forward tokens.
 
 ## Communication Flow
 
-1. **User** clicks "Connect" in the Host Agent (Dashboard).
+1. **User** clicks "Connect" in the Host Agent.
 2. **Host Agent** calls `POST /connect` on the Container.
-3. **Container** generates a SAML Auth URL and returns it.
-4. **Host Agent** opens the System Default Browser to this URL.
-5. **User** logs in via Okta/Microsoft/etc.
+3. **Container** generates and returns a SAML Auth URL.
+4. **Host Agent** opens the default browser to this URL.
+5. **User** logs in via SSO.
 6. **Browser** redirects to `globalprotect://callback/...`
 7. **OS** launches **Host Agent** (Handler Mode).
 8. **Host Agent** forwards the callback URL to the **Container**.
-9. **Container** completes the handshake and establishes the VPN tunnel.
+9. **Container** completes the handshake and establishes the tunnel.

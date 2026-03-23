@@ -37,9 +37,10 @@ See the project root `AGENTS.md` for project-level architecture, the TOFU securi
 
 - Broadcast `GP_DISCOVER` on UDP 32800 to find the container IP automatically rather than requiring manual configuration.
 
-## Status Polling JSON
+## Status Polling & SSO Handling
 
-- The `error` field in `/status.json` must return `None` (resulting in JSON `null`) if no error is present. Parse this field as `Option<String>` and surface the actual API response via `.as_deref().unwrap_or(...)` to prevent silent failure masking.
+- **Auth URL Cache:** The dashboard must prioritize the `auth_url` field returned in `/status.json`. If this field is populated, the Host Agent should present a "Login Required" state and provide a button to launch the browser, regardless of whether a SAML interceptor started recently. This handles race conditions in the SAML handshake.
+- **Fast Status Polling:** Use the localized 2-second fast agent (`get_fast_agent`) for all recurring status checks to prevent the UI from hanging during temporary network fluctuations.
 
 ## Operating Modes
 
