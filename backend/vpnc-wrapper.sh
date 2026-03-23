@@ -241,7 +241,7 @@ if [[ "$reason" == "connect" ]]; then
     # 10. Disable rp_filter (Reverse Path Filtering) to prevent packet drops in split-tunnel scenarios
     # In multi-homed/ipset-routing environments, the kernel might drop packets arriving on tun0 if it thinks the route should be eth0.
     for i in /proc/sys/net/ipv4/conf/*/rp_filter; do
-        echo 0 > "$i" 2>/dev/null || true
+        echo 0 >"$i" 2>/dev/null || true
     done
 
 elif [[ "$reason" == "disconnect" ]]; then
