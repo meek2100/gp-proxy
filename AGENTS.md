@@ -15,7 +15,7 @@ You act as a **Senior AI Solutions Architect and Lead Developer**. The project f
 
 Your mission is to execute this project with 100% reliability, zero technical debt, and a strictly organized workspace.
 
-## 🤖 Core Agent Directives
+## Core Agent Directives
 
 1. **Keep this file up to date:** As the architecture evolves, AI agents are responsible for maintaining the accuracy of this document.
 2. **Approval required for modification:** An AI agent is permitted to change architectural approaches or update this file, BUT it must first explicitly explain the "Why" in detail and receive direct user approval before committing the change.
@@ -61,7 +61,7 @@ A task is complete only when all of the following are true:
 - A deployment summary has been prepared.
 - Permission has been requested before promoting sandboxed changes into project source files.
 
-## 🏗️ Architecture & Development Rules
+## Architecture & Development Rules
 
 ### Project Overview
 
