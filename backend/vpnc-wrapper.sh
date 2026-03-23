@@ -184,7 +184,16 @@ if [[ "$reason" == "connect" ]]; then
         DEFAULT_GW="${DOCKER_GATEWAY:-$(ip route show default | awk '/default via / {print $3; exit}')}"
         IFS=',' read -ra SUBNETS <<<"$LOCAL_SUBNETS"
         for subnet in "${SUBNETS[@]}"; do
-            # Add with specific device and gateway to ensure eth0 precedence
+            subnet="$(echo "$subnet" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            [[ -z "$subnet" ]] && continue
+            
+            # Do not overwrite native directly-connected physical subnets with a gateway route
+            if ip route show dev eth0 proto kernel scope link | grep -q -F "$subnet"; then
+                echo "[vpnc-wrapper] Skipping directly-connected local subnet: $subnet" >>"$SERVICE_LOG"
+                continue
+            fi
+
+            # Add foreign local subnets with specific device and gateway to ensure eth0 precedence
             ip route add "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null ||
                 ip route replace "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null || true
         done
