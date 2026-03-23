@@ -37,7 +37,7 @@ if [[ "$reason" == "connect" ]]; then
         awk '/include-split-tunneling-domain/,/<\/include-split-tunneling-domain>/' |
         sed 's/<[^>]*>//g' |
         tr -s '[:space:]' '\n' |
-        grep '\.' |
+        grep -E '^[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+[a-zA-Z0-9]$' |
         grep -vE '\[|\]|INFO|DEBUG|WARN|ERROR|Mar|202[4-9]|HTTP' |
         grep -vE '^[0-9a-fA-F]{32}$' |
         sed 's/^\*//; s/^\.//' |
