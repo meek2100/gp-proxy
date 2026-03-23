@@ -24,7 +24,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict
 
@@ -36,6 +38,7 @@ from utils import (
     CLIENT_LOG,
     IPC_CONTROL_PORT,
     IPC_STDIN_PORT,
+    MODE_FILE,
     RUNTIME_DIR,
     SERVICE_LOG,
     send_ipc_message,
@@ -47,7 +50,7 @@ logger: logging.Logger = setup_logger("server")
 # --- Configuration & Security Globals ---
 PORT: int = 8001
 UDP_BEACON_PORT: int = 32800
-MODE_FILE: Path = RUNTIME_DIR / "gp-mode"
+# MODE_FILE: Path imported from utils
 
 # Ephemeral session token for local Web GUI authorization
 EPHEMERAL_TOKEN: str = secrets.token_urlsafe(32)
@@ -370,22 +373,60 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
     return sorted(input_options)
 
 
+# --- Global State tracking for internal SSO Interception ---
+_sso_intercept_cache: dict[str, str] = {}
+
+
 def _extract_sso_url(full_log_content: str, port: int) -> str:
     """
-    Parses the complete log string to extract the most recent valid SAML SSO callback URL.
-
-    Parameters:
-        full_log_content (str): The entire readable log context as a string.
-        port (int): The local proxy port to filter out to avoid self-referential links.
-
-    Returns:
-        str: The most recent SSO URL found, or an empty string if none exist.
+    Parses the complete log string to extract the most recent valid SSO URL.
+    Returns the last URL found in the log that is not from the local web server.
+    If the URL points to a local Docker container IP (like Bridge MACs), it intercepts
+    the 302 Redirect to organically satisfy the gpclient state machine requirements
+    while providing the true Azure/Okta SSO URL to the unreachable host browser.
     """
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if found_urls:
         local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
         best_url = local_urls[-1] if local_urls else found_urls[-1]
-        return best_url.rstrip(".,;:")
+        best_url = best_url.rstrip(".,;:")
+
+        # Intercept unreachable local container IP bindings to steal the true SSO redirect
+        if best_url.startswith("http://") and any(x in best_url for x in ["172.", "10.", "192.", "127."]):
+            if best_url in _sso_intercept_cache:
+                return _sso_intercept_cache[best_url]
+
+            try:
+                # Cleanly subclass HTTPRedirectHandler to prevent following redirects safely for type checkers
+                class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+                    def redirect_request(
+                        self, req: object, fp: object, code: int, msg: str, headers: object, newurl: object
+                    ) -> None:
+                        return None
+
+                opener = urllib.request.build_opener(NoRedirectHandler)
+                resp = opener.open(best_url, timeout=3.0)
+                location = resp.getheader("Location")
+                if location:
+                    logging.getLogger(__name__).info(
+                        f"Intercepted local 302 cleanly. True SSO: {str(location)[:50]}..."
+                    )
+                    _sso_intercept_cache[best_url] = str(location)
+                    return str(location)
+            except urllib.error.HTTPError as e:
+                # Fallback if the standard library raises HTTPError on 302s rather than returning them
+                if e.code in (301, 302, 303, 307, 308):
+                    location = e.headers.get("Location")
+                    if location:
+                        logging.getLogger(__name__).info(
+                            f"Intercepted local GP Webserver 302 via exception. True SSO: {str(location)[:50]}..."
+                        )
+                        _sso_intercept_cache[best_url] = str(location)
+                        return str(location)
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed internal mock GET for SSO advancement: {e}")
+
+        return best_url
     return ""
 
 
@@ -455,10 +496,12 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
 
     # Overarching full-log context checks
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
-        if analysis_acc["state"] not in ["input", "error", "connected"]:
+        if analysis_acc["state"] not in ["input", "error", "connected", "connecting"]:
             analysis_acc["state"] = "auth"
 
-        analysis_acc["sso_url"] = _extract_sso_url(full_log_content, PORT)
+        # Only surface the SSO URL when actively in auth state — not after connecting
+        if analysis_acc["state"] == "auth":
+            analysis_acc["sso_url"] = _extract_sso_url(full_log_content, PORT)
 
     return analysis_acc
 
@@ -475,6 +518,7 @@ def get_vpn_state() -> VPNState:
     """
     server_ip: str = get_best_ip()
 
+    mode_is_active: bool = False
     if MODE_FILE.exists():
         try:
             content: str = MODE_FILE.read_text().strip()
@@ -493,10 +537,15 @@ def get_vpn_state() -> VPNState:
                     "server_ip": server_ip,
                     "proxy_auth_enabled": STATIC_PROXY_AUTH_ENABLED,
                 }
+            mode_is_active = content == "active"
         except Exception:
             logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
 
     analysis, log_content = state_manager.get_cached_log_analysis(CLIENT_LOG)
+
+    # Guard against "idle" flicker when the service is active but log is still being wiped/populated
+    if mode_is_active and analysis["state"] == "idle":
+        analysis["state"] = "starting"
 
     if state_manager.update_and_check_transition(analysis["state"]):
         logger.info(f"State Transition: -> {analysis['state']}")
@@ -901,6 +950,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         - Responds 503 with an explanatory message when the control IPC is unavailable.
         """
         logger.info("User requested Connection")
+        state_data = get_vpn_state()
+        current_state = state_data.get("state", "idle")
+
+        # Idempotency Guard: If already active, starting, or connected, don't restart services.
+        if current_state in ["active", "starting", "auth", "input", "connected"]:
+            logger.info(f"Connection already in progress (State: {current_state}). Ignoring request.")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
 
         # Halt execution and alert UI if zombie processes refuse to die
         if not _kill_and_poll():
@@ -913,7 +972,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"OK")
         else:
-            self.send_error(503, "Service not ready (IPC absent)")
+            self.send_error(503, "Control IPC unavailable (service not running?)")
 
     def _handle_disconnect(self) -> None:
         """
@@ -945,13 +1004,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 sanitized_input: str = user_input.strip().replace("\r", "").replace("\n", "")
                 logger.info(f"User submitted input (Length: {len(sanitized_input)})")
 
+                # Tiny safety delay to ensure the pipe is ready in the background loop
+                import time
+
+                time.sleep(1.0)
+
                 success: bool = send_ipc_message(IPC_STDIN_PORT, sanitized_input + "\n")
                 if success:
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(b"OK")
                 else:
-                    self.send_error(503, "Service not ready (IPC absent)")
+                    self.send_error(503, "Stdin IPC unavailable (is VPN starting?)")
             else:
                 self.send_error(400, "Empty input")
         except (ValueError, KeyError, TypeError):  # fmt: skip

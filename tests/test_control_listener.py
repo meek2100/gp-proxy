@@ -287,7 +287,7 @@ class TestMain:
 
                 try:
                     main()
-                except SystemExit, KeyboardInterrupt:
+                except (SystemExit, KeyboardInterrupt):  # fmt: skip
                     pass
 
                 mock_socket_class.assert_called_once_with(socket.AF_INET, socket.SOCK_STREAM)
@@ -304,7 +304,7 @@ class TestMain:
                 with patch("control_listener.IPC_CONTROL_PORT", 32801):
                     try:
                         main()
-                    except SystemExit, KeyboardInterrupt:
+                    except (SystemExit, KeyboardInterrupt):  # fmt: skip
                         pass
 
                     mock_socket.bind.assert_called_once_with(("127.0.0.1", 32801))
@@ -320,7 +320,7 @@ class TestMain:
 
                 try:
                     main()
-                except SystemExit, KeyboardInterrupt:
+                except (SystemExit, KeyboardInterrupt):  # fmt: skip
                     pass
 
                 mock_socket.listen.assert_called_once_with(1)
@@ -351,7 +351,7 @@ class TestMain:
 
                 try:
                     main()
-                except SystemExit, KeyboardInterrupt:
+                except (SystemExit, KeyboardInterrupt):  # fmt: skip
                     pass
 
                 mock_run.assert_called_once_with(mock_socket)

@@ -14,6 +14,7 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+.agents/
 
 # --- Rust (if building locally) ---
 target/
@@ -38,3 +39,4 @@ gp-client.log
 gp-service.log
 gp-stdin
 gp-control
+gp-proxy_log*
