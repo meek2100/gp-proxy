@@ -4,12 +4,12 @@
 # 0. Strip Corporate Split-Include Routes if Split Tunnel is strict
 if [[ "$SPLIT_TUNNEL" == "true" ]]; then
     # We strip CISCO_SPLIT_INC and CISCO_IPV6_SPLIT_INC from the environment
-    # so the original script doesn't forcefully route massive chunks of 
+    # so the original script doesn't forcefully route massive chunks of
     # the public internet (AWS/Cloudflare) over the VPN.
     while IFS= read -r var; do
         [[ -n "$var" ]] && unset "$var"
     done < <(env | awk -F= '/^CISCO_SPLIT_INC_/ || /^CISCO_IPV6_SPLIT_INC_/ {print $1}')
-    
+
     unset CISCO_SPLIT_INC CISCO_IPV6_SPLIT_INC
 fi
 
