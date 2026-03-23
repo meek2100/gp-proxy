@@ -24,7 +24,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict
 
@@ -371,24 +373,60 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
     return sorted(input_options)
 
 
+# --- Global State tracking for internal SSO Interception ---
+_sso_intercept_cache: dict[str, str] = {}
+
+
 def _extract_sso_url(full_log_content: str, port: int) -> str:
     """
     Parses the complete log string to extract the most recent valid SSO URL.
-    Returns the last URL found in the log that is not from the local web server,
-    which naturally resolves to the gpauth embedded auth server URL.
-
-    Parameters:
-        full_log_content (str): The entire readable log context as a string.
-        port (int): The local proxy port to filter out to avoid self-referential links.
-
-    Returns:
-        str: The most recent SSO URL found, or an empty string if none exist.
+    Returns the last URL found in the log that is not from the local web server.
+    If the URL points to a local Docker container IP (like Bridge MACs), it intercepts
+    the 302 Redirect to organically satisfy the gpclient state machine requirements
+    while providing the true Azure/Okta SSO URL to the unreachable host browser.
     """
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if found_urls:
         local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
         best_url = local_urls[-1] if local_urls else found_urls[-1]
-        return best_url.rstrip(".,;:")
+        best_url = best_url.rstrip(".,;:")
+
+        # Intercept unreachable local container IP bindings to steal the true SSO redirect
+        if best_url.startswith("http://") and any(x in best_url for x in ["172.", "10.", "192.", "127."]):
+            if best_url in _sso_intercept_cache:
+                return _sso_intercept_cache[best_url]
+
+            try:
+                # Cleanly subclass HTTPRedirectHandler to prevent following redirects safely for type checkers
+                class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+                    def redirect_request(
+                        self, req: object, fp: object, code: int, msg: str, headers: object, newurl: object
+                    ) -> None:
+                        return None
+
+                opener = urllib.request.build_opener(NoRedirectHandler)
+                resp = opener.open(best_url, timeout=3.0)
+                location = resp.getheader("Location")
+                if location:
+                    logging.getLogger(__name__).info(
+                        f"Intercepted local 302 cleanly. True SSO: {str(location)[:50]}..."
+                    )
+                    _sso_intercept_cache[best_url] = str(location)
+                    return str(location)
+            except urllib.error.HTTPError as e:
+                # Fallback if the standard library raises HTTPError on 302s rather than returning them
+                if e.code in (301, 302, 303, 307, 308):
+                    location = e.headers.get("Location")
+                    if location:
+                        logging.getLogger(__name__).info(
+                            f"Intercepted local GP Webserver 302 via exception. True SSO: {str(location)[:50]}..."
+                        )
+                        _sso_intercept_cache[best_url] = str(location)
+                        return str(location)
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed internal mock GET for SSO advancement: {e}")
+
+        return best_url
     return ""
 
 
