@@ -39,6 +39,7 @@ if [[ "$reason" == "connect" ]]; then
         tr -s '[:space:]' '\n' |
         grep '\.' |
         grep -vE '\[|\]|INFO|DEBUG|WARN|ERROR|Mar|202[4-9]|HTTP' |
+        grep -vE '^[0-9a-fA-F]{32}$' |
         sed 's/^\*//; s/^\.//' |
         sort -u |
         tr '\n' ' ')
@@ -133,6 +134,19 @@ if [[ "$reason" == "connect" ]]; then
 
         iptables -t mangle -C PREROUTING -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null ||
             iptables -t mangle -A PREROUTING -m set --match-set vpn_domains dst -j MARK --set-mark 0x10 2>/dev/null || true
+    fi
+
+    # 8. Force Local Network Bypass
+    # Ensure local subnets always use eth0 to prevent "Dead End" routing when VPN pushes broad 10.0.0.0/8 or 192.168.0.0/16 routes.
+    if [[ -n "$LOCAL_SUBNETS" ]]; then
+        echo "[vpnc-wrapper] Enforcing Local Network Bypass for: $LOCAL_SUBNETS" >>"$SERVICE_LOG"
+        DEFAULT_GW=$(ip route show default | awk '/default via / {print $3; exit}')
+        IFS=',' read -ra SUBNETS <<<"$LOCAL_SUBNETS"
+        for subnet in "${SUBNETS[@]}"; do
+            # Add with specific device and gateway to ensure eth0 precedence
+            ip route add "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null ||
+                ip route replace "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null || true
+        done
     fi
 
 elif [[ "$reason" == "disconnect" ]]; then

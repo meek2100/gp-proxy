@@ -201,6 +201,10 @@ RAW_VPN_SUBNETS=$(get_env_value "VPN_SUBNETS" "vpn_subnets")
 VPN_SUBNETS=$(clean_val "$RAW_VPN_SUBNETS")
 export VPN_SUBNETS
 
+RAW_LOCAL_SUBNETS=$(get_env_value "LOCAL_SUBNETS" "local_subnets")
+LOCAL_SUBNETS=$(clean_val "$RAW_LOCAL_SUBNETS")
+export LOCAL_SUBNETS
+
 # ==============================================================================
 # 2. RUNTIME SETUP
 # ==============================================================================
@@ -694,7 +698,7 @@ while true; do
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
             RUNTIME_DIR="$RUNTIME_DIR" MODE_FILE="$MODE_FILE" IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
             BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" \
-            LOG_LEVEL="$LOG_LEVEL" VPN_MODE="$VPN_MODE" \
+            LOG_LEVEL="$LOG_LEVEL" VPN_MODE="$VPN_MODE" LOCAL_SUBNETS="$LOCAL_SUBNETS" \
             bash -c '
             set -o pipefail
             > "$CLIENT_LOG"
