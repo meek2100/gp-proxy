@@ -101,6 +101,11 @@ if [[ "$reason" == "connect" ]]; then
         # OpenConnect often installs 0.0.0.0/1 and 128.0.0.0/1 to override the default route without deleting it
         ip route del 0.0.0.0/1 dev tun0 2>/dev/null || true
         ip route del 128.0.0.0/1 dev tun0 2>/dev/null || true
+    else
+        # Enforce Full-Tunnel: Ensure the default route points to tun0
+        # vpnc-script-orig usually handles this, but we force it here to be certain in macvlan/bridge mixed environments
+        echo "[vpnc-wrapper] Enforcing Full-Tunnel: Ensuring default route points to tun0" >>"$SERVICE_LOG"
+        ip route replace default dev tun0 2>/dev/null || true
     fi
 
     # Note: Standard vpnc-script already auto-routes CISCO_SPLIT_INC_... subnets provided by the VPN.
