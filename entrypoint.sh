@@ -522,7 +522,9 @@ EOF
 # 6. Configure Local Upstream DNS (Low Priority)
 if [[ -n "$DNS_TO_APPLY" ]]; then
     rm -f /etc/dnsmasq.d/90-local.conf
-    read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
+    # Robustly split both comma and space-separated lists
+    # shellcheck disable=SC2206
+    DNS_ARRAY=(${DNS_TO_APPLY//,/ })
     for ip in "${DNS_ARRAY[@]}"; do
         echo "server=$ip" >>/etc/dnsmasq.d/90-local.conf
     done

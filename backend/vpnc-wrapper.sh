@@ -93,8 +93,11 @@ if [[ "$reason" == "connect" ]]; then
             RESOLVER_TO_USE="${LOCAL_DNS:-$DOCKER_DNS}"
             if [[ -n "$RESOLVER_TO_USE" ]]; then
                 IFS=',' read -ra LDOMAINS <<<"$LOCAL_DOMAINS"
+                # Split comma-separated resolvers into a proper array
+                # shellcheck disable=SC2206
+                RESOLVERS=(${RESOLVER_TO_USE//,/ })
                 for d in "${LDOMAINS[@]}"; do
-                    for ip in $RESOLVER_TO_USE; do
+                    for ip in "${RESOLVERS[@]}"; do
                         echo "server=/$d/$ip" >>/etc/dnsmasq.d/10-vpn.conf
                         # Ensure these resolve via eth0 (local network)
                         ip route add "$ip" dev eth0 2>/dev/null || ip route replace "$ip" dev eth0 2>/dev/null || true
