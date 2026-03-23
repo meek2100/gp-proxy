@@ -242,7 +242,7 @@ if [[ "$reason" == "connect" ]]; then
     # We disable it for all interfaces to ensure asymmetric routing works correctly.
     if [[ -d /proc/sys/net/ipv4/conf ]]; then
         for i in /proc/sys/net/ipv4/conf/*/rp_filter; do
-            echo 0 > "$i" 2>/dev/null || true
+            echo 0 >"$i" 2>/dev/null || true
         done
     fi
 
