@@ -240,11 +240,19 @@ if [[ "$reason" == "connect" ]]; then
     # 10. Disable rp_filter (Reverse Path Filtering) to prevent packet drops
     # In multi-homed/ipset-routing environments, the kernel might drop packets arriving on tun0 if it thinks the route should be eth0.
     # We disable it for all interfaces to ensure asymmetric routing works correctly.
+    # Note: In some Docker environments /proc/sys is read-only.
     if [[ -d /proc/sys/net/ipv4/conf ]]; then
         for i in /proc/sys/net/ipv4/conf/*/rp_filter; do
             echo 0 >"$i" 2>/dev/null || true
         done
     fi
+
+    # 11. rp_filter Workaround: "Shadow Routes" in main table
+    # If the above sysctl fails, we satisfy rp_filter=1 (Strict) by ensuring a path exists in 'main'.
+    # We add broad routes via tun0 with a very high metric (1000+) so they don't override
+    # more specific local routes (metric 0) but still confirm tun0 is a "valid" path for VPN traffic.
+    ip route add 10.0.0.0/8 dev tun0 metric 1024 2>/dev/null || true
+    ip route add 172.16.0.0/12 dev tun0 metric 1024 2>/dev/null || true
 
 elif [[ "$reason" == "disconnect" ]]; then
     rm -f /etc/dnsmasq.d/10-vpn.conf
