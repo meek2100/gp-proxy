@@ -187,6 +187,21 @@ if [[ "$reason" == "connect" ]]; then
             subnet="$(echo "$subnet" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             [[ -z "$subnet" ]] && continue
 
+            # Determine if we are in a bridge network (gateway is reachable but not on the same subnet)
+            # If so, we MUST use 'via' for non-local networks.
+            # Directly-connected Bridge subnets are already handled by proto kernel routes.
+
+            # Cleanup any existing /32 host routes that might be masking our subnet route (vpnc-script often adds these)
+            # This is critical for DNS servers which vpnc-script-orig aggressively pins to eth0.
+            if [[ "$subnet" != */* ]] || [[ "$subnet" == */32 ]]; then
+                CLEAN_IP="${subnet%/32}"
+                # If a /32 route exists Dev eth0 without a gateway, it's a "scope link" route and must be removed
+                if ip route show "$CLEAN_IP" | grep -q "dev eth0" | grep -v -q "via"; then
+                    echo "[vpnc-wrapper] Pruning conflicting scope-link route for $CLEAN_IP" >>"$SERVICE_LOG"
+                    ip route del "$CLEAN_IP" dev eth0 2>/dev/null || true
+                fi
+            fi
+
             # Do not overwrite native directly-connected physical subnets with a gateway route
             if ip route show dev eth0 proto kernel scope link | grep -q -F "$subnet"; then
                 echo "[vpnc-wrapper] Skipping directly-connected local subnet: $subnet" >>"$SERVICE_LOG"
@@ -194,8 +209,26 @@ if [[ "$reason" == "connect" ]]; then
             fi
 
             # Add foreign local subnets with specific device and gateway to ensure eth0 precedence
-            ip route add "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null ||
-                ip route replace "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null || true
+            if [[ -n "$DEFAULT_GW" ]]; then
+                ip route add "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null ||
+                    ip route replace "$subnet" via "$DEFAULT_GW" dev eth0 2>/dev/null || true
+            else
+                ip route add "$subnet" dev eth0 2>/dev/null ||
+                    ip route replace "$subnet" dev eth0 2>/dev/null || true
+            fi
+        done
+    fi
+
+    # 9. Global Fix-up for DNS Servers (Bridge Mode compatibility)
+    # If the original vpnc-script added host routes for DNS servers as 'scope link' on eth0, they will fail ARP in bridge mode.
+    # We force them to use the Docker Gateway.
+    if [[ -n "$DOCKER_GATEWAY" ]]; then
+        # Check both VPN DNS and Local DNS
+        for dns_ip in "${VPN_DNS_SERVERS[@]}" $(echo "$DOCKER_DNS" | tr ',' ' '); do
+            if ip route show "$dns_ip" | grep -q "dev eth0" | grep -v -q "via"; then
+                echo "[vpnc-wrapper] Correcting bridge-mode routing for DNS server: $dns_ip via $DOCKER_GATEWAY" >>"$SERVICE_LOG"
+                ip route replace "$dns_ip" via "$DOCKER_GATEWAY" dev eth0 2>/dev/null || true
+            fi
         done
     fi
 
