@@ -570,6 +570,7 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
         echo 1 >/proc/sys/net/ipv4/ip_forward
     fi
     iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
+    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
     if [[ -n "$ALLOWED_SUBNETS" ]]; then
         log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
@@ -582,16 +583,20 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
             # Secure CIDR Validation enforcing 0-255 octets and 0-32 prefix
             if [[ "$subnet" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$ ]]; then
                 iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
+                iptables -A FORWARD -s "$subnet" -o eth0 -j ACCEPT
             else
                 log "ERROR" "Invalid subnet CIDR format ignored: $subnet"
             fi
         done
         iptables -A FORWARD -o tun0 -j DROP
+        iptables -A FORWARD -o eth0 -j DROP
     else
         iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+        iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT
     fi
 
-    iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+    # Accept returning internet/split-tunnel traffic
+    iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
 elif [[ "$VPN_MODE" == "proxy" ]]; then
     # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]]; then
