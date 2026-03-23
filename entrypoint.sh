@@ -595,8 +595,8 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
         iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT
     fi
 
-    # Accept returning internet/split-tunnel traffic
-    iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+    # Accept returning internet/split-tunnel traffic at the top of the chain
+    iptables -I FORWARD 1 -m state --state RELATED,ESTABLISHED -j ACCEPT
 elif [[ "$VPN_MODE" == "proxy" ]]; then
     # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]]; then
