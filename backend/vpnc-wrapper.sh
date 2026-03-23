@@ -98,6 +98,9 @@ if [[ "$reason" == "connect" ]]; then
     if [[ "$SPLIT_TUNNEL" == "true" ]]; then
         echo "[vpnc-wrapper] Enforcing Split-Tunnel: Stripping default route (0.0.0.0/0) from tun0" >>"$SERVICE_LOG"
         ip route del default dev tun0 2>/dev/null || true
+        # OpenConnect often installs 0.0.0.0/1 and 128.0.0.0/1 to override the default route without deleting it
+        ip route del 0.0.0.0/1 dev tun0 2>/dev/null || true
+        ip route del 128.0.0.0/1 dev tun0 2>/dev/null || true
     fi
 
     # Note: Standard vpnc-script already auto-routes CISCO_SPLIT_INC_... subnets provided by the VPN.
