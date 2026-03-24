@@ -12,7 +12,6 @@ import base64
 import hashlib
 import hmac
 import http.server
-import ipaddress
 import json
 import logging
 import os
@@ -25,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -372,47 +372,51 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
     return sorted(input_options)
 
 
-# --- Global State tracking for internal SSO Interception ---
-_sso_intercept_cache: dict[str, str] = {}
+# --- GlobalProtect SSO Handling ---
+# No global state required for redirection extraction.
 
 
-def _extract_sso_url(log: str, port: int) -> str:
+def _extract_sso_url(full_log_content: str, port: int) -> str:
     """
-    Inspects log content for SAML redirection signals and constructs the appropriate SSO URL.
-    Ensures URL locality by forcing local-network addresses to use the client's requested Host header.
+    Parses the complete log string to extract the most recent valid SSO URL.
+    Returns the last URL found in the log that is not from the local web server.
+    If the URL points to a local Docker container IP, it probes the 302 Redirect
+    location to resolve the true external SSO URL (Okta/Azure/etc) for the browser.
     """
+    found_urls: list[str] = URL_PATTERN.findall(full_log_content)
+    if found_urls:
+        local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
+        best_url = local_urls[-1] if local_urls else found_urls[-1]
+        best_url = best_url.rstrip(".,;:")
 
-    matches = re.findall(r"https?://[^\s\"']+", log)
-    if not matches:
-        return ""
-
-    # Return the most recent match and strip common trailing punctuation
-    url = str(matches[-1]).rstrip(".,!?;:")
-    try:
-        parsed = urllib.parse.urlparse(url)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        hostname = parsed.hostname or ""  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-
-        # Robust Locality Check: Any address explicitly resolving to a private/loopback IP is forced to be local
-        is_local = False
-        if hostname.lower() in ["localhost", "127.0.0.1", "::1"]:
-            is_local = True
-        else:
+        # Intercept unreachable local container IP bindings to steal the true SSO redirect
+        if best_url.startswith("http://") and any(x in best_url for x in ["172.", "10.", "192.", "127."]):
             try:
-                ip = ipaddress.ip_address(hostname)  # pyright: ignore[reportUnknownArgumentType]
-                if ip.is_private or ip.is_loopback:
-                    is_local = True
-            except ValueError:
-                pass
+                # Cleanly subclass HTTPRedirectHandler to prevent following redirects safely
+                class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+                    def redirect_request(
+                        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: Any
+                    ) -> Any:
+                        return None
 
-        if is_local:
-            # Force target to 127.0.0.1:port to match internal redirect listeners
-            intercept_path = parsed.path
-            _sso_intercept_cache[intercept_path] = url
-            return f"http://127.0.0.1:{port}{intercept_path}?{parsed.query}"  # pyright: ignore[reportUnknownMemberType]
-    except Exception:
-        logger.debug("URL locality check failed, returning original")
+                opener = urllib.request.build_opener(NoRedirectHandler)
+                resp = opener.open(best_url, timeout=3.0)
+                location = resp.getheader("Location")
+                if location:
+                    logger.info(f"Intercepted local 302. True SSO: {str(location)[:70]}...")
+                    return str(location)
+            except urllib.error.HTTPError as e:
+                # Fallback if the standard library raises HTTPError on 302s
+                if e.code in (301, 302, 303, 307, 308):
+                    location = e.headers.get("Location")
+                    if location:
+                        logger.info(f"Intercepted local 302 via exception. True SSO: {str(location)[:70]}...")
+                        return str(location)
+            except Exception as e:
+                logger.debug(f"Failed internal probe for SSO extraction: {e}")
 
-    return url
+        return best_url
+    return ""
 
 
 def _evaluate_line_state(line: str, clean_lines: list[str], analysis_acc: LogAnalysis) -> bool:
@@ -918,40 +922,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if request_path == "/":
             self.path = "/index.html"
-            return super().do_GET()
-
-        # Phase 4: SSO Intercept Reverse Proxy
-        # If the path matches a cached local SAML redirect (e.g. /GUID), proxy it to the internal gpclient.
-        # GUID paths are case-insensitive in this context (hex).
-        if request_path in _sso_intercept_cache:
-            target_url = _sso_intercept_cache[request_path]
-            logger.info(f"Intercepting SSO Request: {request_path} -> {target_url}")
-            try:
-                # Add original query parameters if present in the incoming request
-                if "?" in raw_path:
-                    query = raw_path.split("?", 1)[1]
-                    if query and "?" not in target_url:
-                        target_url += f"?{query}"
-                    elif query:
-                        target_url += f"&{query}"
-
-                # Simple synchronous reverse proxy for local-only SSO signals
-                with urllib.request.urlopen(target_url, timeout=5) as response:
-                    self.send_response(response.getcode())
-                    for header, value in response.getheaders():
-                        # Skip hop-by-hop headers that might interfere with the proxying stream
-                        if header.lower() not in ["content-length", "transfer-encoding", "connection"]:
-                            self.send_header(header, value)
-                    content = response.read()
-                    self.send_header("Content-Length", str(len(content)))
-                    self.end_headers()
-                    self.wfile.write(content)
-                return
-            except Exception as e:
-                logger.error(f"SSO Intercept Proxy failed for {target_url}: {e}")
-                self.send_error(502, "Bad Gateway (SSO Intercept Failure)")
-                return
-
         return super().do_GET()
 
     def _handle_pair(self, length: int) -> None:
