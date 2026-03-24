@@ -289,6 +289,8 @@ async function restartAuth() {
         }
     } catch (e) {
         console.error("Failed to restart auth:", e);
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         setTimeout(() => {
             if (ssoLink && ssoLink.textContent === "Generating New Link...") {
@@ -353,6 +355,8 @@ async function triggerConnect() {
         console.error("Connect fetch failed:", e);
         setBadge("CONNECT FAILED", "error");
         setView("error");
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         resetPoll(1000);
     }
@@ -376,6 +380,8 @@ async function triggerDisconnect() {
             await fetch("/disconnect", getFetchOptions("POST"));
         } catch (e) {
             console.error("Disconnect fetch failed:", e);
+            isRestarting = false;
+            window.expectedNextState = null;
         } finally {
             resetPoll(1000);
         }
@@ -404,6 +410,8 @@ async function confirmReset() {
             }
         } catch (e) {
             console.error("Force reset fetch failed:", e);
+            isRestarting = false;
+            window.expectedNextState = null;
         } finally {
             window.vpnState = null;
             resetPoll(1000);
@@ -445,6 +453,8 @@ async function handleFormSubmit(event) {
         console.error("Form submit failed:", e);
         setBadge("SUBMIT FAILED", "error");
         setView("error");
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         resetPoll(1500);
     }

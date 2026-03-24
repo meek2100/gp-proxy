@@ -9,6 +9,8 @@ import socket
 from io import BytesIO
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
 from backend import stdin_proxy  # pyright: ignore[reportMissingImports]
 
 
@@ -26,6 +28,7 @@ class TestStdinProxyMain:
 
                 try:
                     stdin_proxy.main()
+                    pytest.fail("main() should have raised SystemExit")  # pyright: ignore[reportUnknownMemberType]
                 except SystemExit as e:
                     assert e.code == 0
                 # Verify socket creation

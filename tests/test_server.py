@@ -559,7 +559,7 @@ class TestGetVpnState:
                     state_debug: Any = get_vpn_state()
                     assert state_debug["debug_mode"] is True
 
-                with patch("server.STATIC_DEBUG_MODE", False):
+                with patch("backend.server.STATIC_DEBUG_MODE", False):
                     state_info: Any = get_vpn_state()
                     assert state_info["debug_mode"] is False
 
@@ -585,7 +585,7 @@ class TestGetVpnState:
                     state_auth: Any = get_vpn_state()
                     assert state_auth["proxy_auth_enabled"] is True
 
-                with patch("server.STATIC_PROXY_AUTH_ENABLED", False):
+                with patch("backend.server.STATIC_PROXY_AUTH_ENABLED", False):
                     state_no_auth: Any = get_vpn_state()
                     assert state_no_auth["proxy_auth_enabled"] is False
 

@@ -47,7 +47,7 @@ struct ServerStatus {
     auth_url: String,
 
     #[serde(default)]
-    socks_auth_enabled: bool,
+    proxy_auth_enabled: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -273,7 +273,7 @@ fn run_dashboard() -> Result<()> {
                         .unwrap_or("Unknown");
 
                     if s.vpn_mode == "socks" || s.vpn_mode == "standard" {
-                        let auth_str = if s.socks_auth_enabled {
+                        let auth_str = if s.proxy_auth_enabled {
                             "(Auth Enabled)"
                         } else {
                             "(No Auth)"
@@ -318,7 +318,12 @@ fn run_dashboard() -> Result<()> {
         match input.trim().to_lowercase().as_str() {
             "r" => {
                 println!("Restarting Authentication...");
-                let _ = agent.post(&format!("{}/disconnect", config.base_url));
+                let _ = with_auth(
+                    agent.post(&format!("{}/disconnect", config.base_url)),
+                    &config,
+                    "/disconnect",
+                )
+                .send_empty();
                 let req = agent.post(&format!("{}/connect", config.base_url));
                 let _ = with_auth(req, &config, "/connect").send_empty();
                 last_opened_url.clear();
@@ -371,15 +376,17 @@ fn run_dashboard() -> Result<()> {
                         }
 
                         // Fetch status again to get the (potentially new) auth_url
-                        let url = if let Ok(s) = fetch_status(&config, &fast_agent) {
-                            if s.state == "auth" && !s.auth_url.is_empty() {
-                                s.auth_url
-                            } else {
-                                config.browser_url()
+                        let mut url = config.browser_url();
+                        let start_poll = Instant::now();
+                        while start_poll.elapsed().as_secs() < 3 {
+                            if let Ok(s) = fetch_status(&config, &fast_agent) {
+                                if s.state == "auth" && !s.auth_url.is_empty() {
+                                    url = s.auth_url;
+                                    break;
+                                }
                             }
-                        } else {
-                            config.browser_url()
-                        };
+                            thread::sleep(Duration::from_millis(200));
+                        }
 
                         if url != last_opened_url {
                             let _ = webbrowser::open(&url);

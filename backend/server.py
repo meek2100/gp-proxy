@@ -685,6 +685,8 @@ def _kill_and_poll_unix() -> bool:
         return False
 
     # Now pkill and pgrep are narrowed to str; use local variables without cast to satisfy strict analysis
+    assert pkill is not None
+    assert pgrep is not None
     pkill_exe = pkill
     pgrep_exe = pgrep
 
@@ -692,15 +694,15 @@ def _kill_and_poll_unix() -> bool:
     subprocess.run([pkill_exe, "-x", "gost"], stderr=subprocess.DEVNULL, check=False)
 
     # 2. Kill the unprivileged stdin proxy to forcefully unblock the bash entrypoint pipeline's left side.
-    subprocess.run([pkill, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL, check=False)
+    subprocess.run([pkill_exe, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL, check=False)
 
     # 3. Request graceful shutdown of privileged daemons via sudo wrappers
-    subprocess.run([*sudo_cmd, pkill, "-x", "gpclient"], stderr=subprocess.DEVNULL, check=False)
-    subprocess.run([*sudo_cmd, pkill, "-x", "gpservice"], stderr=subprocess.DEVNULL, check=False)
+    subprocess.run([*sudo_cmd, pkill_exe, "-x", "gpclient"], stderr=subprocess.DEVNULL, check=False)
+    subprocess.run([*sudo_cmd, pkill_exe, "-x", "gpservice"], stderr=subprocess.DEVNULL, check=False)
 
     for _ in range(50):
-        res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
-        res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
+        res1 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gpclient"], capture_output=True)
+        res2 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gpservice"], capture_output=True)
         res3 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gost"], capture_output=True)
         if res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0:
             return True
@@ -717,6 +719,7 @@ def _kill_and_poll_unix() -> bool:
         res2 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gpservice"], capture_output=True)
         res3 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gost"], capture_output=True)
         return res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0
+    return False
 
 
 def _kill_and_poll() -> bool:

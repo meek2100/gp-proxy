@@ -215,12 +215,11 @@ export LOCAL_DOMAINS
 
 # --- RESOLVE & EXPORT RUNTIME PATHS ---
 export RUNTIME_DIR="/tmp/gp-runtime"
-export CLIENT_LOG="/tmp/gp-logs/gp-client.log"
-export SERVICE_LOG="/tmp/gp-logs/gp-service.log"
-
-# Initialization: Ensure runtime and log directories exist immediately to prevent logging failures
+export LOG_DIR="/tmp/gp-logs"
 mkdir -p "$RUNTIME_DIR" "$LOG_DIR"
 chmod 700 "$RUNTIME_DIR" "$LOG_DIR"
+export CLIENT_LOG="$LOG_DIR/gp-client.log"
+export SERVICE_LOG="$LOG_DIR/gp-service.log"
 export MODE_FILE="$RUNTIME_DIR/gp-mode"
 
 # --- RESOLVE & EXPORT IPC PORTS ---
