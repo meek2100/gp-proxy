@@ -690,8 +690,8 @@ def _kill_and_poll_unix() -> bool:
     pkill_exe = pkill
     pgrep_exe = pgrep
 
-    # 1. Gracefully terminate unrelated local proxy helpers (non-privileged)
-    subprocess.run([pkill_exe, "-x", "gost"], stderr=subprocess.DEVNULL, check=False)
+    # 1. Gracefully terminate unrelated local proxy helpers via sudo (ensures clean slate)
+    subprocess.run([*sudo_cmd, pkill_exe, "-x", "gost"], stderr=subprocess.DEVNULL, check=False)
 
     # 2. Kill the unprivileged stdin proxy to forcefully unblock the bash entrypoint pipeline's left side.
     subprocess.run([pkill_exe, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL, check=False)
