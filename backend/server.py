@@ -537,9 +537,9 @@ def get_vpn_state() -> VPNState:
     if mode_is_active and analysis_mut.get("state") == "idle":
         analysis_mut["state"] = "starting"
 
-    # Tighten auth state transition guard to include "connecting"
+    # Tighten auth state transition guard to only run during active connection attempts
     sso_url: str = ""
-    if analysis_mut.get("state") in ("connecting", "connected"):
+    if analysis_mut.get("state") == "connecting":
         sso_url = _extract_sso_url(log_content, PORT)
         if sso_url:
             analysis_mut.update(

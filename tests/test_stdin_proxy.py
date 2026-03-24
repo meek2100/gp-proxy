@@ -26,11 +26,9 @@ class TestStdinProxyMain:
             with patch("select.select") as mock_select:
                 mock_select.side_effect = KeyboardInterrupt()
 
-                try:
+                with pytest.raises(SystemExit) as excinfo:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     stdin_proxy.main()
-                    pytest.fail("main() should have raised SystemExit")  # pyright: ignore[reportUnknownMemberType]
-                except SystemExit as e:
-                    assert e.code == 0
+                assert excinfo.value.code == 0  # pyright: ignore[reportUnknownMemberType]
                 # Verify socket creation
                 mock_socket_class.assert_called_once_with(socket.AF_INET, socket.SOCK_STREAM)
                 # Verify SO_REUSEADDR is set
@@ -45,10 +43,8 @@ class TestStdinProxyMain:
             with patch("select.select") as mock_select:
                 mock_select.side_effect = KeyboardInterrupt()
                 with patch("backend.stdin_proxy.IPC_STDIN_PORT", 32802):
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     mock_socket.bind.assert_called_once_with(("127.0.0.1", 32802))
 
@@ -61,10 +57,8 @@ class TestStdinProxyMain:
             with patch("select.select") as mock_select:
                 mock_select.side_effect = KeyboardInterrupt()
 
-                try:
+                with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                     stdin_proxy.main()
-                except SystemExit:
-                    pass
 
                 mock_socket.listen.assert_called_once_with(1)
 
@@ -85,10 +79,8 @@ class TestStdinProxyMain:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == b"password123\n"
@@ -110,10 +102,8 @@ class TestStdinProxyMain:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == b"chunk1chunk2chunk3"
@@ -130,10 +120,8 @@ class TestStdinProxyMain:
                     ([], [], []),  # Another timeout
                     KeyboardInterrupt(),  # Exit
                 ]
-                try:
+                with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                     stdin_proxy.main()
-                except SystemExit:
-                    pass
 
                 # Should call select with 2.0 second timeout
                 assert mock_select.call_count == 3
@@ -154,10 +142,8 @@ class TestStdinProxyMain:
                     ([mock_socket], [], []),
                     KeyboardInterrupt(),
                 ]
-                try:
+                with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                     stdin_proxy.main()
-                except SystemExit:
-                    pass
 
                 mock_client.settimeout.assert_called_once_with(5.0)
 
@@ -175,10 +161,8 @@ class TestStdinProxyMain:
                 mock_socket.accept.side_effect = OSError("Accept failed")
 
                 with patch("backend.stdin_proxy.logger") as mock_logger:
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     # Should log the exception
                     mock_logger.exception.assert_called_once()
@@ -198,10 +182,8 @@ class TestStdinProxyMain:
                     KeyboardInterrupt(),
                 ]
                 with patch("backend.stdin_proxy.logger") as mock_logger:
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     # Should log the exception
                     mock_logger.exception.assert_called_once()
@@ -215,11 +197,9 @@ class TestStdinProxyMain:
             with patch("select.select") as mock_select:
                 mock_select.side_effect = KeyboardInterrupt()
 
-                try:
+                with pytest.raises(SystemExit) as excinfo:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     stdin_proxy.main()
-                    raise AssertionError("SystemExit not raised")
-                except SystemExit as exc:
-                    assert exc.code == 0
+                assert excinfo.value.code == 0  # pyright: ignore[reportUnknownMemberType]
 
     def test_main_fatal_bind_error_exits_with_code_1(self) -> None:
         """Test that fatal x-bind error exits with code 1."""
@@ -229,11 +209,9 @@ class TestStdinProxyMain:
             mock_socket_class.return_value.__enter__.return_value = mock_socket
 
             with patch("backend.stdin_proxy.logger") as mock_logger:
-                try:
+                with pytest.raises(SystemExit) as excinfo:  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     stdin_proxy.main()
-                    raise AssertionError("SystemExit not raised")
-                except SystemExit as exc:
-                    assert exc.code == 1
+                assert excinfo.value.code == 1  # pyright: ignore[reportUnknownMemberType]
                 # Should log fatal error
                 mock_logger.exception.assert_called_once()
 
@@ -251,10 +229,8 @@ class TestStdinProxyMain:
                     ([mock_socket], [], []),
                     KeyboardInterrupt(),
                 ]
-                try:
+                with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                     stdin_proxy.main()
-                except SystemExit:
-                    pass
 
                 # Context manager should call __enter__ and __exit__
                 mock_client.__enter__.assert_called_once()
@@ -277,10 +253,8 @@ class TestStdinProxyMain:
                 mock_stdout_buffer = MagicMock(spec=BytesIO)
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     # flush should be called after each write
                     assert mock_stdout_buffer.flush.call_count >= 2
@@ -308,10 +282,8 @@ class TestBinaryDataHandling:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == binary_data
@@ -337,10 +309,8 @@ class TestBinaryDataHandling:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == unicode_data
@@ -367,10 +337,8 @@ class TestEdgeCases:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     # Should handle gracefully without error
                     output = mock_stdout_buffer.getvalue()
@@ -400,10 +368,8 @@ class TestEdgeCases:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == large_data
@@ -432,10 +398,8 @@ class TestEdgeCases:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert b"conn1" in output
@@ -463,10 +427,8 @@ class TestRealWorldScenarios:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == password
@@ -489,10 +451,8 @@ class TestRealWorldScenarios:
                 mock_stdout_buffer = BytesIO()
                 with patch("backend.stdin_proxy.sys.stdout") as mock_stdout:
                     mock_stdout.buffer = mock_stdout_buffer
-                    try:
+                    with pytest.raises(SystemExit):  # pyright: ignore[reportUnknownMemberType]
                         stdin_proxy.main()
-                    except SystemExit:
-                        pass
 
                     output = mock_stdout_buffer.getvalue()
                     assert output == callback_url

@@ -339,8 +339,9 @@ fn run_dashboard() -> Result<()> {
                 } else {
                     config.browser_url()
                 };
-                let _ = webbrowser::open(&url);
-                last_opened_url = url;
+                if webbrowser::open(&url).is_ok() {
+                    last_opened_url = url;
+                }
             }
             "2" => {
                 if let Ok(s) = &status {
@@ -389,8 +390,9 @@ fn run_dashboard() -> Result<()> {
                         }
 
                         if url != last_opened_url {
-                            let _ = webbrowser::open(&url);
-                            last_opened_url = url;
+                            if webbrowser::open(&url).is_ok() {
+                                last_opened_url = url;
+                            }
                         } else {
                             println!("[i] Link already opened in browser.");
                             thread::sleep(Duration::from_secs(1));
