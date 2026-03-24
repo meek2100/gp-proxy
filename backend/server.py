@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict, cast
 
@@ -405,7 +406,9 @@ def _extract_sso_url(log: str, port: int) -> str:
 
         if is_local:
             # Force target to 127.0.0.1:port to match internal redirect listeners
-            return f"http://127.0.0.1:{port}{parsed.path}?{parsed.query}"  # pyright: ignore[reportUnknownMemberType]
+            intercept_path = parsed.path
+            _sso_intercept_cache[intercept_path] = url
+            return f"http://127.0.0.1:{port}{intercept_path}?{parsed.query}"  # pyright: ignore[reportUnknownMemberType]
     except Exception:
         logger.debug("URL locality check failed, returning original")
 
@@ -915,6 +918,40 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if request_path == "/":
             self.path = "/index.html"
+            return super().do_GET()
+
+        # Phase 4: SSO Intercept Reverse Proxy
+        # If the path matches a cached local SAML redirect (e.g. /GUID), proxy it to the internal gpclient.
+        # GUID paths are case-insensitive in this context (hex).
+        if request_path in _sso_intercept_cache:
+            target_url = _sso_intercept_cache[request_path]
+            logger.info(f"Intercepting SSO Request: {request_path} -> {target_url}")
+            try:
+                # Add original query parameters if present in the incoming request
+                if "?" in raw_path:
+                    query = raw_path.split("?", 1)[1]
+                    if query and "?" not in target_url:
+                        target_url += f"?{query}"
+                    elif query:
+                        target_url += f"&{query}"
+
+                # Simple synchronous reverse proxy for local-only SSO signals
+                with urllib.request.urlopen(target_url, timeout=5) as response:
+                    self.send_response(response.getcode())
+                    for header, value in response.getheaders():
+                        # Skip hop-by-hop headers that might interfere with the proxying stream
+                        if header.lower() not in ["content-length", "transfer-encoding", "connection"]:
+                            self.send_header(header, value)
+                    content = response.read()
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                return
+            except Exception as e:
+                logger.error(f"SSO Intercept Proxy failed for {target_url}: {e}")
+                self.send_error(502, "Bad Gateway (SSO Intercept Failure)")
+                return
+
         return super().do_GET()
 
     def _handle_pair(self, length: int) -> None:
