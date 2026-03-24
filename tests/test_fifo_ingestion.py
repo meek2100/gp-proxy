@@ -47,7 +47,21 @@ def test_pipe_pipeline_flow() -> None:
     )
 
     try:
-        time.sleep(1)  # Wait for proxy to bind
+        # Wait for proxy to bind using a deadline-based probe
+        deadline = time.time() + 5.0
+        bound = False
+        while time.time() < deadline:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.5)
+                    s.connect(("127.0.0.1", IPC_STDIN_PORT))
+                    bound = True
+                    break
+            except Exception:
+                time.sleep(0.1)
+
+        if not bound:
+            raise AssertionError("stdin_proxy failed to bind within 5 seconds")
 
         # Send data to the proxy socket
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -55,10 +69,16 @@ def test_pipe_pipeline_flow() -> None:
             test_payload = "globalprotectcallback://test-token\n"
             s.sendall(test_payload.encode())
 
-        # Give it a moment to traverse
-        time.sleep(1)
+        # Poll for delivery
+        deadline = time.time() + 5.0
+        received = False
+        while time.time() < deadline:
+            if "globalprotectcallback://test-token" in received_data:
+                received = True
+                break
+            time.sleep(0.1)
 
-        assert "globalprotectcallback://test-token" in received_data
+        assert received, f"Data failed to reach consumer! Got: {received_data}"
 
     finally:
         proxy_proc.terminate()

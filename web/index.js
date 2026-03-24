@@ -339,9 +339,20 @@ async function triggerConnect() {
     }, 15000);
 
     try {
-        await fetch("/connect", getFetchOptions("POST"));
+        const res = await fetch("/connect", getFetchOptions("POST"));
+        if (!res.ok) {
+            if (res.status === 401) {
+                console.warn("401 Unauthorized on connect - Reloading...");
+                window.location.reload();
+                return;
+            }
+            throw new Error(`Connect failed: ${res.status}`);
+        }
+        window.vpnState = "connecting";
     } catch (e) {
         console.error("Connect fetch failed:", e);
+        setBadge("CONNECT FAILED", "error");
+        setView("error");
     } finally {
         resetPoll(1000);
     }
@@ -417,13 +428,23 @@ async function handleFormSubmit(event) {
     }, 15000);
 
     try {
-        await fetch("/submit", getFetchOptions("POST", formData));
+        const res = await fetch("/submit", getFetchOptions("POST", formData));
+        if (!res.ok) {
+            if (res.status === 401) {
+                console.warn("401 Unauthorized on submit - Reloading...");
+                window.location.reload();
+                return;
+            }
+            throw new Error(`Submit failed: ${res.status}`);
+        }
         setView("connecting");
         window.vpnState = "connecting";
         setBadge("CONNECTING...", "connecting");
         event.target.reset();
     } catch (e) {
         console.error("Form submit failed:", e);
+        setBadge("SUBMIT FAILED", "error");
+        setView("error");
     } finally {
         resetPoll(1500);
     }
@@ -565,8 +586,8 @@ async function updateStatus() {
             } else if (
                 window.expectedNextState === "auth_refresh" &&
                 data.state === "auth" &&
-                data.url &&
-                data.url !== lastAuthUrl
+                data.auth_url &&
+                data.auth_url !== lastAuthUrl
             ) {
                 isRestarting = false;
                 window.expectedNextState = null;
@@ -596,14 +617,14 @@ async function updateStatus() {
             }
         }
 
-        if (data.url) {
-            if (data.url !== lastAuthUrl) {
-                lastAuthUrl = data.url;
-                resetSSOButtonState(data.url);
+        if (data.auth_url) {
+            if (data.auth_url !== lastAuthUrl) {
+                lastAuthUrl = data.auth_url;
+                resetSSOButtonState(data.auth_url);
             }
             const btn = document.getElementById("sso-link");
             if (btn && !btn.classList.contains("btn-disabled")) {
-                btn.href = data.url;
+                btn.href = data.auth_url;
             }
         }
 

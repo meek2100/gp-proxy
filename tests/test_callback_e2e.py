@@ -46,7 +46,21 @@ def test_callback_content_verification() -> None:
     )
 
     try:
-        time.sleep(1)  # Wait for proxy
+        # Wait for proxy to bind using a deadline-based probe
+        deadline = time.time() + 5.0
+        bound = False
+        while time.time() < deadline:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.5)
+                    s.connect(("127.0.0.1", IPC_STDIN_PORT))
+                    bound = True
+                    break
+            except Exception:
+                time.sleep(0.1)
+
+        if not bound:
+            raise AssertionError("stdin_proxy failed to bind within 5 seconds")
 
         # Simulate the server's send_ipc_message with the actual callback
         payload = expected_callback.strip().replace("\r", "").replace("\n", "") + "\n"
@@ -55,10 +69,16 @@ def test_callback_content_verification() -> None:
             s.connect(("127.0.0.1", IPC_STDIN_PORT))
             s.sendall(payload.encode())
 
-        # Give it time to flush
-        time.sleep(2)
+        # Poll for content delivery
+        deadline = time.time() + 5.0
+        received = False
+        while time.time() < deadline:
+            if expected_callback in received_content:
+                received = True
+                break
+            time.sleep(0.1)
 
-        assert expected_callback in received_content, f"Content mismatch! Got: {received_content}"
+        assert received, f"Content mismatch! Got: {received_content}"
 
     finally:
         proxy_proc.terminate()

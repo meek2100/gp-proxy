@@ -8,17 +8,11 @@ Covers HTTP APIs, OS teardown functions, and the UDP beacon.
 import base64
 import json
 import os
-import sys
 from io import BytesIO
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
-# Add backend directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
-
-import server
-import utils
+from backend import server, utils
 
 
 class TestBeacon:
@@ -40,9 +34,9 @@ class TestBeacon:
                 OSError("Stop loop"),
             ]
 
-            with patch("server.get_best_ip", return_value="192.168.1.5"):
+            with patch("backend.server.get_best_ip", return_value="192.168.1.5"):
                 with patch("socket.gethostname", return_value="test-host"):
-                    with patch("server.logger") as mock_logger:
+                    with patch("backend.server.logger") as mock_logger:
                         # Break the infinite loop AFTER the logger is called
                         mock_logger.exception.side_effect = KeyboardInterrupt("Stop loop")
                         with patch("time.sleep"):  # Mock sleep from exception block
@@ -120,10 +114,10 @@ class TestKillAndPoll:
 
     def test_kill_and_poll_wrapper(self) -> None:
         """Test the overarching _kill_and_poll function resets state objects."""
-        with patch("server._kill_and_poll_unix", return_value=True):
+        with patch("backend.server._kill_and_poll_unix", return_value=True):
             with patch("sys.platform", "linux"):
-                with patch("server.MODE_FILE"):
-                    with patch("server.CLIENT_LOG"):
+                with patch("backend.server.MODE_FILE"):
+                    with patch("backend.server.CLIENT_LOG"):
                         with patch("builtins.open", MagicMock()):
                             result = server._kill_and_poll()
                             assert result is True
@@ -132,8 +126,8 @@ class TestKillAndPoll:
 def _create_mock_handler(path: str = "/", method: str = "GET", headers: dict[str, str] | None = None) -> Any:
     """Create an initialized mock HTTP handler."""
     handler: Any = server.Handler.__new__(server.Handler)  # pyright: ignore
-    handler.rfile = BytesIO()
-    handler.wfile = BytesIO()
+    handler.rfile = BytesIO()  # pyright: ignore[reportAttributeAccessIssue]
+    handler.wfile = BytesIO()  # pyright: ignore[reportAttributeAccessIssue]
     handler.headers = headers or {}  # pyright: ignore
     handler.path = path
     handler.command = method
@@ -154,7 +148,7 @@ class TestHTTPHandlerAPI:
         handler.end_headers = MagicMock()
         handler.send_error = MagicMock()
 
-        with patch("server.get_vpn_state", return_value={"state": "connected"}):
+        with patch("backend.server.get_vpn_state", return_value={"state": "connected"}):
             handler.do_GET()
 
             handler.send_response.assert_called_with(200)
@@ -178,9 +172,10 @@ class TestHTTPHandlerAPI:
         handler.send_header = MagicMock()
         handler.end_headers = MagicMock()
 
-        with patch("server._kill_and_poll", return_value=True):
-            with patch("server.send_ipc_message", return_value=True):
-                handler.do_POST()
+        with patch("backend.server._kill_and_poll", return_value=True):
+            with patch("backend.server.send_ipc_message", return_value=True):
+                with patch("backend.server.get_vpn_state", return_value={"state": "idle"}):
+                    handler.do_POST()
 
                 handler.send_response.assert_called_with(200)
                 assert handler.wfile.getvalue() == b"OK"
@@ -198,7 +193,7 @@ class TestHTTPHandlerAPI:
         handler.send_header = MagicMock()
         handler.end_headers = MagicMock()
 
-        with patch("server.send_ipc_message", return_value=True) as mock_ipc:
+        with patch("backend.server.send_ipc_message", return_value=True) as mock_ipc:
             handler.do_POST()
 
             mock_ipc.assert_called_with(utils.IPC_STDIN_PORT, "mypassword123\n")
@@ -224,7 +219,7 @@ class TestHTTPHandlerAPI:
         handler.end_headers = MagicMock()
         handler.send_error = MagicMock()
 
-        with patch("server._paired_pubkey", None):
+        with patch("backend.server._paired_pubkey", None):
             with patch.dict(os.environ, {}, clear=True):
                 handler.do_POST()
                 handler.send_response.assert_called_with(200)
