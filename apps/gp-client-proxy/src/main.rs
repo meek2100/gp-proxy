@@ -44,7 +44,7 @@ struct ServerStatus {
     error: Option<String>,
 
     #[serde(default)]
-    auth_url: String,
+    url: String,
 
     #[serde(default)]
     proxy_auth_enabled: bool,
@@ -254,7 +254,7 @@ fn run_dashboard() -> Result<()> {
                 println!("SERVER:    Online ({})", config.base_url);
                 println!("STATUS:    {}", s.state.to_uppercase());
                 if s.state == "auth" {
-                    if !s.auth_url.is_empty() && s.auth_url == last_opened_url {
+                    if !s.url.is_empty() && s.url == last_opened_url {
                         println!("             [LOGIN LINK ALREADY OPENED]");
                     } else {
                         println!("             [LOGIN REQUIRED]");
@@ -331,8 +331,8 @@ fn run_dashboard() -> Result<()> {
             }
             "1" => {
                 let url = if let Ok(s) = &status {
-                    if s.state == "auth" && !s.auth_url.is_empty() {
-                        s.auth_url.clone()
+                    if s.state == "auth" && !s.url.is_empty() {
+                        s.url.clone()
                     } else {
                         config.browser_url()
                     }
@@ -359,8 +359,8 @@ fn run_dashboard() -> Result<()> {
                         // If we are already in auth state with a valid URL, don't re-spawn connect
                         let mut already_auth_url = String::new();
                         if let Ok(s) = fetch_status(&config, &fast_agent) {
-                            if s.state == "auth" && !s.auth_url.is_empty() {
-                                already_auth_url = s.auth_url;
+                            if s.state == "auth" && !s.url.is_empty() {
+                                already_auth_url = s.url;
                             }
                         }
 
@@ -381,8 +381,8 @@ fn run_dashboard() -> Result<()> {
                         let start_poll = Instant::now();
                         while start_poll.elapsed().as_secs() < 3 {
                             if let Ok(s) = fetch_status(&config, &fast_agent) {
-                                if s.state == "auth" && !s.auth_url.is_empty() {
-                                    url = s.auth_url;
+                                if s.state == "auth" && !s.url.is_empty() {
+                                    url = s.url;
                                     break;
                                 }
                             }
