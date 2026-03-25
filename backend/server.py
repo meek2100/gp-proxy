@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, ClassVar, TypedDict
+from typing import Any, ClassVar, TypedDict, cast
 
 from cryptography.exceptions import InvalidSignature  # pyright: ignore[reportUnknownVariableType]
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -491,9 +491,7 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
     # Overarching full-log context checks
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
         if analysis_acc["state"] not in ["input", "error", "connected", "connecting"]:
-            from typing import cast as t_cast
-
-            t_cast(dict[str, Any], analysis_acc)["state"] = "auth"
+            cast(dict[str, Any], analysis_acc)["state"] = "auth"
 
         # Only surface the SSO URL when actively in auth state — not after connecting
         if analysis_acc["state"] == "auth":

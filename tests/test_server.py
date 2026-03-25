@@ -610,7 +610,7 @@ class TestGetVpnState:
                     )
                     state = get_vpn_state()
                     assert state["state"] == "auth"
-                    assert state["auth_url"] == "https://auth.example.com"
+                    assert state["url"] == "https://auth.example.com"
 
 
 class TestInitRuntimeDir:
