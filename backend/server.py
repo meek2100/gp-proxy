@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, ClassVar, TypedDict, cast
+from typing import Any, ClassVar, TypedDict
 
 from cryptography.exceptions import InvalidSignature  # pyright: ignore[reportUnknownVariableType]
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -79,7 +79,7 @@ class VPNState(TypedDict):
     """Type definition for the VPN state response sent to the frontend."""
 
     state: str  # Current connection state (idle, connecting, auth, input, connected, error)
-    auth_url: str  # SSO URL for SAML authentication, if required
+    url: str  # SSO URL for SAML authentication, if required
     prompt: str  # Text prompt for user input (e.g., 'Enter Password')
     input_type: str  # Type of input required (text, password, select)
     options: list[str]  # Dropdown options for 'select' input types
@@ -372,8 +372,8 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
     return sorted(input_options)
 
 
-# --- GlobalProtect SSO Handling ---
-# No global state required for redirection extraction.
+# --- Global State tracking for internal SSO Interception ---
+_sso_intercept_cache: dict[str, str] = {}
 
 
 def _extract_sso_url(full_log_content: str, port: int) -> str:
@@ -391,6 +391,9 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
 
         # Intercept unreachable local container IP bindings to steal the true SSO redirect
         if best_url.startswith("http://") and any(x in best_url for x in ["172.", "10.", "192.", "127."]):
+            if best_url in _sso_intercept_cache:
+                return _sso_intercept_cache[best_url]
+
             try:
                 # Cleanly subclass HTTPRedirectHandler to prevent following redirects safely
                 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -404,6 +407,7 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
                 location = resp.getheader("Location")
                 if location:
                     logger.info(f"Intercepted local 302. True SSO: {str(location)[:70]}...")
+                    _sso_intercept_cache[best_url] = str(location)
                     return str(location)
             except urllib.error.HTTPError as e:
                 # Fallback if the standard library raises HTTPError on 302s
@@ -411,6 +415,7 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
                     location = e.headers.get("Location")
                     if location:
                         logger.info(f"Intercepted local 302 via exception. True SSO: {str(location)[:70]}...")
+                        _sso_intercept_cache[best_url] = str(location)
                         return str(location)
             except Exception as e:
                 logger.debug(f"Failed internal probe for SSO extraction: {e}")
@@ -486,17 +491,13 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
     # Overarching full-log context checks
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
         if analysis_acc["state"] not in ["input", "error", "connected", "connecting"]:
-            cast(Any, analysis_acc)["state"] = "auth"
+            from typing import cast as t_cast
+
+            t_cast(dict[str, Any], analysis_acc)["state"] = "auth"
 
         # Only surface the SSO URL when actively in auth state — not after connecting
-        if analysis_acc["state"] == "connecting" and "Generating SAML" in full_log_content:
-            # Use Any cast for mutation to satisfy TypedDict lints — analysis_acc is LogAnalysis
-            cast(Any, analysis_acc).update({"state": "auth"})
-            # The original code sets sso_url later, so we don't set it here.
-            # Log analysis has already set the state to auth
-
-    if analysis_acc["state"] == "auth":
-        analysis_acc["sso_url"] = _extract_sso_url(full_log_content, PORT)
+        if analysis_acc["state"] == "auth":
+            analysis_acc["sso_url"] = _extract_sso_url(full_log_content, PORT)
 
     return analysis_acc
 
@@ -520,7 +521,7 @@ def get_vpn_state() -> VPNState:
             if content == "idle":
                 return {
                     "state": "idle",
-                    "auth_url": "",
+                    "url": "",
                     "prompt": "",
                     "input_type": "text",
                     "options": [],
@@ -535,45 +536,19 @@ def get_vpn_state() -> VPNState:
             mode_is_active = content == "active"
         except Exception:
             logger.debug("Failed to read MODE_FILE, proceeding with log analysis")
-    # Cast TypedDict to dict for safe mutation and satisfy type checkers
-    cached_analysis, log_content = state_manager.get_cached_log_analysis(CLIENT_LOG)
-    # Use a dictionary for mutation to avoid TypedDict assignment restrictions
-    analysis_mut: dict[str, Any] = dict(cached_analysis)
+
+    analysis, log_content = state_manager.get_cached_log_analysis(CLIENT_LOG)
 
     # Guard against "idle" flicker when the service is active but log is still being wiped/populated
-    if mode_is_active and analysis_mut.get("state") == "idle":
-        analysis_mut["state"] = "starting"
-
-    # Tighten auth state transition guard to only run during active connection attempts
-    sso_url: str = ""
-    if analysis_mut.get("state") == "connecting":
-        sso_url = _extract_sso_url(log_content, PORT)
-        if sso_url:
-            analysis_mut.update(
-                {
-                    "state": "auth",
-                    "sso_url": sso_url,
-                    "prompt": "SSO Authentication Required",
-                    "prompt_type": "sso",
-                    "options": [],
-                    "error": None,
-                }
-            )
-    analysis = cast(LogAnalysis, analysis_mut)
-    # Guard against "idle" flicker when the service is active but log is still being wiped/populated
-    # This block was moved and modified above.
-    # if mode_is_active and analysis["state"] == "idle":
-    #     analysis["state"] = "starting"
+    if mode_is_active and analysis["state"] == "idle":
+        analysis["state"] = "starting"
 
     if state_manager.update_and_check_transition(analysis["state"]):
         logger.info(f"State Transition: -> {analysis['state']}")
 
-    # Ensure auth_url is only populated in auth state, prioritizing the latest extracted URL
-    auth_url: str = (sso_url or analysis["sso_url"]) if analysis["state"] == "auth" else ""
-
     return {
         "state": analysis["state"],
-        "auth_url": auth_url,
+        "url": analysis["sso_url"],
         "prompt": analysis["prompt"],
         "input_type": analysis["prompt_type"],
         "options": analysis["options"],

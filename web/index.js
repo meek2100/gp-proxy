@@ -596,8 +596,8 @@ async function updateStatus() {
             } else if (
                 window.expectedNextState === "auth_refresh" &&
                 data.state === "auth" &&
-                data.auth_url &&
-                data.auth_url !== lastAuthUrl
+                data.url &&
+                data.url !== lastAuthUrl
             ) {
                 isRestarting = false;
                 window.expectedNextState = null;
@@ -627,14 +627,14 @@ async function updateStatus() {
             }
         }
 
-        if (data.auth_url) {
-            if (data.auth_url !== lastAuthUrl) {
-                lastAuthUrl = data.auth_url;
-                resetSSOButtonState(data.auth_url);
+        if (data.url) {
+            if (data.url !== lastAuthUrl) {
+                lastAuthUrl = data.url;
+                resetSSOButtonState(data.url);
             }
             const btn = document.getElementById("sso-link");
             if (btn && !btn.classList.contains("btn-disabled")) {
-                btn.href = data.auth_url;
+                btn.href = data.url;
             }
         }
 
