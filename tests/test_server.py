@@ -11,19 +11,18 @@ import base64
 import os
 
 # Add backend directory to path for imports
-import sys
 import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, Mock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
+from cryptography.hazmat.primitives.asymmetric import ed25519  # pyright: ignore[reportUnknownVariableType]
 
-import server
-from server import (
+from backend import server  # pyright: ignore[reportMissingImports]
+from backend.server import (  # pyright: ignore[reportMissingImports]
     ANSI_ESCAPE,
     GATEWAY_REGEX,
     URL_PATTERN,
@@ -228,10 +227,11 @@ class TestEvaluateLineState:
         }
         result: bool = evaluate_line_state("Which gateway do you want to connect to", lines, analysis)
         assert result is True
+        options: list[Any] = cast(list[Any], analysis.get("options", []))
+        assert len(options) > 0
         assert analysis["state"] == "input"
         assert analysis["prompt"] == "Select Gateway"
         assert analysis["prompt_type"] == "select"
-        assert len(analysis["options"]) > 0
 
     def test_evaluate_line_state_password_prompt(self) -> None:
         """Test detection of password prompt."""
@@ -423,12 +423,11 @@ class TestStateManager:
             temp_path = Path(f.name)
 
         original_stat = temp_path.stat
-        call_count = 0
+        stats = {"call_count": 0}
 
         def mock_stat() -> os.stat_result:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 2:  # Simulate vanishing file mid-verification phase
+            stats["call_count"] += 1
+            if stats["call_count"] == 2:  # Simulate vanishing file mid-verification phase
                 raise FileNotFoundError()
             return original_stat()
 
@@ -451,13 +450,13 @@ class TestStateManager:
             temp_path = Path(f.name)
 
         def writer_thread() -> None:
-            counter = 0
+            stats = {"counter": 0}
             while not stop_flag:
                 try:
                     with open(temp_path, "w") as fw:
-                        fw.write(f"Connecting {counter}\n")
+                        fw.write(f"Connecting {stats['counter']}\n")
                     time.sleep(0.001)
-                    counter += 1
+                    stats["counter"] += 1
                 except OSError:
                     pass
 
@@ -470,7 +469,9 @@ class TestStateManager:
         t_writer.start()
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(reader_thread) for _ in range(10)]
+            # Cast executor to Any to bypass stub-related ArgumentType errors in this environment
+            exc: Any = executor
+            futures = [exc.submit(reader_thread) for _ in range(10)]
             for fut in futures:
                 fut.result()
 
@@ -485,7 +486,11 @@ class TestGetBestIp:
 
     def test_get_best_ip_returns_valid_ip(self) -> None:
         """Test that a valid IP address is returned."""
-        with patch("socket.socket") as mock_socket_class:
+        # Reset cache
+        server._best_ip_cache = None
+        server._best_ip_ts = 0.0
+
+        with patch("backend.server.socket.socket") as mock_socket_class:
             mock_socket = Mock()
             mock_socket.getsockname.return_value = ("192.168.1.100", 12345)
             mock_socket_class.return_value.__enter__.return_value = mock_socket
@@ -495,12 +500,10 @@ class TestGetBestIp:
 
     def test_get_best_ip_caches_result(self) -> None:
         """Test that IP result is cached."""
-        import server
-
-        server._best_ip_cache = "127.0.0.1"
+        server._best_ip_cache = None
         server._best_ip_ts = 0.0
 
-        with patch("socket.socket") as mock_socket_class:
+        with patch("backend.server.socket.socket") as mock_socket_class:
             mock_socket = Mock()
             mock_socket.getsockname.return_value = ("192.168.1.100", 12345)
             mock_socket_class.return_value.__enter__.return_value = mock_socket
@@ -517,12 +520,10 @@ class TestGetBestIp:
 
     def test_get_best_ip_handles_connection_error(self) -> None:
         """Test fallback when socket connection fails."""
-        import server
-
         server._best_ip_cache = "127.0.0.1"
         server._best_ip_ts = 0.0
 
-        with patch("socket.socket") as mock_socket_class:
+        with patch("backend.server.socket.socket") as mock_socket_class:
             mock_socket = Mock()
             mock_socket.connect.side_effect = OSError("Network error")
             mock_socket_class.return_value.__enter__.return_value = mock_socket
@@ -541,7 +542,7 @@ class TestGetVpnState:
             mode_file = Path(tmpdir) / "gp-mode"
             mode_file.write_text("idle")
 
-            with patch("server.MODE_FILE", mode_file):
+            with patch("backend.server.MODE_FILE", mode_file):
                 with patch.dict(os.environ, {}, clear=True):
                     state_idle = get_vpn_state()
                     assert state_idle["state"] == "idle"
@@ -553,12 +554,12 @@ class TestGetVpnState:
             mode_file = Path(tmpdir) / "gp-mode"
             mode_file.write_text("idle")
 
-            with patch("server.MODE_FILE", mode_file):
-                with patch("server.STATIC_DEBUG_MODE", True):
+            with patch("backend.server.MODE_FILE", mode_file):
+                with patch("backend.server.STATIC_DEBUG_MODE", True):
                     state_debug: Any = get_vpn_state()
                     assert state_debug["debug_mode"] is True
 
-                with patch("server.STATIC_DEBUG_MODE", False):
+                with patch("backend.server.STATIC_DEBUG_MODE", False):
                     state_info: Any = get_vpn_state()
                     assert state_info["debug_mode"] is False
 
@@ -568,8 +569,8 @@ class TestGetVpnState:
             mode_file = Path(tmpdir) / "gp-mode"
             mode_file.write_text("idle")
 
-            with patch("server.MODE_FILE", mode_file):
-                with patch("server.STATIC_VPN_MODE", "gateway"):
+            with patch("backend.server.MODE_FILE", mode_file):
+                with patch("backend.server.STATIC_VPN_MODE", "gateway"):
                     state_vpn = get_vpn_state()
                     assert state_vpn["vpn_mode"] == "gateway"
 
@@ -579,14 +580,37 @@ class TestGetVpnState:
             mode_file = Path(tmpdir) / "gp-mode"
             mode_file.write_text("idle")
 
-            with patch("server.MODE_FILE", mode_file):
-                with patch("server.STATIC_PROXY_AUTH_ENABLED", True):
+            with patch("backend.server.MODE_FILE", mode_file):
+                with patch("backend.server.STATIC_PROXY_AUTH_ENABLED", True):
                     state_auth: Any = get_vpn_state()
                     assert state_auth["proxy_auth_enabled"] is True
 
-                with patch("server.STATIC_PROXY_AUTH_ENABLED", False):
+                with patch("backend.server.STATIC_PROXY_AUTH_ENABLED", False):
                     state_no_auth: Any = get_vpn_state()
                     assert state_no_auth["proxy_auth_enabled"] is False
+
+    def test_get_vpn_state_includes_auth_url(self) -> None:
+        """Test that auth_url is included when in auth state."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mode_file = Path(tmpdir) / "gp-mode"
+            mode_file.write_text("active")
+
+            with patch("backend.server.MODE_FILE", mode_file):
+                with patch("backend.server.state_manager.get_cached_log_analysis") as mock_analysis:
+                    mock_analysis.return_value = (
+                        {
+                            "state": "auth",
+                            "prompt": "SSO Authentication Required",
+                            "prompt_type": "sso",
+                            "options": [],
+                            "error": None,
+                            "sso_url": "https://auth.example.com",
+                        },
+                        "Log",
+                    )
+                    state = get_vpn_state()
+                    assert state["state"] == "auth"
+                    assert state["url"] == "https://auth.example.com"
 
 
 class TestInitRuntimeDir:
@@ -597,7 +621,7 @@ class TestInitRuntimeDir:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_dir = Path(tmpdir) / "test-runtime"
 
-            with patch("server.RUNTIME_DIR", runtime_dir):
+            with patch("backend.server.RUNTIME_DIR", runtime_dir):
                 with patch("sys.platform", "linux"):
                     init_runtime_dir()
                     assert runtime_dir.exists()
@@ -605,7 +629,7 @@ class TestInitRuntimeDir:
 
     def test_init_runtime_dir_sets_permissions_unix(self) -> None:
         """Test that correct permissions are set on Unix."""
-        with patch("server.RUNTIME_DIR") as mock_runtime_dir:
+        with patch("backend.server.RUNTIME_DIR") as mock_runtime_dir:
             with patch("sys.platform", "linux"):
                 init_runtime_dir()
                 mock_runtime_dir.mkdir.assert_called_once_with(mode=0o700, parents=True, exist_ok=True)
@@ -617,7 +641,7 @@ class TestInitRuntimeDir:
             runtime_dir = Path(tmpdir) / "test-runtime"
             runtime_dir.mkdir()
 
-            with patch("server.RUNTIME_DIR", runtime_dir):
+            with patch("backend.server.RUNTIME_DIR", runtime_dir):
                 with patch("sys.platform", "linux"):
                     init_runtime_dir()
                     assert runtime_dir.exists()
@@ -629,7 +653,6 @@ class TestHandlerAuthentication:
     @staticmethod
     def _create_handler() -> Any:
         """Create a Handler instance without triggering HTTP parsing."""
-        from typing import cast
 
         handler: Any = cast(Any, server.Handler).__new__(server.Handler)
         handler.rfile = MagicMock()
@@ -642,7 +665,7 @@ class TestHandlerAuthentication:
         """Test authorization with ephemeral token."""
         handler: Any = self._create_handler()
 
-        with patch("server.EPHEMERAL_TOKEN", "test_token_12345"):
+        with patch("backend.server.EPHEMERAL_TOKEN", "test_token_12345"):
             handler.headers = {"Authorization": "Bearer test_token_12345"}
             assert handler._is_authorized() is True
 
@@ -658,7 +681,7 @@ class TestHandlerAuthentication:
         """Test that wrong token is rejected."""
         handler: Any = self._create_handler()
 
-        with patch("server.EPHEMERAL_TOKEN", "correct_token"):
+        with patch("backend.server.EPHEMERAL_TOKEN", "correct_token"):
             handler.headers = {"Authorization": "Bearer wrong_token"}
             assert handler._is_authorized() is False
 
@@ -670,12 +693,9 @@ class TestHandlerAuthentication:
 
     def test_is_authorized_with_ed25519_signature(self) -> None:
         """Test authorization with Ed25519 signature."""
-        from cryptography.hazmat.primitives.asymmetric import (
-            ed25519,  # pyright: ignore[reportUnknownVariableType]
-        )
-
-        private_key: Any = ed25519.Ed25519PrivateKey.generate()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        public_key: Any = private_key.public_key()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        ed25519_mod: Any = cast(Any, ed25519)
+        private_key: Any = ed25519_mod.Ed25519PrivateKey.generate()
+        public_key: Any = private_key.public_key()
 
         handler: Any = self._create_handler()
         handler.path = "/status.json"
@@ -685,7 +705,7 @@ class TestHandlerAuthentication:
         signature: bytes = private_key.sign(message)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         sig_b64: str = base64.b64encode(signature).decode()  # pyright: ignore[reportUnknownArgumentType]
 
-        with patch("server._paired_pubkey", public_key):  # pyright: ignore[reportUnknownArgumentType]
+        with patch("backend.server._paired_pubkey", public_key):  # pyright: ignore[reportUnknownArgumentType]
             handler.headers = {
                 "X-Signature": sig_b64,
                 "X-Timestamp": str(timestamp),
@@ -694,12 +714,9 @@ class TestHandlerAuthentication:
 
     def test_is_authorized_ed25519_signature_replay_attack(self) -> None:
         """Test that expired signatures strictly trigger a 401 Unauthorized rejection."""
-        from cryptography.hazmat.primitives.asymmetric import (
-            ed25519,  # pyright: ignore[reportUnknownVariableType]
-        )
-
-        private_key: Any = ed25519.Ed25519PrivateKey.generate()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        public_key: Any = private_key.public_key()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        ed25519_mod: Any = cast(Any, ed25519)
+        private_key: Any = ed25519_mod.Ed25519PrivateKey.generate()
+        public_key: Any = private_key.public_key()
 
         handler: Any = self._create_handler()
         handler.path = "/status.json"
@@ -710,7 +727,7 @@ class TestHandlerAuthentication:
         signature: bytes = private_key.sign(message)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         sig_b64: str = base64.b64encode(signature).decode()  # pyright: ignore[reportUnknownArgumentType]
 
-        with patch("server._paired_pubkey", public_key):  # pyright: ignore[reportUnknownArgumentType]
+        with patch("backend.server._paired_pubkey", public_key):  # pyright: ignore[reportUnknownArgumentType]
             handler.headers = {
                 "X-Signature": sig_b64,
                 "X-Timestamp": str(timestamp),
@@ -725,14 +742,13 @@ class TestEdgeCasesAndSecurity:
 
     def test_timing_safe_token_comparison(self) -> None:
         """Test that token comparison uses timing-safe comparison."""
-        from typing import cast
 
         handler: Any = cast(Any, Handler).__new__(Handler)
         handler.rfile = MagicMock()
         handler.wfile = MagicMock()
         handler.headers = {}
 
-        with patch("server.EPHEMERAL_TOKEN", "a" * 32):
+        with patch("backend.server.EPHEMERAL_TOKEN", "a" * 32):
             handler.headers = {"Authorization": f"Bearer {'a' * 31}b"}
             assert handler._is_authorized() is False
 

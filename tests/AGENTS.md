@@ -15,10 +15,6 @@ See `backend/AGENTS.md` for production Python conventions, and the project root 
 - Test files map 1:1 to backend modules: `test_server.py` → `server.py`, `test_utils.py` → `utils.py`, etc.
 - All test files must add the `backend/` directory to `sys.path` at the top of file to allow direct module imports without installing the package.
 
-## File-Level Suppression
-
-- Add `# pyright: reportPrivateUsage=false` at the top of any test file that accesses private members (prefixed `_`). Do not suppress at a narrower scope.
-
 ## Test Structure
 
 - Group tests into classes using the pattern `class Test<SubjectName>:`.
@@ -28,13 +24,9 @@ See `backend/AGENTS.md` for production Python conventions, and the project root 
 
 ## Private Member Access
 
-- Module-level private functions (e.g., `server._evaluate_line_state`) must be aliased at module scope for readability:
-
-    ```python
-    evaluate_line_state = server._evaluate_line_state
-    ```
-
-- Access private instance attributes (e.g., `manager._last_state`) using a cast to `Any` via `cast(Any, ...)` or a local `Any`-typed variable to satisfy Pyright without broad suppression.
+- **Do not design tests using private members.** Tests must replicate real-world scenarios and properly mock/test the same way an end-user or the Host Agent would interact with the application.
+- Accessing private members (prefixed with `_`) is discouraged as it ties tests too closely to implementation details, leading to fragile suites.
+- If a private member must be mocked for environmental reasons (e.g., `_kill_and_poll`), ensure the test still asserts on public behavior or state.
 
 ## Mocking
 

@@ -143,7 +143,7 @@ TOFU authentication validates Ed25519 payload `X-Timestamp` strings against a st
 
 ### 7. SSO Intercept Cache
 
-To handle race conditions where the `gpclient` auth server shuts down immediately after receiving a response (preventing the browser from following the redirect), `server.py` implements a global SSO interceptor. It caches the latest SAML redirect URL and provides it via `/api/status`, ensuring the Host Agent can always retrieve the correct login URL.
+To handle race conditions where the `gpclient` auth server shuts down immediately after receiving a response (preventing the browser from following the redirect), `server.py` implements a global SSO interceptor. It caches the latest SAML redirect URL and provides it via `/status.json`, ensuring the Host Agent can always retrieve the correct login URL.
 
 ### 8. UDP Beacon Discovery
 

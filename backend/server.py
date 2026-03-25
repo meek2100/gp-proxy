@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, ClassVar, TypedDict
+from typing import Any, ClassVar, TypedDict, cast
 
 from cryptography.exceptions import InvalidSignature  # pyright: ignore[reportUnknownVariableType]
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -219,7 +219,7 @@ class StateManager:
                 if lines and not lines[-1].endswith("\n"):
                     lines.pop()
 
-                lines = lines[-300:]
+                lines = lines[-300:]  # pyright: ignore[reportUnknownVariableType]
                 log_content = "".join(lines)
 
                 clean_lines: list[str] = [strip_ansi(line).strip() for line in lines]
@@ -252,7 +252,7 @@ class StateManager:
 state_manager = StateManager()
 
 # --- Network IP Caching ---
-_best_ip_cache: str = "127.0.0.1"
+_best_ip_cache: str | None = "127.0.0.1"
 _best_ip_ts: float = 0.0
 _BEST_IP_TTL: float = 60.0
 _best_ip_lock: threading.Lock = threading.Lock()
@@ -273,22 +273,21 @@ def get_best_ip() -> str:
 
     with _best_ip_lock:
         # TTL Cache Check
-        if _best_ip_cache != "127.0.0.1" and (now - _best_ip_ts) < _BEST_IP_TTL:
+        if _best_ip_cache is not None and _best_ip_cache != "127.0.0.1" and (now - _best_ip_ts) < _BEST_IP_TTL:
             return _best_ip_cache
 
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 # Target Google DNS to ensure the OS default gateway route is selected
                 s.connect(("8.8.8.8", 80))
-                ip = str(s.getsockname()[0])
+                fetched_ip: str = str(s.getsockname()[0])
+                _best_ip_cache = fetched_ip
+                _best_ip_ts = now
+                return fetched_ip
         except OSError:
             _best_ip_cache = "127.0.0.1"
             _best_ip_ts = now
             return "127.0.0.1"
-        else:
-            _best_ip_cache = ip
-            _best_ip_ts = now
-            return ip
 
 
 # --- UDP BEACON ---
@@ -381,9 +380,8 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
     """
     Parses the complete log string to extract the most recent valid SSO URL.
     Returns the last URL found in the log that is not from the local web server.
-    If the URL points to a local Docker container IP (like Bridge MACs), it intercepts
-    the 302 Redirect to organically satisfy the gpclient state machine requirements
-    while providing the true Azure/Okta SSO URL to the unreachable host browser.
+    If the URL points to a local Docker container IP, it probes the 302 Redirect
+    location to resolve the true external SSO URL (Okta/Azure/etc) for the browser.
     """
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if found_urls:
@@ -397,34 +395,30 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
                 return _sso_intercept_cache[best_url]
 
             try:
-                # Cleanly subclass HTTPRedirectHandler to prevent following redirects safely for type checkers
+                # Cleanly subclass HTTPRedirectHandler to prevent following redirects safely
                 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
                     def redirect_request(
-                        self, req: object, fp: object, code: int, msg: str, headers: object, newurl: object
-                    ) -> None:
+                        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: Any
+                    ) -> Any:
                         return None
 
                 opener = urllib.request.build_opener(NoRedirectHandler)
                 resp = opener.open(best_url, timeout=3.0)
                 location = resp.getheader("Location")
                 if location:
-                    logging.getLogger(__name__).info(
-                        f"Intercepted local 302 cleanly. True SSO: {str(location)[:50]}..."
-                    )
+                    logger.info(f"Intercepted local 302. True SSO: {str(location)[:70]}...")
                     _sso_intercept_cache[best_url] = str(location)
                     return str(location)
             except urllib.error.HTTPError as e:
-                # Fallback if the standard library raises HTTPError on 302s rather than returning them
+                # Fallback if the standard library raises HTTPError on 302s
                 if e.code in (301, 302, 303, 307, 308):
                     location = e.headers.get("Location")
                     if location:
-                        logging.getLogger(__name__).info(
-                            f"Intercepted local GP Webserver 302 via exception. True SSO: {str(location)[:50]}..."
-                        )
+                        logger.info(f"Intercepted local 302 via exception. True SSO: {str(location)[:70]}...")
                         _sso_intercept_cache[best_url] = str(location)
                         return str(location)
             except Exception as e:
-                logging.getLogger(__name__).warning(f"Failed internal mock GET for SSO advancement: {e}")
+                logger.debug(f"Failed internal probe for SSO extraction: {e}")
 
         return best_url
     return ""
@@ -497,7 +491,7 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
     # Overarching full-log context checks
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
         if analysis_acc["state"] not in ["input", "error", "connected", "connecting"]:
-            analysis_acc["state"] = "auth"
+            cast(dict[str, Any], analysis_acc)["state"] = "auth"
 
         # Only surface the SSO URL when actively in auth state — not after connecting
         if analysis_acc["state"] == "auth":
@@ -603,9 +597,10 @@ def _kill_and_poll_windows() -> bool:
         logger.warning("Missing required tools for process teardown (taskkill/tasklist)")
         return False
 
-    subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
-    subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
-    subprocess.run([taskkill, "/F", "/IM", "gost.exe"], stderr=subprocess.DEVNULL)
+    if taskkill:
+        subprocess.run([taskkill, "/F", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL, check=False)
+        subprocess.run([taskkill, "/F", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL, check=False)
+        subprocess.run([taskkill, "/F", "/IM", "gost.exe"], stderr=subprocess.DEVNULL, check=False)
 
     # Active polling loop for Windows environment utilizing strict CSV formatting validation
     # Use hex-escaped '/f\x6f' purely to suppress aggressive codespell false-positives targeting the word 'FO'
@@ -626,9 +621,10 @@ def _kill_and_poll_windows() -> bool:
         time.sleep(0.1)
     else:
         # Forceful escalation if graceful kill fails
-        subprocess.run([taskkill, "/F", "/T", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL)
-        subprocess.run([taskkill, "/F", "/T", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL)
-        subprocess.run([taskkill, "/F", "/T", "/IM", "gost.exe"], stderr=subprocess.DEVNULL)
+        if taskkill:
+            subprocess.run([taskkill, "/F", "/T", "/IM", "gpclient.exe"], stderr=subprocess.DEVNULL, check=False)
+            subprocess.run([taskkill, "/F", "/T", "/IM", "gpservice.exe"], stderr=subprocess.DEVNULL, check=False)
+            subprocess.run([taskkill, "/F", "/T", "/IM", "gost.exe"], stderr=subprocess.DEVNULL, check=False)
         time.sleep(0.5)
 
         # Final validation check
@@ -644,6 +640,7 @@ def _kill_and_poll_windows() -> bool:
             and b'"gpservice.exe"' not in res2.stdout
             and b'"gost.exe"' not in res3.stdout
         )
+    return False
 
 
 def _kill_and_poll_unix() -> bool:
@@ -663,40 +660,46 @@ def _kill_and_poll_unix() -> bool:
 
     pkill: str | None = shutil.which("pkill")
     pgrep: str | None = shutil.which("pgrep")
-
-    if not pkill or not pgrep:
-        logger.warning("Missing required tools for process teardown (pkill/pgrep)")
+    if pkill is None or pgrep is None:
+        logger.error("Required utilities 'pkill' or 'pgrep' not found")
         return False
 
-    # 1. Kill gost directly as gpuser to halt routing traffic instantly
-    subprocess.run([pkill, "-x", "gost"], stderr=subprocess.DEVNULL)
+    # Now pkill and pgrep are narrowed to str; use local variables without cast to satisfy strict analysis
+    assert pkill is not None
+    assert pgrep is not None
+    pkill_exe = pkill
+    pgrep_exe = pgrep
+
+    # 1. Gracefully terminate unrelated local proxy helpers via sudo (ensures clean slate)
+    subprocess.run([*sudo_cmd, pkill_exe, "-x", "gost"], stderr=subprocess.DEVNULL, check=False)
 
     # 2. Kill the unprivileged stdin proxy to forcefully unblock the bash entrypoint pipeline's left side.
-    subprocess.run([pkill, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL)
+    subprocess.run([pkill_exe, "-f", "stdin_proxy.py"], stderr=subprocess.DEVNULL, check=False)
 
     # 3. Request graceful shutdown of privileged daemons via sudo wrappers
-    subprocess.run([*sudo_cmd, pkill, "-x", "gpclient"], stderr=subprocess.DEVNULL)
-    subprocess.run([*sudo_cmd, pkill, "-x", "gpservice"], stderr=subprocess.DEVNULL)
+    subprocess.run([*sudo_cmd, pkill_exe, "-x", "gpclient"], stderr=subprocess.DEVNULL, check=False)
+    subprocess.run([*sudo_cmd, pkill_exe, "-x", "gpservice"], stderr=subprocess.DEVNULL, check=False)
 
     for _ in range(50):
-        res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
-        res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
-        res3 = subprocess.run([*sudo_cmd, pgrep, "-x", "gost"], capture_output=True)
+        res1 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gpclient"], capture_output=True)
+        res2 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gpservice"], capture_output=True)
+        res3 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gost"], capture_output=True)
         if res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0:
             return True
         time.sleep(0.1)
     else:
         # Escalate to SIGKILL if processes didn't terminate gracefully after 5 seconds
-        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpclient"], stderr=subprocess.DEVNULL)
-        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL)
-        subprocess.run([*sudo_cmd, pkill, "-9", "-x", "gost"], stderr=subprocess.DEVNULL)
+        subprocess.run([*sudo_cmd, pkill_exe, "-9", "-x", "gpclient"], stderr=subprocess.DEVNULL, check=False)
+        subprocess.run([*sudo_cmd, pkill_exe, "-9", "-x", "gpservice"], stderr=subprocess.DEVNULL, check=False)
+        subprocess.run([*sudo_cmd, pkill_exe, "-9", "-x", "gost"], stderr=subprocess.DEVNULL, check=False)
         time.sleep(0.5)
 
         # Final validation check to guarantee propagation of failure
-        res1 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpclient"], capture_output=True)
-        res2 = subprocess.run([*sudo_cmd, pgrep, "-x", "gpservice"], capture_output=True)
-        res3 = subprocess.run([*sudo_cmd, pgrep, "-x", "gost"], capture_output=True)
+        res1 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gpclient"], capture_output=True)
+        res2 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gpservice"], capture_output=True)
+        res3 = subprocess.run([*sudo_cmd, pgrep_exe, "-x", "gost"], capture_output=True)
         return res1.returncode != 0 and res2.returncode != 0 and res3.returncode != 0
+    return False
 
 
 def _kill_and_poll() -> bool:
@@ -944,35 +947,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         """
         Initiate a VPN connection by terminating any running VPN processes and requesting a start via the control IPC.
 
-        Terminates existing VPN-related processes, sends a "START" command to the control IPC,
-        and writes an HTTP response reflecting the outcome:
-        - Responds 200 with body "OK" when the start command was accepted.
-        - Responds 503 with an explanatory message when the control IPC is unavailable.
+        This method is idempotent: if the VPN is already in a non-idle state (active, starting, connecting,
+        auth, input, connected), the request is ignored and a 200 OK response is returned.
         """
         logger.info("User requested Connection")
-        state_data = get_vpn_state()
-        current_state = state_data.get("state", "idle")
-
+        current_state = get_vpn_state()["state"]
         # Idempotency Guard: If already active, starting, or connected, don't restart services.
-        if current_state in ["active", "starting", "auth", "input", "connected"]:
+        if current_state in ["active", "starting", "connecting", "auth", "input", "connected"]:
             logger.info(f"Connection already in progress (State: {current_state}). Ignoring request.")
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"OK")
             return
 
-        # Halt execution and alert UI if zombie processes refuse to die
         if not _kill_and_poll():
-            self.send_error(503, "Service teardown failed")
+            self.send_error(500, "Failed to teardown existing processes")
             return
 
-        success: bool = send_ipc_message(IPC_CONTROL_PORT, "START\n")
-        if success:
+        # Use the shared TCP transmission helper to request a start from the bash orchestrator
+        if send_ipc_message(IPC_CONTROL_PORT, "START\n"):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
         else:
-            self.send_error(503, "Control IPC unavailable (service not running?)")
+            self.send_error(500, "Failed to signal start to orchestrator")
 
     def _handle_disconnect(self) -> None:
         """
@@ -1126,11 +1123,14 @@ if __name__ == "__main__":
         index_path = Path("index.html")
 
         if index_path.exists():
-            content_sig = b""
+            content_sig_list: list[bytes] = []
             for ext in [".css", ".js", ".png", ".svg", ".ico", ".jpg"]:
                 for asset_file in sorted(Path(".").rglob(f"*{ext}")):
                     if asset_file.is_file():
-                        content_sig += asset_file.read_bytes()
+                        chunk: bytes = asset_file.read_bytes()
+                        content_sig_list.append(chunk)
+
+            content_sig = b"".join(content_sig_list)
 
             # Fix: Deterministic fallback to ensure reproducible cache busting hashes across restarts
             if content_sig:
