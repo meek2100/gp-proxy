@@ -58,7 +58,7 @@ if [[ "$reason" == "connect" ]]; then
 
     # Collect ALL potential domains from logs, split-dns, and search domains
     # Aggressively strip leading '*', '.', and trailing whitespace.
-    mapfile -t UNIQUE_DOMAINS < <(echo "$GP_LOG_DOMAINS" "$CISCO_DEF_DOMAIN" "$CISCO_SPLIT_DNS" | sed 's/[,[:space:]]/\n/g' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^\*[.]*//' -e 's/^\.//' | sort -u | grep -v '^$')
+    mapfile -t UNIQUE_DOMAINS < <(echo "$GP_LOG_DOMAINS" "$CISCO_DEF_DOMAIN" "$CISCO_SPLIT_DNS" "$VPN_DOMAINS" | sed 's/[,[:space:]]/\n/g' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^\*[.]*//' -e 's/^\.//' | sort -u | grep -v '^$')
 
     if [[ ${#UNIQUE_DOMAINS[@]} -gt 0 ]]; then
         echo "[vpnc-wrapper] Extraction Success. Resolved VPN Domains: ${UNIQUE_DOMAINS[*]}" >>"$SERVICE_LOG"
