@@ -40,3 +40,4 @@ gp-service.log
 gp-stdin
 gp-control
 gp-proxy_log*
+.agents/
