@@ -10,8 +10,8 @@ import logging
 import os
 from unittest.mock import MagicMock, patch
 
-import utils
-from utils import send_ipc_message, setup_logger
+from backend import utils
+from backend.utils import send_ipc_message, setup_logger
 
 
 class TestParsePort:
@@ -144,8 +144,8 @@ class TestSetupLogger:
         mock_dir = MagicMock()
         mock_dir.exists.return_value = True
 
-        with patch("utils._log_dir", mock_dir):
-            with patch("utils.logging.FileHandler") as mock_file_handler:
+        with patch("backend.utils._log_dir", mock_dir):
+            with patch("backend.utils.logging.FileHandler") as mock_file_handler:
                 setup_logger(logger_name)
                 mock_file_handler.assert_called_once()
 
@@ -164,8 +164,8 @@ class TestSetupLogger:
         mock_dir = MagicMock()
         mock_dir.exists.return_value = False
 
-        with patch("utils._log_dir", mock_dir):
-            with patch("utils.logging.StreamHandler") as mock_stream_handler:
+        with patch("backend.utils._log_dir", mock_dir):
+            with patch("backend.utils.logging.StreamHandler") as mock_stream_handler:
                 setup_logger(logger_name)
                 mock_stream_handler.assert_called_once()
 

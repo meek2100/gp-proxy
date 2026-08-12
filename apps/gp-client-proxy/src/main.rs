@@ -44,7 +44,10 @@ struct ServerStatus {
     error: Option<String>,
 
     #[serde(default)]
-    socks_auth_enabled: bool,
+    url: String,
+
+    #[serde(default)]
+    proxy_auth_enabled: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -228,6 +231,7 @@ fn run_dashboard() -> Result<()> {
 
     let agent = get_agent();
     let fast_agent = get_fast_agent();
+    let mut last_opened_url = String::new();
 
     loop {
         clear_screen();
@@ -244,8 +248,18 @@ fn run_dashboard() -> Result<()> {
 
         match &status {
             Ok(s) => {
+                if s.state != "auth" && s.state != "input" {
+                    last_opened_url.clear();
+                }
                 println!("SERVER:    Online ({})", config.base_url);
                 println!("STATUS:    {}", s.state.to_uppercase());
+                if s.state == "auth" {
+                    if !s.url.is_empty() && s.url == last_opened_url {
+                        println!("             [LOGIN LINK ALREADY OPENED]");
+                    } else {
+                        println!("             [LOGIN REQUIRED]");
+                    }
+                }
                 println!("MODE:      {}", s.vpn_mode.to_uppercase());
 
                 if s.state == "connected" {
@@ -259,7 +273,7 @@ fn run_dashboard() -> Result<()> {
                         .unwrap_or("Unknown");
 
                     if s.vpn_mode == "socks" || s.vpn_mode == "standard" {
-                        let auth_str = if s.socks_auth_enabled {
+                        let auth_str = if s.proxy_auth_enabled {
                             "(Auth Enabled)"
                         } else {
                             "(No Auth)"
@@ -292,6 +306,7 @@ fn run_dashboard() -> Result<()> {
 
         println!("3. Re-run Setup / Discovery");
         println!("4. Uninstall");
+        println!("R. Restart Authentication (Generate New Link)");
         println!("5. Exit");
 
         print!("\nSelection > ");
@@ -300,9 +315,33 @@ fn run_dashboard() -> Result<()> {
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
 
-        match input.trim() {
+        match input.trim().to_lowercase().as_str() {
+            "r" => {
+                println!("Restarting Authentication...");
+                let _ = with_auth(
+                    agent.post(&format!("{}/disconnect", config.base_url)),
+                    &config,
+                    "/disconnect",
+                )
+                .send_empty();
+                let req = agent.post(&format!("{}/connect", config.base_url));
+                let _ = with_auth(req, &config, "/connect").send_empty();
+                last_opened_url.clear();
+                thread::sleep(Duration::from_secs(1));
+            }
             "1" => {
-                let _ = webbrowser::open(&config.browser_url());
+                let url = if let Ok(s) = &status {
+                    if s.state == "auth" && !s.url.is_empty() {
+                        s.url.clone()
+                    } else {
+                        config.browser_url()
+                    }
+                } else {
+                    config.browser_url()
+                };
+                if webbrowser::open(&url).is_ok() {
+                    last_opened_url = url;
+                }
             }
             "2" => {
                 if let Ok(s) = &status {
@@ -317,15 +356,48 @@ fn run_dashboard() -> Result<()> {
                         }
                     } else {
                         println!("Initiating Connection...");
-                        let req = agent.post(&format!("{}/connect", config.base_url));
-                        if let Err(e) = with_auth(req, &config, "/connect").send_empty() {
-                            println!("Error initiating connection: {}", e);
-                            thread::sleep(Duration::from_secs(2));
-                        } else {
-                            println!("Launching Browser for Auth...");
-                            let _ = webbrowser::open(&config.browser_url());
-                            poll_for_success(&config, &fast_agent);
+                        // If we are already in auth state with a valid URL, don't re-spawn connect
+                        let mut already_auth_url = String::new();
+                        if let Ok(s) = fetch_status(&config, &fast_agent) {
+                            if s.state == "auth" && !s.url.is_empty() {
+                                already_auth_url = s.url;
+                            }
                         }
+
+                        if already_auth_url.is_empty() {
+                            let req = agent.post(&format!("{}/connect", config.base_url));
+                            if let Err(e) = with_auth(req, &config, "/connect").send_empty() {
+                                println!("Error initiating connection: {}", e);
+                                thread::sleep(Duration::from_secs(2));
+                                continue;
+                            }
+                            println!("Launching Browser for Auth...");
+                        } else {
+                            println!("Resuming Authentication...");
+                        }
+
+                        // Fetch status again to get the (potentially new) auth_url
+                        let mut url = config.browser_url();
+                        let start_poll = Instant::now();
+                        while start_poll.elapsed().as_secs() < 3 {
+                            if let Ok(s) = fetch_status(&config, &fast_agent) {
+                                if s.state == "auth" && !s.url.is_empty() {
+                                    url = s.url;
+                                    break;
+                                }
+                            }
+                            thread::sleep(Duration::from_millis(200));
+                        }
+
+                        if url != last_opened_url {
+                            if webbrowser::open(&url).is_ok() {
+                                last_opened_url = url;
+                            }
+                        } else {
+                            println!("[i] Link already opened in browser.");
+                            thread::sleep(Duration::from_secs(1));
+                        }
+                        poll_for_success(&config, &fast_agent);
                     }
                 }
             }
