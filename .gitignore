@@ -25,7 +25,8 @@ target/
 docker-context/
 
 # --- IDE & OS ---
-.vscode/
+.vscode/argv.json
+.vscode/launch.json
 .idea/
 .DS_Store
 Thumbs.db
