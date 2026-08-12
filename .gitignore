@@ -14,6 +14,7 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+.agents/
 
 # --- Rust (if building locally) ---
 target/
@@ -24,7 +25,8 @@ target/
 docker-context/
 
 # --- IDE & OS ---
-.vscode/
+.vscode/argv.json
+.vscode/launch.json
 .idea/
 .DS_Store
 Thumbs.db
@@ -38,3 +40,5 @@ gp-client.log
 gp-service.log
 gp-stdin
 gp-control
+gp-proxy_log*
+.agents/

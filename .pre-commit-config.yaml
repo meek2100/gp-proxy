@@ -24,7 +24,7 @@ repos:
 
   # 2. FILE HEADERS
   - repo: https://github.com/meek2100/pre-commit-context-header
-    rev: v0.1.0
+    rev: v0.1.1
     hooks:
       - id: context-headers
         args: ["--fix"]

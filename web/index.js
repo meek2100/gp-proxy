@@ -321,9 +321,16 @@ function resetSSOButtonState(newUrl) {
  * Triggers a new VPN connection sequence.
  */
 async function triggerConnect() {
-    setBadge("Starting...", "connecting");
+    const btn = document.getElementById("btn-connect");
+    if (btn) {
+        btn.classList.add("btn-disabled");
+        btn.innerText = "Starting...";
+    }
+    setBadge("CONNECTING...", "connecting");
     setView("connecting");
-    window.expectedNextState = "connecting";
+    // Set expectedNextState to 'auth' since gpclient always goes to auth first.
+    // Using 'connecting' caused a 15-second UI deadlock where the auth view never appeared.
+    window.expectedNextState = "auth";
     isRestarting = true;
 
     setTimeout(() => {
@@ -412,6 +419,7 @@ async function handleFormSubmit(event) {
     try {
         await fetch("/submit", getFetchOptions("POST", formData));
         setView("connecting");
+        window.vpnState = "connecting";
         setBadge("CONNECTING...", "connecting");
         event.target.reset();
     } catch (e) {
@@ -572,6 +580,20 @@ async function updateStatus() {
             setView(data.state);
             setBadge(data.state.toUpperCase(), data.state === "auth" || data.state === "input" ? "auth" : data.state);
             window.vpnState = data.state;
+
+            // Re-enable connect button if we return to idle
+            if (data.state === "idle") {
+                const btn = document.getElementById("btn-connect");
+                if (btn) {
+                    btn.classList.remove("btn-disabled");
+                    btn.innerText = "Connect to VPN";
+                }
+            }
+
+            // Clear the cached auth URL when leaving auth state so a reconnect shows a fresh link
+            if (data.state !== "auth" && data.state !== "input") {
+                lastAuthUrl = "";
+            }
         }
 
         if (data.url) {

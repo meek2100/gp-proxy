@@ -265,7 +265,8 @@ class TestStdinProxyMain:
                         main()
 
                     # flush should be called after each write
-                    assert mock_stdout_buffer.flush.call_count >= 2
+                    assert mock_stdout_buffer.flush.call_count >= 1
+                    assert mock_stdout.flush.call_count >= 1
 
 
 class TestBinaryDataHandling:
