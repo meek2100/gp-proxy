@@ -81,7 +81,7 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
 
 Configure the overarching network stance via the `VPN_MODE` variable:
 
-- **`proxy,gateway`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Default behavior when `VPN_MODE` is omitted. (Also accepts `both` or `standard`).
+- **`proxy,gateway`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Default behavior when `VPN_MODE` is omitted.
 - **`proxy`:** Starts proxy handler(s) ONLY. Explicitly disables IP Forwarding and NAT. Locked down.
 - **`gateway`:** Configures NAT/IP Forwarding ONLY. No proxy listeners. Requires `macvlan` network driver.
 

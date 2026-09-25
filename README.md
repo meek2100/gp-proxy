@@ -126,7 +126,7 @@ R. Restart Authentication (Generate New Link)
 | `SS_AUTH`          | Shadowsocks auth `cipher:password`.                                                | Auto            |
 | `API_TOKEN`        | Static token to lock down the API.                                                 | `None`          |
 | `LOG_LEVEL`        | Logging verbosity (`INFO`, `DEBUG`, `TRACE`).                                      | `INFO`          |
-| `GATEWAY_CLIENTS`  | Comma-separated CIDRs permitted to forward traffic in `gateway`/`both` mode.       | `None`          |
+| `GATEWAY_CLIENTS`  | Comma-separated CIDRs permitted to forward traffic in `gateway` mode.              | `None`          |
 | `VPN_DISABLE_DTLS` | Set to `true` to force TCP instead of DTLS.                                        | `false`         |
 | `VPN_DISABLE_IPV6` | Set to `true` to disable IPv6 inside tunnel.                                       | `false`         |
 | `LOCAL_SUBNETS`    | Comma-separated CIDRs to bypass the VPN (e.g. `192.168.1.0/24`).                   | `None`          |

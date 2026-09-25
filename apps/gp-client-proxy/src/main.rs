@@ -260,11 +260,7 @@ fn run_dashboard() -> Result<()> {
                         println!("             [LOGIN REQUIRED]");
                     }
                 }
-                let mode_display = if (s.vpn_mode.contains("proxy")
-                    && s.vpn_mode.contains("gateway"))
-                    || s.vpn_mode == "both"
-                    || s.vpn_mode == "standard"
-                {
+                let mode_display = if s.vpn_mode.contains("proxy") && s.vpn_mode.contains("gateway") {
                     "PROXY + GATEWAY".to_string()
                 } else if s.vpn_mode.contains("proxy") {
                     "PROXY".to_string()
@@ -285,10 +281,7 @@ fn run_dashboard() -> Result<()> {
                         .next()
                         .unwrap_or("Unknown");
 
-                    if s.vpn_mode.contains("proxy")
-                        || s.vpn_mode == "both"
-                        || s.vpn_mode == "standard"
-                    {
+                    if s.vpn_mode.contains("proxy") {
                         let auth_str = if s.proxy_auth_enabled {
                             "(Auth Enabled)"
                         } else {
@@ -296,10 +289,7 @@ fn run_dashboard() -> Result<()> {
                         };
                         println!("SOCKS5 Proxy:  {}:1080 {}", host_ip, auth_str);
                     }
-                    if s.vpn_mode.contains("gateway")
-                        || s.vpn_mode == "both"
-                        || s.vpn_mode == "standard"
-                    {
+                    if s.vpn_mode.contains("gateway") {
                         println!("Gateway IP:    {}", host_ip);
                         println!("DNS Server:    {}", host_ip);
                     }

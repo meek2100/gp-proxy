@@ -525,11 +525,11 @@ async function updateStatus() {
 
         // Smart dynamic proxy tab generation
         const vpnMode = (data.vpn_mode || "proxy,gateway").toLowerCase();
-        if (vpnMode.includes("gateway") || vpnMode === "both" || vpnMode === "standard") {
+        if (vpnMode.includes("gateway")) {
             visibleTabs.push("gateway");
         }
 
-        if (vpnMode.includes("proxy") || vpnMode === "both" || vpnMode === "standard") {
+        if (vpnMode.includes("proxy")) {
             if (data.proxy_modes && Array.isArray(data.proxy_modes)) {
                 data.proxy_modes.forEach((pm) => {
                     if (ALL_TABS.includes(pm)) visibleTabs.push(pm);

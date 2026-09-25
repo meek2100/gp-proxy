@@ -60,10 +60,7 @@ export LOG_LEVEL
 RAW_VPN_MODE=$(get_env_value "VPN_MODE" "vpn_mode")
 CLEAN_VPN_MODE=$(clean_val "$RAW_VPN_MODE")
 VPN_MODE="${CLEAN_VPN_MODE,,}"
-# Default to dual proxy and gateway mode if omitted or alias supplied
-if [[ -z "$VPN_MODE" || "$VPN_MODE" == "both" || "$VPN_MODE" == "all" || "$VPN_MODE" == "standard" ]]; then
-    VPN_MODE="proxy,gateway"
-fi
+[[ -z "$VPN_MODE" ]] && VPN_MODE="proxy,gateway"
 export VPN_MODE
 
 # 3. VPN_PORTAL (Required)
@@ -72,7 +69,7 @@ VPN_PORTAL=$(clean_val "$RAW_VPN_PORTAL")
 export VPN_PORTAL
 
 # 4. VPN_GATEWAY (Optional)
-RAW_VPN_GATEWAY=$(get_env_value "VPN_GATEWAY" "vpn_gateway" "gateway")
+RAW_VPN_GATEWAY=$(get_env_value "VPN_GATEWAY" "vpn_gateway")
 VPN_GATEWAY=$(clean_val "$RAW_VPN_GATEWAY")
 export VPN_GATEWAY
 
@@ -82,7 +79,7 @@ GP_ARGS=$(clean_val_preserve_inner "$RAW_GP_ARGS")
 export GP_ARGS
 
 # 7. TIMEZONE
-RAW_TZ=$(get_env_value "TZ" "tz" "timezone")
+RAW_TZ=$(get_env_value "TZ" "tz")
 CLEAN_TZ=$(clean_val "$RAW_TZ")
 TZ="${CLEAN_TZ:-UTC}"
 export TZ
@@ -99,7 +96,7 @@ export PGID
 # --- NEW: Advanced GP Options ---
 
 # 9. HIP Report (--hip)
-RAW_HIP=$(get_env_value "VPN_HIP_REPORT" "hip_report" "HIP")
+RAW_HIP=$(get_env_value "VPN_HIP_REPORT" "vpn_hip_report")
 CLEAN_HIP=$(clean_val "$RAW_HIP")
 if [[ "${CLEAN_HIP,,}" == "true" || "${CLEAN_HIP}" == "1" ]]; then
     VPN_HIP_REPORT="true"
@@ -109,22 +106,22 @@ fi
 export VPN_HIP_REPORT
 
 # 10. Client OS (--os)
-RAW_OS=$(get_env_value "VPN_OS" "os")
+RAW_OS=$(get_env_value "VPN_OS" "vpn_os")
 VPN_OS=$(clean_val "$RAW_OS")
 export VPN_OS
 
 # 11. Client OS Version (--os-version)
-RAW_OS_VER=$(get_env_value "VPN_OS_VERSION" "os_version")
+RAW_OS_VER=$(get_env_value "VPN_OS_VERSION" "vpn_os_version")
 VPN_OS_VERSION=$(clean_val "$RAW_OS_VER")
 export VPN_OS_VERSION
 
 # 12. Client Version (--client-version)
-RAW_CLIENT_VER=$(get_env_value "VPN_CLIENT_VERSION" "client_version")
+RAW_CLIENT_VER=$(get_env_value "VPN_CLIENT_VERSION" "vpn_client_version")
 VPN_CLIENT_VERSION=$(clean_val "$RAW_CLIENT_VER")
 export VPN_CLIENT_VERSION
 
 # 13. Disable DTLS (--no-dtls)
-RAW_DTLS=$(get_env_value "VPN_DISABLE_DTLS" "disable_dtls")
+RAW_DTLS=$(get_env_value "VPN_DISABLE_DTLS" "vpn_disable_dtls")
 CLEAN_DTLS=$(clean_val "$RAW_DTLS")
 if [[ "${CLEAN_DTLS,,}" == "true" || "${CLEAN_DTLS}" == "1" ]]; then
     VPN_DISABLE_DTLS="true"
@@ -134,7 +131,7 @@ fi
 export VPN_DISABLE_DTLS
 
 # 14. Disable IPv6 (--disable-ipv6)
-RAW_IPV6=$(get_env_value "VPN_DISABLE_IPV6" "disable_ipv6")
+RAW_IPV6=$(get_env_value "VPN_DISABLE_IPV6" "vpn_disable_ipv6")
 CLEAN_IPV6=$(clean_val "$RAW_IPV6")
 if [[ "${CLEAN_IPV6,,}" == "true" || "${CLEAN_IPV6}" == "1" ]]; then
     VPN_DISABLE_IPV6="true"
@@ -148,8 +145,8 @@ RAW_GW_CLIENTS=$(get_env_value "GATEWAY_CLIENTS" "gateway_clients")
 GATEWAY_CLIENTS=$(clean_val "$RAW_GW_CLIENTS")
 export GATEWAY_CLIENTS
 
-# 16. Proxy Auth (Accepts GOST_AUTH as legacy fallback)
-RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth" "GOST_AUTH" "gost_auth")
+# 16. Proxy Auth
+RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth")
 PROXY_AUTH=$(clean_val_preserve_inner "$RAW_PROXY_AUTH")
 
 # 17. Shadowsocks Auth
