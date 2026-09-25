@@ -61,7 +61,7 @@ _pairing_lock: threading.Lock = threading.Lock()
 
 # Evaluate static environments at module load to prevent polling bottlenecks
 STATIC_DEBUG_MODE: bool = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
-STATIC_VPN_MODE: str = os.getenv("VPN_MODE", "standard").strip().lower()
+STATIC_VPN_MODE: str = os.getenv("VPN_MODE", "both").strip().lower()
 _proxy_mode_env: str = os.getenv("PROXY_MODE", "socks5")
 STATIC_PROXY_MODES: list[str] = [p.strip().lower() for p in _proxy_mode_env.split(",") if p.strip()]
 STATIC_PROXY_AUTH_ENABLED: bool = (os.getenv("PROXY_AUTH_ENABLED", "false").lower() == "true") or (
@@ -86,7 +86,7 @@ class VPNState(TypedDict):
     error: str | None  # Error message if the state is 'error'
     log: str | None  # Recent log lines, only populated if debug_mode is True
     debug_mode: bool  # Whether debug logging is enabled
-    vpn_mode: str  # The configured network mode (standard, proxy, gateway)
+    vpn_mode: str  # The configured network mode (both, proxy, gateway)
     proxy_modes: list[str]  # Active proxy types (e.g., ['socks5', 'http'])
     server_ip: str  # The dynamically detected best outbound IP
     proxy_auth_enabled: bool  # Whether Proxy auth is configured

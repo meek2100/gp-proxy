@@ -81,11 +81,11 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
 
 Configure the overarching network stance via the `VPN_MODE` variable:
 
-- **`standard`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Best for general use.
+- **`both`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Best for general use. (Also accepts `standard`).
 - **`proxy`:** Starts proxy handler(s) ONLY. Explicitly disables IP Forwarding and NAT. Locked down.
 - **`gateway`:** Configures NAT/IP Forwarding ONLY. No proxy listeners. Requires `macvlan` network driver.
 
-When the mode is `standard` or `proxy`, configure active proxy endpoints via the `PROXY_MODE` environment variable (comma-separated):
+When the mode is `both`, `standard`, or `proxy`, configure active proxy endpoints via the `PROXY_MODE` environment variable (comma-separated):
 
 - **`socks5`:** Standard UDP/TCP SOCKS5 proxy on Port 1080.
 - **`socks4`:** Standard TCP SOCKS4 proxy on Port 1084.
@@ -98,7 +98,7 @@ When the mode is `standard` or `proxy`, configure active proxy endpoints via the
 
 Set **`SPLIT_TUNNEL=true`** to enable the "Smart Detection Engine." When enabled, the container automatically strips the default `0.0.0.0/0` internet route pushed by the VPN. It dynamically reads DNS servers, Split-Include Subnets, and Split-DNS Domains from the OpenConnect environment, configures `dnsmasq` for corporate domains, and uses `ipset` routing to forward resolved traffic through the tunnel. All other traffic remains safely on your local network.
 
-_(Advanced users can optionally declare `VPN_DOMAINS`, `LOCAL_DNS`, or `VPN_SUBNETS` to forcefully inject custom overrides into the smart detection tables.)_
+_(Advanced users can optionally declare `VPN_DOMAINS`, `VPN_SUBNETS`, `VPN_DNS`, `LOCAL_DOMAINS`, `LOCAL_SUBNETS`, or `LOCAL_DNS` to forcefully inject custom overrides into the smart detection tables.)_
 
 ### 1. Linting & Formatting
 
@@ -165,7 +165,7 @@ The Container Agent stores `_paired_pubkey` strictly in memory. If the container
 
 #### Container (Server)
 
-- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `PROXY_MODE`, `PROXY_AUTH`, `ALLOWED_SUBNETS`, `SPLIT_TUNNEL` watchdog logic, cleanup traps, Python IPC listener endpoints, and `gpclient` invocation.
+- **`entrypoint.sh`:** Orchestrator. Handles `VPN_MODE`, `PROXY_MODE`, `PROXY_AUTH`, `GATEWAY_CLIENTS`, `SPLIT_TUNNEL` watchdog logic, cleanup traps, Python IPC listener endpoints, and `gpclient` invocation.
 - **`backend/server.py`:** Python Control Server. Handles TOFU Ed25519 pairing, dynamic HTML cache busting, and ephemeral UI token injection.
 - **`backend/utils.py`:** Shared Python utility library. Centralizes `IPC_CONTROL_PORT`, `IPC_STDIN_PORT` constants, normalizes execution environment paths, standardizes logging, and contains the cross-platform TCP socket transmission logic.
 - **`web/index.html` / `web/index.js` / `web/index.css`:** Frontend assets.

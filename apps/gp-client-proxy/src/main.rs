@@ -37,7 +37,7 @@ const BINARY_NAME: &str = "gp-client-proxy";
 #[derive(Deserialize, Debug)]
 struct ServerStatus {
     state: String,    // idle, connecting, auth, connected, error
-    vpn_mode: String, // standard, gateway, socks
+    vpn_mode: String, // both, proxy, gateway
 
     // Properly deserialized as null when no error is present due to Python server returning `None` instead of `""`
     #[allow(dead_code)]
@@ -272,7 +272,7 @@ fn run_dashboard() -> Result<()> {
                         .next()
                         .unwrap_or("Unknown");
 
-                    if s.vpn_mode == "socks" || s.vpn_mode == "standard" || s.vpn_mode == "proxy" {
+                    if s.vpn_mode == "proxy" || s.vpn_mode == "both" || s.vpn_mode == "standard" {
                         let auth_str = if s.proxy_auth_enabled {
                             "(Auth Enabled)"
                         } else {
@@ -280,7 +280,7 @@ fn run_dashboard() -> Result<()> {
                         };
                         println!("SOCKS5 Proxy:  {}:1080 {}", host_ip, auth_str);
                     }
-                    if s.vpn_mode == "gateway" || s.vpn_mode == "standard" {
+                    if s.vpn_mode == "gateway" || s.vpn_mode == "both" || s.vpn_mode == "standard" {
                         println!("Gateway IP:    {}", host_ip);
                         println!("DNS Server:    {}", host_ip);
                     }

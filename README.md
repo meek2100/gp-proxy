@@ -37,16 +37,19 @@ services:
         environment:
             - VPN_PORTAL=vpn.yourcompany.com
             - SPLIT_TUNNEL=true
+            - VPN_MODE=both
             - LOCAL_SUBNETS=192.168.1.0/24 # Bypass VPN for your Home LAN
+            - LOCAL_DOMAINS=local
+            - LOCAL_DNS=192.168.1.1
+            - VPN_DOMAINS=vpn.yourcompany.com
+            - VPN_SUBNETS=10.0.0.0/8
+            - VPN_DNS=10.0.0.53
+            - GATEWAY_CLIENTS=192.168.1.0/24
             - PROXY_MODE=socks5,socks4,socks4a,http,https,ss
             - PROXY_AUTH=user:password
             - SS_AUTH=aes-256-gcm:password
             - API_TOKEN=your-api-token
             - LOG_LEVEL=INFO
-            - LOCAL_DOMAINS=local
-            - VPN_DOMAINS=vpn.yourcompany.com
-            - VPN_SUBNETS=10.0.0.0/8
-            - VPN_MODE=standard
         ports:
             - "8001:8001" # Web Dashboard
             - "32800:32800/udp" # UDP Beacon
@@ -96,7 +99,7 @@ Running `gp-client-proxy` opens the management dashboard in your terminal:
 ========================================
 SERVER:    Online (http://192.168.1.50:8001)
 STATUS:    CONNECTED
-MODE:      STANDARD
+MODE:      BOTH
 
 [i] CONNECTION DETAILS
 SOCKS5 Proxy:  192.168.1.50:1080 (No Auth)
@@ -113,21 +116,25 @@ R. Restart Authentication (Generate New Link)
 
 ### Environment Variables (Docker)
 
-| Variable        | Description                                                                        | Default    |
-| :-------------- | :--------------------------------------------------------------------------------- | :--------- |
-| `VPN_PORTAL`    | **Required.** The URL of your VPN portal.                                          | `None`     |
-| `VPN_MODE`      | `standard` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent only). | `standard` |
-| `PROXY_MODE`    | Comma-separated: `socks5,socks4,socks4a,http,https,ss`.                            | `socks5`   |
-| `SPLIT_TUNNEL`  | `true` enables Smart Split-Tunneling.                                              | `false`    |
-| `PROXY_AUTH`    | Basic proxy auth `user:password`.                                                  | `None`     |
-| `SS_AUTH`       | Shadowsocks auth `cipher:password`.                                                | Auto       |
-| `API_TOKEN`     | Static token to lock down the API.                                                 | `None`     |
-| `LOG_LEVEL`     | Logging verbosity (`INFO`, `DEBUG`).                                               | `INFO`     |
-| `LOCAL_SUBNETS` | Comma-separated CIDRs to bypass the VPN (e.g. `192.168.1.0/24`).                   | `None`     |
-| `LOCAL_DOMAINS` | Comma-separated domains to resolve via LAN DNS (e.g. `local`).                     | `None`     |
-| `LOCAL_DNS`     | Primary LAN DNS server for fallback.                                               | Auto       |
-| `VPN_DOMAINS`   | Forceful injection of domains into the VPN tunnel.                                 | Auto       |
-| `VPN_SUBNETS`   | Forceful injection of CIDRs into the VPN tunnel.                                   | Auto       |
+| Variable           | Description                                                                        | Default    |
+| :----------------- | :--------------------------------------------------------------------------------- | :--------- |
+| `VPN_PORTAL`       | **Required.** The URL of your VPN portal.                                          | `None`     |
+| `VPN_MODE`         | `both` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent only).      | `both`     |
+| `PROXY_MODE`       | Comma-separated: `socks5,socks4,socks4a,http,https,ss`.                            | `socks5`   |
+| `SPLIT_TUNNEL`     | `true` enables Smart Split-Tunneling.                                              | `false`    |
+| `PROXY_AUTH`       | Basic proxy auth `user:password`.                                                  | `None`     |
+| `SS_AUTH`          | Shadowsocks auth `cipher:password`.                                                | Auto       |
+| `API_TOKEN`        | Static token to lock down the API.                                                 | `None`     |
+| `LOG_LEVEL`        | Logging verbosity (`INFO`, `DEBUG`, `TRACE`).                                      | `INFO`     |
+| `GATEWAY_CLIENTS`  | Comma-separated CIDRs permitted to forward traffic in `gateway`/`both` mode.       | `None`     |
+| `VPN_DISABLE_DTLS` | Set to `true` to force TCP instead of DTLS.                                        | `false`    |
+| `VPN_DISABLE_IPV6` | Set to `true` to disable IPv6 inside tunnel.                                       | `false`    |
+| `LOCAL_SUBNETS`    | Comma-separated CIDRs to bypass the VPN (e.g. `192.168.1.0/24`).                   | `None`     |
+| `LOCAL_DOMAINS`    | Comma-separated domains to resolve via LAN DNS (e.g. `local`).                     | `None`     |
+| `LOCAL_DNS`        | Primary LAN DNS server for fallback and local domain resolution.                   | Auto       |
+| `VPN_DOMAINS`      | Forceful injection of domains into the VPN tunnel.                                 | Auto       |
+| `VPN_SUBNETS`      | Forceful injection of CIDRs into the VPN tunnel.                                   | Auto       |
+| `VPN_DNS`          | Explicit DNS upstream servers for VPN domains.                                     | Auto       |
 
 ---
 

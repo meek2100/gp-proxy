@@ -27,7 +27,13 @@ if [[ "$reason" == "connect" ]]; then
     echo "nameserver 127.0.0.1" >/etc/resolv.conf
 
     # 3. Detect VPN DNS Servers
-    IFS=' ' read -ra VPN_DNS_SERVERS <<<"$INTERNAL_IP4_DNS"
+    if [[ -n "$VPN_DNS" ]]; then
+        CLEAN_VPN_DNS="${VPN_DNS//,/ }"
+        IFS=' ' read -ra VPN_DNS_SERVERS <<<"$CLEAN_VPN_DNS"
+        echo "[vpnc-wrapper] Using explicit VPN_DNS overrides: ${VPN_DNS_SERVERS[*]}" >>"$SERVICE_LOG"
+    else
+        IFS=' ' read -ra VPN_DNS_SERVERS <<<"$INTERNAL_IP4_DNS"
+    fi
 
     # 4. Smart Auto-Detect VPN Domains
     DOMAINS=()
