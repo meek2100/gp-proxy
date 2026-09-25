@@ -55,3 +55,12 @@ jobs:
         env:
           SKIP: no-commit-to-branch
         run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Rust Formatting and Linting
+        run: |
+          cargo fmt --manifest-path apps/gp-client-proxy/Cargo.toml --all -- --check
+          cargo check --manifest-path apps/gp-client-proxy/Cargo.toml --all-targets --all-features
+          cargo clippy --manifest-path apps/gp-client-proxy/Cargo.toml --all-targets --all-features -- -D warnings
+
+      - name: Validate Docker Compose
+        run: docker compose -f docker-compose.yml config -q
