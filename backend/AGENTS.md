@@ -11,7 +11,7 @@ See the project root `AGENTS.md` for project-level architecture, the sandbox pro
 
 ## Python Language Rules
 
-- **Formatter:** `ruff` with line length 120. **Linter:** `ruff` + strict `mypy`/`pyright`. Project uses **Python 3.14**.
+- **Formatter:** `ruff` with line length 120. **Linter:** `ruff` + strict `mypy`/`pyright`. Virtual environments and dependencies managed via `uv`. Project uses **Python 3.14**.
 - All module-level files must include descriptive docstrings.
 - Do not use subscripted generics for `socket.socket` — `typeshed` strictness rejects type arguments like `[Any, Any]`.
 - Overriding class attributes must utilize `typing.ClassVar` to satisfy strict Pyright/Mypy checks.

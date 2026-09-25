@@ -104,7 +104,7 @@ _(Advanced users can optionally declare `VPN_DOMAINS`, `VPN_SUBNETS`, `VPN_DNS`,
 
 **Strict linting and formatting are enforced via CI and Pre-commit hooks.** All code changes must adhere to these standards to pass the `lint` workflow.
 
-- **Python:** Uses `ruff` (line length 120) and strict Mypy/Pyright typing. Project uses Python 3.14.
+- **Python:** Uses `uv` for virtual environment and dependency management. Uses `ruff` (line length 120) and strict Mypy/Pyright typing. Project uses Python 3.14.
 - **Rust:** Uses `clippy` (warnings as errors) and `rustfmt`. No unused code or fields allowed. CLI outputs must be professional (no emojis; use text brackets like `[SUCCESS]`, `[ERROR]`).
 - **Shell:** Uses `shellcheck` (gcc format). Do not use `xargs` to trim strings — use native bash parameter expansion or `sed`.
 - **Formatting:** Uses `prettier` for Markdown, YAML, HTML, and JSON.

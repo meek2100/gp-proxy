@@ -63,7 +63,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 6. Install Python Dependencies
 # Required for the TOFU Ed25519 pairing architecture
-RUN pip install --no-cache-dir --break-system-packages cryptography==46.0.5
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN uv pip install --system --no-cache cryptography==46.0.5
 
 # 7. Download GOST and Purge Wget
 RUN apt-get update && apt-get install -y --no-install-recommends wget \
