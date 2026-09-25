@@ -10,7 +10,7 @@ services:
       - /dev/net/tun
     environment:
       - VPN_PORTAL=${VPN_PORTAL:-vpn.yourcompany.com}
-      - VPN_MODE=${VPN_MODE:-both} # both, proxy, or gateway
+      # - VPN_MODE=proxy # Optional: 'proxy', 'gateway', or 'proxy,gateway' (Default: proxy,gateway)
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - API_TOKEN=${API_TOKEN:-}
       - TZ=${TZ:-UTC}
@@ -25,7 +25,7 @@ services:
       # - LOCAL_DOMAINS=local
       # - LOCAL_SUBNETS=192.168.1.0/24
       # - LOCAL_DNS=192.168.1.1
-      # - GATEWAY_CLIENTS=192.168.1.0/24 # Restricts routed client subnets in gateway/both mode
+      # - GATEWAY_CLIENTS=192.168.1.0/24 # Restricts routed client subnets when gateway is enabled
     networks:
       # If using gateway mode, you must connect this container to a macvlan network
       # to obtain a routable IP on your LAN.

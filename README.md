@@ -37,7 +37,7 @@ services:
         environment:
             - VPN_PORTAL=vpn.yourcompany.com
             - SPLIT_TUNNEL=true
-            - VPN_MODE=both
+            # - VPN_MODE=proxy,gateway # proxy, gateway, or proxy,gateway (Default: proxy,gateway)
             - LOCAL_SUBNETS=192.168.1.0/24 # Bypass VPN for your Home LAN
             - LOCAL_DOMAINS=local
             - LOCAL_DNS=192.168.1.1
@@ -99,7 +99,7 @@ Running `gp-client-proxy` opens the management dashboard in your terminal:
 ========================================
 SERVER:    Online (http://192.168.1.50:8001)
 STATUS:    CONNECTED
-MODE:      BOTH
+MODE:      PROXY + GATEWAY
 
 [i] CONNECTION DETAILS
 SOCKS5 Proxy:  192.168.1.50:1080 (No Auth)
@@ -116,10 +116,10 @@ R. Restart Authentication (Generate New Link)
 
 ### Environment Variables (Docker)
 
-| Variable           | Description                                                                        | Default    |
-| :----------------- | :--------------------------------------------------------------------------------- | :--------- |
-| `VPN_PORTAL`       | **Required.** The URL of your VPN portal.                                          | `None`     |
-| `VPN_MODE`         | `both` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent only).      | `both`     |
+| Variable           | Description                                                                        | Default         |
+| :----------------- | :--------------------------------------------------------------------------------- | :-------------- |
+| `VPN_PORTAL`       | **Required.** The URL of your VPN portal.                                          | `None`          |
+| `VPN_MODE`         | `proxy,gateway` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent). | `proxy,gateway` |
 | `PROXY_MODE`       | Comma-separated: `socks5,socks4,socks4a,http,https,ss`.                            | `socks5`   |
 | `SPLIT_TUNNEL`     | `true` enables Smart Split-Tunneling.                                              | `false`    |
 | `PROXY_AUTH`       | Basic proxy auth `user:password`.                                                  | `None`     |

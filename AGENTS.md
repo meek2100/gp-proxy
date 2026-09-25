@@ -81,11 +81,11 @@ The system uses a **"Three-Tier" architecture** to bridge the gap between a head
 
 Configure the overarching network stance via the `VPN_MODE` variable:
 
-- **`both`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Best for general use. (Also accepts `standard`).
+- **`proxy,gateway`:** Starts proxy handler(s) AND configures `iptables` for NAT/IP Forwarding (Gateway). Default behavior when `VPN_MODE` is omitted. (Also accepts `both` or `standard`).
 - **`proxy`:** Starts proxy handler(s) ONLY. Explicitly disables IP Forwarding and NAT. Locked down.
 - **`gateway`:** Configures NAT/IP Forwarding ONLY. No proxy listeners. Requires `macvlan` network driver.
 
-When the mode is `both`, `standard`, or `proxy`, configure active proxy endpoints via the `PROXY_MODE` environment variable (comma-separated):
+When proxy support is active (`proxy,gateway` or `proxy`), configure active proxy endpoints via the `PROXY_MODE` environment variable (comma-separated):
 
 - **`socks5`:** Standard UDP/TCP SOCKS5 proxy on Port 1080.
 - **`socks4`:** Standard TCP SOCKS4 proxy on Port 1084.

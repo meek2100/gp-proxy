@@ -37,7 +37,7 @@ const BINARY_NAME: &str = "gp-client-proxy";
 #[derive(Deserialize, Debug)]
 struct ServerStatus {
     state: String,    // idle, connecting, auth, connected, error
-    vpn_mode: String, // both, proxy, gateway
+    vpn_mode: String, // proxy, gateway, or proxy,gateway
 
     // Properly deserialized as null when no error is present due to Python server returning `None` instead of `""`
     #[allow(dead_code)]
@@ -260,7 +260,19 @@ fn run_dashboard() -> Result<()> {
                         println!("             [LOGIN REQUIRED]");
                     }
                 }
-                println!("MODE:      {}", s.vpn_mode.to_uppercase());
+                let mode_display = if (s.vpn_mode.contains("proxy") && s.vpn_mode.contains("gateway"))
+                    || s.vpn_mode == "both"
+                    || s.vpn_mode == "standard"
+                {
+                    "PROXY + GATEWAY".to_string()
+                } else if s.vpn_mode.contains("proxy") {
+                    "PROXY".to_string()
+                } else if s.vpn_mode.contains("gateway") {
+                    "GATEWAY".to_string()
+                } else {
+                    s.vpn_mode.to_uppercase()
+                };
+                println!("MODE:      {}", mode_display);
 
                 if s.state == "connected" {
                     println!("\n[i] CONNECTION DETAILS");
@@ -272,7 +284,7 @@ fn run_dashboard() -> Result<()> {
                         .next()
                         .unwrap_or("Unknown");
 
-                    if s.vpn_mode == "proxy" || s.vpn_mode == "both" || s.vpn_mode == "standard" {
+                    if s.vpn_mode.contains("proxy") || s.vpn_mode == "both" || s.vpn_mode == "standard" {
                         let auth_str = if s.proxy_auth_enabled {
                             "(Auth Enabled)"
                         } else {
@@ -280,7 +292,7 @@ fn run_dashboard() -> Result<()> {
                         };
                         println!("SOCKS5 Proxy:  {}:1080 {}", host_ip, auth_str);
                     }
-                    if s.vpn_mode == "gateway" || s.vpn_mode == "both" || s.vpn_mode == "standard" {
+                    if s.vpn_mode.contains("gateway") || s.vpn_mode == "both" || s.vpn_mode == "standard" {
                         println!("Gateway IP:    {}", host_ip);
                         println!("DNS Server:    {}", host_ip);
                     }

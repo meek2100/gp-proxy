@@ -56,11 +56,14 @@ LOG_LEVEL="${CLEAN_LOG_LEVEL^^}"
 [[ -z "$LOG_LEVEL" ]] && LOG_LEVEL="INFO"
 export LOG_LEVEL
 
-# 2. VPN_MODE (both, proxy, gateway)
+# 2. VPN_MODE (proxy, gateway, or proxy,gateway)
 RAW_VPN_MODE=$(get_env_value "VPN_MODE" "vpn_mode")
 CLEAN_VPN_MODE=$(clean_val "$RAW_VPN_MODE")
 VPN_MODE="${CLEAN_VPN_MODE,,}"
-[[ -z "$VPN_MODE" ]] && VPN_MODE="both"
+# Default to dual proxy and gateway mode if omitted or alias supplied
+if [[ -z "$VPN_MODE" || "$VPN_MODE" == "both" || "$VPN_MODE" == "all" || "$VPN_MODE" == "standard" ]]; then
+    VPN_MODE="proxy,gateway"
+fi
 export VPN_MODE
 
 # 3. VPN_PORTAL (Required)
@@ -274,7 +277,7 @@ log "INFO" "=========================================="
 log "INFO" "          GP Proxy Startup               "
 log "INFO" "=========================================="
 log "INFO" "Mode:        $VPN_MODE"
-if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "both" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"proxy"* ]]; then
     log "INFO" "Proxy Types: $PROXY_MODE"
 fi
 log "INFO" "Log Level:   $LOG_LEVEL"
@@ -290,7 +293,7 @@ fi
 if [[ -n "$VPN_DNS" ]]; then
     log "INFO" "VPN DNS:     $VPN_DNS"
 fi
-if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "both" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"gateway"* ]]; then
     if [[ -n "$GATEWAY_CLIENTS" ]]; then
         log "INFO" "GW Clients:  $GATEWAY_CLIENTS"
     fi
@@ -341,7 +344,7 @@ check_log_size() {
 
 # --- DYNAMIC PROCESS MANAGEMENT ---
 start_proxies() {
-    if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "both" || "$VPN_MODE" == "standard" ]]; then
+    if [[ "$VPN_MODE" == *"proxy"* ]]; then
         if ! pgrep -x gost >/dev/null; then
             log "INFO" "Starting proxy handlers..."
             local -a proxy_args=()
@@ -431,7 +434,7 @@ check_services() {
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
     if [[ "$mode" == "active" ]]; then
-        if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "both" || "$VPN_MODE" == "standard" ]]; then
+        if [[ "$VPN_MODE" == *"proxy"* ]]; then
             if ! pgrep -x gost >/dev/null; then
                 log "ERROR" "CRITICAL: proxy engine died while VPN was active. Restarting..."
                 start_proxies
@@ -498,9 +501,9 @@ else
 fi
 export IS_MACVLAN
 
-if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "both" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"gateway"* ]]; then
     if [[ "$IS_MACVLAN" == false ]]; then
-        log "WARN" "Configuration Mismatch: '$VPN_MODE' mode requested but no Macvlan interface found."
+        log "WARN" "Configuration Mismatch: Gateway mode requested but no Macvlan interface found."
         log "WARN" "Gateway features require a direct routable IP (Macvlan)."
         log "WARN" ">>> REVERTING TO 'proxy' MODE to ensure functionality. <<<"
         VPN_MODE="proxy"
@@ -570,7 +573,7 @@ iptables -F
 iptables -t nat -F
 iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
 
-if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "both" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"gateway"* ]]; then
     # Dynamically enable IP forwarding for routing functionality
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
         echo 1 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || log "WARN" "Could not dynamically enable ip_forward. Ensure container is run with --sysctl net.ipv4.ip_forward=1"
@@ -610,7 +613,7 @@ elif [[ "$VPN_MODE" == "proxy" ]]; then
     fi
 fi
 
-if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "both" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"proxy"* ]]; then
     setup_proxy_iptables() {
         local p="$1"
         case "$p" in
