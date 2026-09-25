@@ -1,0 +1,62 @@
+# File: .github/dependabot.yml
+version: 2
+updates:
+  # 1. GitHub Actions Workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # 2. Python Dependencies (pyproject.toml)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  # 3. Pre-Commit Hooks (.pre-commit-config.yaml)
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    groups:
+      pre-commit-hooks:
+        patterns:
+          - "*"
+
+  # 4. Rust Host Agent (apps/gp-client-proxy)
+  - package-ecosystem: "cargo"
+    directory: "/apps/gp-client-proxy"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    groups:
+      rust-dependencies:
+        patterns:
+          - "*"
+
+  # 5. Dockerfile and Docker Compose
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+    groups:
+      docker-images:
+        patterns:
+          - "*"
