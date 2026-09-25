@@ -45,7 +45,7 @@ services:
             - LOG_LEVEL=INFO
             - LOCAL_DOMAINS=local
             - VPN_DOMAINS=vpn.yourcompany.com
-            - VPN_SUBNETS=192.168.1.0/24
+            - VPN_SUBNETS=10.0.0.0/8
             - VPN_MODE=standard
         ports:
             - "8001:8001" # Web Dashboard
@@ -107,6 +107,7 @@ DNS Server:    192.168.1.50
 2. Disconnect VPN
 3. Re-run Setup / Discovery
 4. Uninstall
+R. Restart Authentication (Generate New Link)
 5. Exit
 ```
 
@@ -200,7 +201,7 @@ This is the cross-platform Rust binary (`gp-client-proxy`) that runs on the user
 
 1. **User** clicks "Connect" in the Host Agent.
 2. **Host Agent** calls `POST /connect` on the Container.
-3. **Container** generates and returns a SAML Auth URL.
+3. **Host Agent** checks for the SAML Auth URL via `GET /status.json`.
 4. **Host Agent** opens the default browser to this URL.
 5. **User** logs in via SSO.
 6. **Browser** redirects to `globalprotect://callback/...`

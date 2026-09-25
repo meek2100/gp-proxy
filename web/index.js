@@ -289,6 +289,8 @@ async function restartAuth() {
         }
     } catch (e) {
         console.error("Failed to restart auth:", e);
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         setTimeout(() => {
             if (ssoLink && ssoLink.textContent === "Generating New Link...") {
@@ -339,9 +341,22 @@ async function triggerConnect() {
     }, 15000);
 
     try {
-        await fetch("/connect", getFetchOptions("POST"));
+        const res = await fetch("/connect", getFetchOptions("POST"));
+        if (!res.ok) {
+            if (res.status === 401) {
+                console.warn("401 Unauthorized on connect - Reloading...");
+                window.location.reload();
+                return;
+            }
+            throw new Error(`Connect failed: ${res.status}`);
+        }
+        window.vpnState = "connecting";
     } catch (e) {
         console.error("Connect fetch failed:", e);
+        setBadge("CONNECT FAILED", "error");
+        setView("error");
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         resetPoll(1000);
     }
@@ -365,6 +380,8 @@ async function triggerDisconnect() {
             await fetch("/disconnect", getFetchOptions("POST"));
         } catch (e) {
             console.error("Disconnect fetch failed:", e);
+            isRestarting = false;
+            window.expectedNextState = null;
         } finally {
             resetPoll(1000);
         }
@@ -393,6 +410,8 @@ async function confirmReset() {
             }
         } catch (e) {
             console.error("Force reset fetch failed:", e);
+            isRestarting = false;
+            window.expectedNextState = null;
         } finally {
             window.vpnState = null;
             resetPoll(1000);
@@ -417,13 +436,25 @@ async function handleFormSubmit(event) {
     }, 15000);
 
     try {
-        await fetch("/submit", getFetchOptions("POST", formData));
+        const res = await fetch("/submit", getFetchOptions("POST", formData));
+        if (!res.ok) {
+            if (res.status === 401) {
+                console.warn("401 Unauthorized on submit - Reloading...");
+                window.location.reload();
+                return;
+            }
+            throw new Error(`Submit failed: ${res.status}`);
+        }
         setView("connecting");
         window.vpnState = "connecting";
         setBadge("CONNECTING...", "connecting");
         event.target.reset();
     } catch (e) {
         console.error("Form submit failed:", e);
+        setBadge("SUBMIT FAILED", "error");
+        setView("error");
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         resetPoll(1500);
     }
