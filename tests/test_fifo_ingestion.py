@@ -57,7 +57,7 @@ def test_pipe_pipeline_flow() -> None:
                     s.connect(("127.0.0.1", IPC_STDIN_PORT))
                     bound = True
                     break
-            except (OSError, TimeoutError):
+            except OSError:
                 time.sleep(0.1)
 
         if not bound:

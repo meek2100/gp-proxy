@@ -120,21 +120,21 @@ R. Restart Authentication (Generate New Link)
 | :----------------- | :--------------------------------------------------------------------------------- | :-------------- |
 | `VPN_PORTAL`       | **Required.** The URL of your VPN portal.                                          | `None`          |
 | `VPN_MODE`         | `proxy,gateway` (Proxy+Gateway), `proxy` (proxy only), or `gateway` (transparent). | `proxy,gateway` |
-| `PROXY_MODE`       | Comma-separated: `socks5,socks4,socks4a,http,https,ss`.                            | `socks5`   |
-| `SPLIT_TUNNEL`     | `true` enables Smart Split-Tunneling.                                              | `false`    |
-| `PROXY_AUTH`       | Basic proxy auth `user:password`.                                                  | `None`     |
-| `SS_AUTH`          | Shadowsocks auth `cipher:password`.                                                | Auto       |
-| `API_TOKEN`        | Static token to lock down the API.                                                 | `None`     |
-| `LOG_LEVEL`        | Logging verbosity (`INFO`, `DEBUG`, `TRACE`).                                      | `INFO`     |
-| `GATEWAY_CLIENTS`  | Comma-separated CIDRs permitted to forward traffic in `gateway`/`both` mode.       | `None`     |
-| `VPN_DISABLE_DTLS` | Set to `true` to force TCP instead of DTLS.                                        | `false`    |
-| `VPN_DISABLE_IPV6` | Set to `true` to disable IPv6 inside tunnel.                                       | `false`    |
-| `LOCAL_SUBNETS`    | Comma-separated CIDRs to bypass the VPN (e.g. `192.168.1.0/24`).                   | `None`     |
-| `LOCAL_DOMAINS`    | Comma-separated domains to resolve via LAN DNS (e.g. `local`).                     | `None`     |
-| `LOCAL_DNS`        | Primary LAN DNS server for fallback and local domain resolution.                   | Auto       |
-| `VPN_DOMAINS`      | Forceful injection of domains into the VPN tunnel.                                 | Auto       |
-| `VPN_SUBNETS`      | Forceful injection of CIDRs into the VPN tunnel.                                   | Auto       |
-| `VPN_DNS`          | Explicit DNS upstream servers for VPN domains.                                     | Auto       |
+| `PROXY_MODE`       | Comma-separated: `socks5,socks4,socks4a,http,https,ss`.                            | `socks5`        |
+| `SPLIT_TUNNEL`     | `true` enables Smart Split-Tunneling.                                              | `false`         |
+| `PROXY_AUTH`       | Basic proxy auth `user:password`.                                                  | `None`          |
+| `SS_AUTH`          | Shadowsocks auth `cipher:password`.                                                | Auto            |
+| `API_TOKEN`        | Static token to lock down the API.                                                 | `None`          |
+| `LOG_LEVEL`        | Logging verbosity (`INFO`, `DEBUG`, `TRACE`).                                      | `INFO`          |
+| `GATEWAY_CLIENTS`  | Comma-separated CIDRs permitted to forward traffic in `gateway`/`both` mode.       | `None`          |
+| `VPN_DISABLE_DTLS` | Set to `true` to force TCP instead of DTLS.                                        | `false`         |
+| `VPN_DISABLE_IPV6` | Set to `true` to disable IPv6 inside tunnel.                                       | `false`         |
+| `LOCAL_SUBNETS`    | Comma-separated CIDRs to bypass the VPN (e.g. `192.168.1.0/24`).                   | `None`          |
+| `LOCAL_DOMAINS`    | Comma-separated domains to resolve via LAN DNS (e.g. `local`).                     | `None`          |
+| `LOCAL_DNS`        | Primary LAN DNS server for fallback and local domain resolution.                   | Auto            |
+| `VPN_DOMAINS`      | Forceful injection of domains into the VPN tunnel.                                 | Auto            |
+| `VPN_SUBNETS`      | Forceful injection of CIDRs into the VPN tunnel.                                   | Auto            |
+| `VPN_DNS`          | Explicit DNS upstream servers for VPN domains.                                     | Auto            |
 
 ---
 

@@ -60,8 +60,11 @@ _paired_pubkey: Ed25519PublicKey | None = None
 _pairing_lock: threading.Lock = threading.Lock()
 
 # Evaluate static environments at module load to prevent polling bottlenecks
+STATIC_DEBUG_MODE: bool = os.getenv("LOG_LEVEL", "INFO").upper() in ["DEBUG", "TRACE"]
 _raw_vpn_mode: str = os.getenv("VPN_MODE", "proxy,gateway").strip().lower()
-STATIC_VPN_MODE: str = "proxy,gateway" if not _raw_vpn_mode or _raw_vpn_mode in ["both", "all", "standard"] else _raw_vpn_mode
+STATIC_VPN_MODE: str = (
+    "proxy,gateway" if not _raw_vpn_mode or _raw_vpn_mode in ["both", "all", "standard"] else _raw_vpn_mode
+)
 _proxy_mode_env: str = os.getenv("PROXY_MODE", "socks5")
 STATIC_PROXY_MODES: list[str] = [p.strip().lower() for p in _proxy_mode_env.split(",") if p.strip()]
 STATIC_PROXY_AUTH_ENABLED: bool = (os.getenv("PROXY_AUTH_ENABLED", "false").lower() == "true") or (
