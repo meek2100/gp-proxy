@@ -483,12 +483,13 @@ if [[ -n "$DOCKER_GATEWAY" ]]; then
 fi
 
 IS_MACVLAN=false
-if ip -d link show eth0 | grep -q "macvlan"; then
+if ip -d link show eth0 2>/dev/null | grep -q "macvlan"; then
     IS_MACVLAN=true
     log "DEBUG" "Network detection: MACVLAN interface detected."
 else
     log "DEBUG" "Network detection: Standard/Bridge interface detected."
 fi
+export IS_MACVLAN
 
 if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
     if [[ "$IS_MACVLAN" == false ]]; then

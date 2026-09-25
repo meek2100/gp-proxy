@@ -258,7 +258,7 @@ fn run_dashboard() -> Result<()> {
                         .next()
                         .unwrap_or("Unknown");
 
-                    if s.vpn_mode == "socks" || s.vpn_mode == "standard" {
+                    if s.vpn_mode == "socks" || s.vpn_mode == "standard" || s.vpn_mode == "proxy" {
                         let auth_str = if s.socks_auth_enabled {
                             "(Auth Enabled)"
                         } else {

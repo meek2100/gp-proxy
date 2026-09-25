@@ -111,8 +111,10 @@ if [[ "$reason" == "connect" ]]; then
                 for d in "${LDOMAINS[@]}"; do
                     for ip in "${RESOLVERS[@]}"; do
                         echo "server=/$d/$ip" >>/etc/dnsmasq.d/10-vpn.conf
-                        # Ensure these resolve via eth0 (local network)
-                        ip route add "$ip" dev eth0 2>/dev/null || ip route replace "$ip" dev eth0 2>/dev/null || true
+                        # Ensure these resolve via eth0 (local network), skipping MACVLAN where L2 kernel route already applies
+                        if [[ "$IS_MACVLAN" != "true" ]] && ! ip -d link show eth0 2>/dev/null | grep -q "macvlan"; then
+                            ip route add "$ip" dev eth0 2>/dev/null || ip route replace "$ip" dev eth0 2>/dev/null || true
+                        fi
                     done
                 done
                 echo "[vpnc-wrapper] Local Domain Overrides configured: $LOCAL_DOMAINS -> $RESOLVER_TO_USE" >>"$SERVICE_LOG"
@@ -226,15 +228,22 @@ if [[ "$reason" == "connect" ]]; then
     # The legacy vpnc-script often adds host routes (/32) for VPN servers or DNS servers as 'scope link' on eth0.
     # In a Docker Bridge, this causes ARP failures because those IPs aren't on the virtual link.
     # We find all non-kernel scope-link routes on eth0 and force them through the gateway.
-    GW_TO_USE="${DOCKER_GATEWAY:-$(ip route show default | awk '/default via / {print $3; exit}')}"
-    if [[ -n "$GW_TO_USE" ]]; then
-        # Find all routes on eth0 with scope link that were NOT added by the kernel (proto kernel)
-        while read -r route_line; do
-            target_ip=$(echo "$route_line" | awk '{print $1}')
-            [[ -z "$target_ip" ]] && continue
-            echo "[vpnc-wrapper] Correcting bridge-mode host route: $target_ip via $GW_TO_USE" >>"$SERVICE_LOG"
-            ip route replace "$target_ip" via "$GW_TO_USE" dev eth0 2>/dev/null || true
-        done < <(ip route show dev eth0 scope link | grep -v "proto kernel")
+    # Note: This MUST NOT run in MACVLAN networks, as it diverts same-subnet LAN traffic to the gateway, causing hairpin drops.
+    if [[ "$IS_MACVLAN" != "true" ]] && ! ip -d link show eth0 2>/dev/null | grep -q "macvlan"; then
+        GW_TO_USE="${DOCKER_GATEWAY:-$(ip route show default | awk '/default via / {print $3; exit}')}"
+        if [[ -n "$GW_TO_USE" ]]; then
+            # Find all routes on eth0 with scope link that were NOT added by the kernel (proto kernel)
+            while read -r route_line; do
+                target_ip=$(echo "$route_line" | awk '{print $1}')
+                [[ -z "$target_ip" ]] && continue
+                # Skip if target_ip is covered by a proto kernel link route
+                if ip route show dev eth0 proto kernel scope link 2>/dev/null | grep -q -F "${target_ip%.*}."; then
+                    continue
+                fi
+                echo "[vpnc-wrapper] Correcting bridge-mode host route: $target_ip via $GW_TO_USE" >>"$SERVICE_LOG"
+                ip route replace "$target_ip" via "$GW_TO_USE" dev eth0 2>/dev/null || true
+            done < <(ip route show dev eth0 scope link | grep -v "proto kernel")
+        fi
     fi
 
     # 10. Disable rp_filter (Reverse Path Filtering) to prevent packet drops
