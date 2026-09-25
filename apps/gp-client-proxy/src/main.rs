@@ -260,7 +260,8 @@ fn run_dashboard() -> Result<()> {
                         println!("             [LOGIN REQUIRED]");
                     }
                 }
-                let mode_display = if s.vpn_mode.contains("proxy") && s.vpn_mode.contains("gateway") {
+                let mode_display = if s.vpn_mode.contains("proxy") && s.vpn_mode.contains("gateway")
+                {
                     "PROXY + GATEWAY".to_string()
                 } else if s.vpn_mode.contains("proxy") {
                     "PROXY".to_string()
