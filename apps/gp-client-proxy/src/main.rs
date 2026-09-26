@@ -3,7 +3,8 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use directories::ProjectDirs;
 use ed25519_dalek::{Signer, SigningKey};
-use rand::rngs::OsRng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -615,7 +616,7 @@ fn run_setup_wizard() -> Result<()> {
 
     if final_token.is_empty() {
         println!("\nGenerating Ed25519 identity and attempting TOFU pairing...");
-        let mut csprng = OsRng;
+        let mut csprng = UnwrapErr(SysRng);
         let signing_key = SigningKey::generate(&mut csprng);
         let verifying_key = signing_key.verifying_key();
 
