@@ -576,9 +576,6 @@ if [[ "$VPN_MODE" == *"gateway"* ]]; then
         echo 1 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || log "WARN" "Could not dynamically enable ip_forward. Ensure container is run with --sysctl net.ipv4.ip_forward=1"
     fi
     iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
-    if [[ "$SPLIT_TUNNEL" == "true" ]]; then
-        iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-    fi
 
     if [[ -n "$GATEWAY_CLIENTS" ]]; then
         log "INFO" "Restricting routing to GATEWAY_CLIENTS: $GATEWAY_CLIENTS"
@@ -593,6 +590,7 @@ if [[ "$VPN_MODE" == *"gateway"* ]]; then
                 iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
                 if [[ "$SPLIT_TUNNEL" == "true" ]]; then
                     iptables -A FORWARD -s "$subnet" -o eth0 -j ACCEPT
+                    iptables -t nat -A POSTROUTING -s "$subnet" -o eth0 -j MASQUERADE
                 fi
             else
                 log "ERROR" "Invalid subnet CIDR format ignored: $subnet"
@@ -603,6 +601,9 @@ if [[ "$VPN_MODE" == *"gateway"* ]]; then
             iptables -A FORWARD -o eth0 -j DROP
         fi
     else
+        if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+            iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+        fi
         iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
         if [[ "$SPLIT_TUNNEL" == "true" ]]; then
             iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT
