@@ -106,9 +106,17 @@ class LogAnalysis(TypedDict):
     sso_url: str
 
 
+class SSOIntercept(TypedDict):
+    """A session redirect or the next allowed probe time after a failure."""
+
+    url: str
+    retry_at: float
+
+
 # --- Global State tracking for internal SSO Interception ---
 _sso_lock: threading.Lock = threading.Lock()
-_sso_intercept_cache: dict[str, str] = {}
+_sso_intercept_cache: dict[str, SSOIntercept] = {}
+_SSO_RETRY_INTERVAL: float = 5.0
 
 
 def clear_sso_cache() -> None:
@@ -186,6 +194,19 @@ class StateManager:
             return False
 
     def get_cached_log_analysis(self, log_path: Path) -> tuple[LogAnalysis, str]:
+        """Refresh SSO probes from cached text even when the log has not changed."""
+        analysis, log_content = self._read_cached_log_analysis(log_path)
+        if analysis["state"] == "auth":
+            # Network I/O must stay outside the state lock, including on cache hits.
+            sso_url = _extract_sso_url(log_content, PORT)
+            with self._lock:
+                if self._cached_analysis is analysis and sso_url != analysis["sso_url"]:
+                    analysis = analysis.copy()
+                    analysis["sso_url"] = sso_url
+                    self._cached_analysis = analysis
+        return analysis, log_content
+
+    def _read_cached_log_analysis(self, log_path: Path) -> tuple[LogAnalysis, str]:
         """
         Reads and analyzes the log file safely, only processing it if it has changed since
         the last read operation. Includes TOCTOU file handling.
@@ -414,18 +435,21 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _probe_sso_target(candidate_url: str) -> str:
     """Probe a local SSO URL to discover its 302 Redirect location."""
     with _sso_lock:
-        if candidate_url in _sso_intercept_cache:
-            cached = _sso_intercept_cache[candidate_url]
-            return cached if cached else candidate_url
+        cached = _sso_intercept_cache.get(candidate_url)
+        if cached is not None and (cached["url"] or time.monotonic() < cached["retry_at"]):
+            return cached["url"] or candidate_url
+        # Reserve this attempt so concurrent polls cannot start duplicate probes.
+        attempt: SSOIntercept = {"url": "", "retry_at": float("inf")}
+        _sso_intercept_cache[candidate_url] = attempt
 
     resolved_location: str = ""
     try:
         opener = urllib.request.build_opener(_NoRedirectHandler)
-        resp = opener.open(candidate_url, timeout=3.0)
-        location = resp.getheader("Location")
-        if location:
-            resolved_location = str(location)
-            logger.info(f"Intercepted local 302. True SSO: {resolved_location[:70]}...")
+        with opener.open(candidate_url, timeout=3.0) as resp:
+            location = resp.getheader("Location")
+            if location:
+                resolved_location = str(location)
+                logger.info(f"Intercepted local 302. True SSO: {resolved_location[:70]}...")
     except urllib.error.HTTPError as e:
         if e.code in (301, 302, 303, 307, 308):
             location = e.headers.get("Location")
@@ -435,9 +459,12 @@ def _probe_sso_target(candidate_url: str) -> str:
     except Exception as e:
         logger.debug(f"Failed internal probe for SSO extraction: {e}")
 
-    # Cache the outcome (even if empty) to prevent repeated 3-second timeouts
     with _sso_lock:
-        _sso_intercept_cache[candidate_url] = resolved_location
+        # A reset invalidates in-flight probes from the previous session.
+        if _sso_intercept_cache.get(candidate_url) is not attempt:
+            return candidate_url
+        attempt["url"] = resolved_location
+        attempt["retry_at"] = time.monotonic() + _SSO_RETRY_INTERVAL
 
     return resolved_location if resolved_location else candidate_url
 
@@ -448,7 +475,7 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
     Returns the last URL found in the log that is not from the local web server.
     If the URL points to a local Docker container IP, it probes the 302 Redirect
     location to resolve the true external SSO URL (Okta/Azure/etc) for the browser.
-    Failed probe outcomes are cached to prevent repeated socket blocking.
+    Failed probes are throttled until their retry deadline; successful redirects persist until reset.
     """
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
     if not found_urls:

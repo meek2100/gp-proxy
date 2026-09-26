@@ -14,7 +14,9 @@ import os
 import tempfile
 import threading
 import time
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
+from email.message import Message
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock, Mock, patch
@@ -794,14 +796,18 @@ class TestEdgeCasesAndSecurity:
 
     def test_clear_sso_cache(self) -> None:
         """Test clearing the SSO intercept cache."""
-        with server._sso_lock:
-            server._sso_intercept_cache["http://127.0.0.1:32801"] = "https://idp.example.com"
-            assert "http://127.0.0.1:32801" in server._sso_intercept_cache
-
+        log = "Manual Authentication Required http://127.0.0.1:32801/login"
         server.clear_sso_cache()
-
-        with server._sso_lock:
-            assert len(server._sso_intercept_cache) == 0
+        try:
+            with patch("backend.server.urllib.request.build_opener") as build_opener:
+                response = build_opener.return_value.open.return_value.__enter__.return_value
+                response.getheader.side_effect = ["https://idp.example.com/first", "https://idp.example.com/second"]
+                analyze_log_lines([log], log)
+                server.clear_sso_cache()
+                analysis = analyze_log_lines([log], log)
+                assert analysis["sso_url"] == "https://idp.example.com/second"
+        finally:
+            server.clear_sso_cache()
 
     def test_is_local_or_private_url(self) -> None:
         """Test detection of loopback and RFC 1918 private URLs."""
@@ -817,16 +823,141 @@ class TestEdgeCasesAndSecurity:
     def test_status_payload_includes_auth_url(self) -> None:
         """Test that get_vpn_state produces auth_url key in status dictionary."""
         with tempfile.NamedTemporaryFile("w+", delete=False) as f:
-            f.write("Some log content\n")
+            f.write("Manual Authentication Required\nhttps://auth.example.com/login\n")
             f.flush()
             log_path = Path(f.name)
 
         try:
-            with patch("backend.server.SERVICE_LOG", log_path):
+            with (
+                patch("backend.server.CLIENT_LOG", log_path),
+                patch("backend.server.MODE_FILE", log_path.with_suffix(".mode")),
+                patch("backend.server.state_manager", StateManager()),
+                patch("backend.server.get_best_ip", return_value="127.0.0.1"),
+            ):
                 state = server.get_vpn_state()
                 assert "auth_url" in state
                 assert "url" in state
-                assert state["auth_url"] == state["url"]
+                assert state["auth_url"] == state["url"] == "https://auth.example.com/login"
         finally:
             if log_path.exists():
                 log_path.unlink()
+
+
+class TestSSORetry:
+    """Exercise SSO retries through log analysis and status polling."""
+
+    def test_status_retries_timeout(self) -> None:
+        """A timed-out probe can recover without rereading the log."""
+        self.assert_status_retries_without_rereading_log(TimeoutError("listener not ready"))
+
+    def test_status_retries_connection_failure(self) -> None:
+        """A connection failure can recover without rereading the log."""
+        self.assert_status_retries_without_rereading_log(urllib.error.URLError("connection refused"))
+
+    def test_status_retries_http_failure(self) -> None:
+        """An HTTP failure can recover without rereading the log."""
+        failure = urllib.error.HTTPError("http://127.0.0.1:32801/login", 503, "Unavailable", Message(), None)
+        self.assert_status_retries_without_rereading_log(failure)
+
+    def test_status_retries_missing_location(self) -> None:
+        """A response missing its redirect can recover without rereading the log."""
+        self.assert_status_retries_without_rereading_log(None)
+
+    def assert_status_retries_without_rereading_log(self, failure: Exception | None) -> None:
+        """Check retry deadlines, refreshed status URLs and the log read cache."""
+        local_url = "http://127.0.0.1:32801/login"
+        redirect_url = "https://idp.example.com/login"
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write(f"Manual Authentication Required {local_url}\n")
+            log_path = Path(f.name)
+
+        server.clear_sso_cache()
+        try:
+            with (
+                patch("backend.server.CLIENT_LOG", log_path),
+                patch("backend.server.MODE_FILE", log_path.with_suffix(".mode")),
+                patch("backend.server.state_manager", StateManager()),
+                patch("backend.server.get_best_ip", return_value="127.0.0.1"),
+                patch("backend.server.time.monotonic", return_value=100.0) as clock,
+                patch("backend.server.urllib.request.build_opener") as build_opener,
+                patch("builtins.open", wraps=open) as read_log,
+            ):
+                response = MagicMock()
+                response.__enter__.return_value.getheader.return_value = redirect_url
+                empty_response = MagicMock()
+                empty_response.__enter__.return_value.getheader.return_value = None
+                probe = build_opener.return_value.open
+                probe.side_effect = [failure or empty_response, failure or empty_response, response]
+
+                assert get_vpn_state()["auth_url"] == local_url
+                clock.return_value = 104.9
+                assert get_vpn_state()["auth_url"] == local_url
+                assert probe.call_count == 1
+                clock.return_value = 105.0
+                assert get_vpn_state()["auth_url"] == local_url
+                assert probe.call_count == 2
+                clock.return_value = 109.9
+                assert get_vpn_state()["auth_url"] == local_url
+                assert probe.call_count == 2
+                clock.return_value = 110.0
+                state = get_vpn_state()
+                assert state["auth_url"] == state["url"] == redirect_url
+                clock.return_value = 500.0
+                assert get_vpn_state()["auth_url"] == redirect_url
+                assert probe.call_count == 3
+                assert read_log.call_count == 1
+        finally:
+            log_path.unlink()
+            server.clear_sso_cache()
+
+    def test_concurrent_polls_share_inflight_probe(self) -> None:
+        """Concurrent readers share a probe without waiting on its network response."""
+        log = "Manual Authentication Required http://127.0.0.1:32801/login"
+        started = threading.Event()
+        release = threading.Event()
+
+        def probe(*_args: Any, **_kwargs: Any) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            response = MagicMock()
+            response.__enter__.return_value.getheader.return_value = "https://idp.example.com/login"
+            return response
+
+        server.clear_sso_cache()
+        try:
+            with patch("backend.server.urllib.request.build_opener") as build_opener:
+                build_opener.return_value.open.side_effect = probe
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    first = pool.submit(analyze_log_lines, [log], log)
+                    try:
+                        assert started.wait(timeout=5)
+                        second = pool.submit(analyze_log_lines, [log], log)
+                        assert second.result(timeout=2)["sso_url"] == "http://127.0.0.1:32801/login"
+                        assert build_opener.return_value.open.call_count == 1
+                    finally:
+                        release.set()
+                    assert first.result(timeout=2)["sso_url"] == "https://idp.example.com/login"
+        finally:
+            release.set()
+            server.clear_sso_cache()
+
+    def test_reset_discards_inflight_probe_result(self) -> None:
+        """A cleared session cannot be repopulated by an older probe completing."""
+        log = "Manual Authentication Required http://127.0.0.1:32801/login"
+
+        def probe(*_args: Any, **_kwargs: Any) -> MagicMock:
+            server.clear_sso_cache()
+            response = MagicMock()
+            response.__enter__.return_value.getheader.return_value = "https://idp.example.com/old-session"
+            return response
+
+        server.clear_sso_cache()
+        try:
+            with patch("backend.server.urllib.request.build_opener") as build_opener:
+                build_opener.return_value.open.side_effect = probe
+                assert analyze_log_lines([log], log)["sso_url"] == "http://127.0.0.1:32801/login"
+                build_opener.return_value.open.side_effect = TimeoutError()
+                assert analyze_log_lines([log], log)["sso_url"] == "http://127.0.0.1:32801/login"
+                assert build_opener.return_value.open.call_count == 2
+        finally:
+            server.clear_sso_cache()
