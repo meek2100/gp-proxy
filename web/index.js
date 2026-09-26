@@ -452,7 +452,6 @@ async function handleFormSubmit(event) {
     } catch (e) {
         console.error("Form submit failed:", e);
         setBadge("SUBMIT FAILED", "error");
-        setView("error");
         isRestarting = false;
         window.expectedNextState = null;
     } finally {
@@ -590,7 +589,12 @@ async function updateStatus() {
         }
 
         if (isRestarting) {
-            if (data.state === window.expectedNextState || data.state === "error" || data.state === "connected") {
+            if (
+                data.state === window.expectedNextState ||
+                (window.expectedNextState === "auth" && data.state === "input") ||
+                data.state === "error" ||
+                data.state === "connected"
+            ) {
                 isRestarting = false;
                 window.expectedNextState = null;
             } else if (

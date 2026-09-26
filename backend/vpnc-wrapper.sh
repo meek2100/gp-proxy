@@ -103,39 +103,38 @@ if [[ "$reason" == "connect" ]]; then
             done
             echo "[vpnc-wrapper] Auto-Detected Split-DNS configured for domains: ${UNIQUE_DOMAINS[*]} -> ${VPN_DNS_SERVERS[*]}" >>"$SERVICE_LOG"
         fi
-
-        # 5.1 Manual Local Domain Overrides (Split-DNS Bypass)
-        # Force specific domains to resolve via the Local/LAN DNS instead of the VPN
-        if [[ -n "$LOCAL_DOMAINS" ]]; then
-            # Priority: Use LOCAL_DNS if explicitly set, otherwise use captured DOCKER_DNS from launch
-            RESOLVER_TO_USE="${LOCAL_DNS:-$DOCKER_DNS}"
-            if [[ -n "$RESOLVER_TO_USE" ]]; then
-                IFS=',' read -ra LDOMAINS <<<"$LOCAL_DOMAINS"
-                # Split comma-separated resolvers into a proper array
-                # shellcheck disable=SC2206
-                RESOLVERS=(${RESOLVER_TO_USE//,/ })
-                for d in "${LDOMAINS[@]}"; do
-                    for ip in "${RESOLVERS[@]}"; do
-                        echo "server=/$d/$ip" >>/etc/dnsmasq.d/10-vpn.conf
-                        # Ensure these resolve via eth0 (local network), skipping MACVLAN where L2 kernel route already applies
-                        if [[ "$IS_MACVLAN" != "true" ]] && ! ip -d link show eth0 2>/dev/null | grep -q "macvlan"; then
-                            ip route add "$ip" dev eth0 2>/dev/null || ip route replace "$ip" dev eth0 2>/dev/null || true
-                        fi
-                    done
-                done
-                echo "[vpnc-wrapper] Local Domain Overrides configured: $LOCAL_DOMAINS -> $RESOLVER_TO_USE" >>"$SERVICE_LOG"
-            fi
-        fi
-
-        # Restart dnsmasq to apply /etc/dnsmasq.d/ changes (SIGHUP is insufficient for directory configs)
-        pkill dnsmasq || true
-        # Restart with the same settings as entrypoint.sh (verbose logging if enabled)
-        LOG_FLAGS=""
-        [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]] && LOG_FLAGS="--log-queries --log-facility=-"
-        # shellcheck disable=SC2086
-        dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS >>"$SERVICE_LOG" 2>&1 &
-
     fi
+
+    # 5.1 Manual Local Domain Overrides (Split-DNS Bypass)
+    # Force specific domains to resolve via the Local/LAN DNS instead of the VPN
+    if [[ -n "$LOCAL_DOMAINS" ]]; then
+        # Priority: Use LOCAL_DNS if explicitly set, otherwise use captured DOCKER_DNS from launch
+        RESOLVER_TO_USE="${LOCAL_DNS:-$DOCKER_DNS}"
+        if [[ -n "$RESOLVER_TO_USE" ]]; then
+            IFS=',' read -ra LDOMAINS <<<"$LOCAL_DOMAINS"
+            # Split comma-separated resolvers into a proper array
+            # shellcheck disable=SC2206
+            RESOLVERS=(${RESOLVER_TO_USE//,/ })
+            for d in "${LDOMAINS[@]}"; do
+                for ip in "${RESOLVERS[@]}"; do
+                    echo "server=/$d/$ip" >>/etc/dnsmasq.d/10-vpn.conf
+                    # Ensure these resolve via eth0 (local network), skipping MACVLAN where L2 kernel route already applies
+                    if [[ "$IS_MACVLAN" != "true" ]] && ! ip -d link show eth0 2>/dev/null | grep -q "macvlan"; then
+                        ip route add "$ip" dev eth0 2>/dev/null || ip route replace "$ip" dev eth0 2>/dev/null || true
+                    fi
+                done
+            done
+            echo "[vpnc-wrapper] Local Domain Overrides configured: $LOCAL_DOMAINS -> $RESOLVER_TO_USE" >>"$SERVICE_LOG"
+        fi
+    fi
+
+    # Restart dnsmasq to apply /etc/dnsmasq.d/ changes (SIGHUP is insufficient for directory configs)
+    pkill dnsmasq || true
+    # Restart with the same settings as entrypoint.sh (verbose logging if enabled)
+    LOG_FLAGS=""
+    [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]] && LOG_FLAGS="--log-queries --log-facility=-"
+    # shellcheck disable=SC2086
+    dnsmasq --conf-file=/etc/dnsmasq.conf $LOG_FLAGS >>"$SERVICE_LOG" 2>&1 &
 
     # 6. Smart Split Routing Implementation
     if [[ "$SPLIT_TUNNEL" == "true" ]]; then
@@ -204,7 +203,7 @@ if [[ "$reason" == "connect" ]]; then
             if [[ "$subnet" != */* ]] || [[ "$subnet" == */32 ]]; then
                 CLEAN_IP="${subnet%/32}"
                 # If a /32 route exists Dev eth0 without a gateway, it's a "scope link" route and must be removed
-                if ip route show "$CLEAN_IP" | grep -q "dev eth0" | grep -v -q "via"; then
+                if ip route show "$CLEAN_IP" | grep "dev eth0" | grep -v -q "via"; then
                     echo "[vpnc-wrapper] Pruning conflicting scope-link route for $CLEAN_IP" >>"$SERVICE_LOG"
                     ip route del "$CLEAN_IP" dev eth0 2>/dev/null || true
                 fi

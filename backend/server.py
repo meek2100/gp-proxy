@@ -12,6 +12,7 @@ import base64
 import hashlib
 import hmac
 import http.server
+import ipaddress
 import json
 import logging
 import os
@@ -91,6 +92,7 @@ class VPNState(TypedDict):
     proxy_modes: list[str]  # Active proxy types (e.g., ['socks5', 'http'])
     server_ip: str  # The dynamically detected best outbound IP
     proxy_auth_enabled: bool  # Whether Proxy auth is configured
+    auth_url: str  # Discovered SSO redirect URL
 
 
 class LogAnalysis(TypedDict):
@@ -102,6 +104,17 @@ class LogAnalysis(TypedDict):
     options: list[str]
     error: str | None
     sso_url: str
+
+
+# --- Global State tracking for internal SSO Interception ---
+_sso_lock: threading.Lock = threading.Lock()
+_sso_intercept_cache: dict[str, str] = {}
+
+
+def clear_sso_cache() -> None:
+    """Clear cached SSO intercept URLs."""
+    with _sso_lock:
+        _sso_intercept_cache.clear()
 
 
 # --- State Management (Thread Safety) ---
@@ -154,6 +167,7 @@ class StateManager:
                 "error": None,
                 "sso_url": "",
             }
+            clear_sso_cache()
 
     def update_and_check_transition(self, new_state: str) -> bool:
         """
@@ -373,8 +387,59 @@ def _extract_gateways(clean_lines: list[str]) -> list[str]:
     return sorted(input_options)
 
 
-# --- Global State tracking for internal SSO Interception ---
-_sso_intercept_cache: dict[str, str] = {}
+def _is_local_or_private_url(url: str) -> bool:
+    """Check if the URL points to a loopback or RFC 1918 private address."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https"):
+            return False
+        hostname = parts.hostname
+        if not hostname:
+            return False
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+            return True
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_private or ip.is_loopback
+    except ValueError:
+        return False
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Subclass HTTPRedirectHandler to prevent following redirects safely."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: Any) -> Any:
+        return None
+
+
+def _probe_sso_target(candidate_url: str) -> str:
+    """Probe a local SSO URL to discover its 302 Redirect location."""
+    with _sso_lock:
+        if candidate_url in _sso_intercept_cache:
+            cached = _sso_intercept_cache[candidate_url]
+            return cached if cached else candidate_url
+
+    resolved_location: str = ""
+    try:
+        opener = urllib.request.build_opener(_NoRedirectHandler)
+        resp = opener.open(candidate_url, timeout=3.0)
+        location = resp.getheader("Location")
+        if location:
+            resolved_location = str(location)
+            logger.info(f"Intercepted local 302. True SSO: {resolved_location[:70]}...")
+    except urllib.error.HTTPError as e:
+        if e.code in (301, 302, 303, 307, 308):
+            location = e.headers.get("Location")
+            if location:
+                resolved_location = str(location)
+                logger.info(f"Intercepted local 302 via exception. True SSO: {resolved_location[:70]}...")
+    except Exception as e:
+        logger.debug(f"Failed internal probe for SSO extraction: {e}")
+
+    # Cache the outcome (even if empty) to prevent repeated 3-second timeouts
+    with _sso_lock:
+        _sso_intercept_cache[candidate_url] = resolved_location
+
+    return resolved_location if resolved_location else candidate_url
 
 
 def _extract_sso_url(full_log_content: str, port: int) -> str:
@@ -383,46 +448,20 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
     Returns the last URL found in the log that is not from the local web server.
     If the URL points to a local Docker container IP, it probes the 302 Redirect
     location to resolve the true external SSO URL (Okta/Azure/etc) for the browser.
+    Failed probe outcomes are cached to prevent repeated socket blocking.
     """
     found_urls: list[str] = URL_PATTERN.findall(full_log_content)
-    if found_urls:
-        local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
-        best_url = local_urls[-1] if local_urls else found_urls[-1]
-        best_url = best_url.rstrip(".,;:")
+    if not found_urls:
+        return ""
 
-        # Intercept unreachable local container IP bindings to steal the true SSO redirect
-        if best_url.startswith("http://") and any(x in best_url for x in ["172.", "10.", "192.", "127."]):
-            if best_url in _sso_intercept_cache:
-                return _sso_intercept_cache[best_url]
+    local_urls: list[str] = [u for u in found_urls if str(port) not in u and "127.0.0.1" not in u]
+    best_url = (local_urls[-1] if local_urls else found_urls[-1]).rstrip(".,;:")
 
-            try:
-                # Cleanly subclass HTTPRedirectHandler to prevent following redirects safely
-                class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-                    def redirect_request(
-                        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: Any
-                    ) -> Any:
-                        return None
+    # Intercept unreachable local container IP bindings to steal the true SSO redirect
+    if _is_local_or_private_url(best_url):
+        return _probe_sso_target(best_url)
 
-                opener = urllib.request.build_opener(NoRedirectHandler)
-                resp = opener.open(best_url, timeout=3.0)
-                location = resp.getheader("Location")
-                if location:
-                    logger.info(f"Intercepted local 302. True SSO: {str(location)[:70]}...")
-                    _sso_intercept_cache[best_url] = str(location)
-                    return str(location)
-            except urllib.error.HTTPError as e:
-                # Fallback if the standard library raises HTTPError on 302s
-                if e.code in (301, 302, 303, 307, 308):
-                    location = e.headers.get("Location")
-                    if location:
-                        logger.info(f"Intercepted local 302 via exception. True SSO: {str(location)[:70]}...")
-                        _sso_intercept_cache[best_url] = str(location)
-                        return str(location)
-            except Exception as e:
-                logger.debug(f"Failed internal probe for SSO extraction: {e}")
-
-        return best_url
-    return ""
+    return best_url
 
 
 def _evaluate_line_state(line: str, clean_lines: list[str], analysis_acc: LogAnalysis) -> bool:
@@ -521,6 +560,7 @@ def get_vpn_state() -> VPNState:
                 return {
                     "state": "idle",
                     "url": "",
+                    "auth_url": "",
                     "prompt": "",
                     "input_type": "text",
                     "options": [],
@@ -548,6 +588,7 @@ def get_vpn_state() -> VPNState:
     return {
         "state": analysis["state"],
         "url": analysis["sso_url"],
+        "auth_url": analysis["sso_url"],
         "prompt": analysis["prompt"],
         "input_type": analysis["prompt_type"],
         "options": analysis["options"],

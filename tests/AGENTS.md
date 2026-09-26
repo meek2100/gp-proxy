@@ -13,7 +13,7 @@ See `backend/AGENTS.md` for production Python conventions, and the project root 
 
 - Uses `pytest`. Run with `pytest tests/` from the project root.
 - Test files map 1:1 to backend modules: `test_server.py` → `server.py`, `test_utils.py` → `utils.py`, etc.
-- All test files must add the `backend/` directory to `sys.path` at the top of file to allow direct module imports without installing the package.
+- All test files import backend modules directly (e.g., `from backend import server`), configured via `pyproject.toml` (`pythonpath = ["."]`).
 
 ## Test Structure
 
@@ -31,7 +31,7 @@ See `backend/AGENTS.md` for production Python conventions, and the project root 
 ## Mocking
 
 - Use `unittest.mock.patch` as a context manager or decorator — never apply patches globally across test methods.
-- When patching module-level globals in `server` (e.g., `server.EPHEMERAL_TOKEN`, `server._paired_pubkey`), always use the fully qualified `"server.<name>"` patch target.
+- When patching module-level globals in `server` (e.g., `server.EPHEMERAL_TOKEN`, `server._paired_pubkey`), always use the fully qualified `"backend.server.<name>"` patch target.
 - Use `tempfile.NamedTemporaryFile` and `tempfile.TemporaryDirectory` with `delete=False` for file-based tests. Always clean up in a `finally` block.
 
 ## Concurrency Tests

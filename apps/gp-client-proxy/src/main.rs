@@ -47,7 +47,24 @@ struct ServerStatus {
     url: String,
 
     #[serde(default)]
+    auth_url: Option<String>,
+
+    #[serde(default)]
+    proxy_modes: Vec<String>,
+
+    #[serde(default)]
     proxy_auth_enabled: bool,
+}
+
+impl ServerStatus {
+    fn login_url(&self) -> &str {
+        if let Some(ref auth) = self.auth_url {
+            if !auth.is_empty() {
+                return auth.as_str();
+            }
+        }
+        self.url.as_str()
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -254,7 +271,8 @@ fn run_dashboard() -> Result<()> {
                 println!("SERVER:    Online ({})", config.base_url);
                 println!("STATUS:    {}", s.state.to_uppercase());
                 if s.state == "auth" {
-                    if !s.url.is_empty() && s.url == last_opened_url {
+                    let login_link = s.login_url();
+                    if !login_link.is_empty() && login_link == last_opened_url {
                         println!("             [LOGIN LINK ALREADY OPENED]");
                     } else {
                         println!("             [LOGIN REQUIRED]");
@@ -282,7 +300,9 @@ fn run_dashboard() -> Result<()> {
                         .next()
                         .unwrap_or("Unknown");
 
-                    if s.vpn_mode.contains("proxy") {
+                    if s.vpn_mode.contains("proxy")
+                        && (s.proxy_modes.is_empty() || s.proxy_modes.iter().any(|m| m == "socks5"))
+                    {
                         let auth_str = if s.proxy_auth_enabled {
                             "(Auth Enabled)"
                         } else {
@@ -328,21 +348,33 @@ fn run_dashboard() -> Result<()> {
         match input.trim().to_lowercase().as_str() {
             "r" => {
                 println!("Restarting Authentication...");
-                let _ = with_auth(
+                let dis_res = with_auth(
                     agent.post(&format!("{}/disconnect", config.base_url)),
                     &config,
                     "/disconnect",
                 )
                 .send_empty();
+                if let Err(e) = dis_res {
+                    println!("[ERROR] Disconnect failed: {}", e);
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
                 let req = agent.post(&format!("{}/connect", config.base_url));
-                let _ = with_auth(req, &config, "/connect").send_empty();
+                let conn_res = with_auth(req, &config, "/connect").send_empty();
+                if let Err(e) = conn_res {
+                    println!("[ERROR] Connect failed: {}", e);
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+                println!("[SUCCESS] Authentication restarted.");
                 last_opened_url.clear();
                 thread::sleep(Duration::from_secs(1));
             }
             "1" => {
                 let url = if let Ok(s) = &status {
-                    if s.state == "auth" && !s.url.is_empty() {
-                        s.url.clone()
+                    let login_link = s.login_url();
+                    if s.state == "auth" && !login_link.is_empty() {
+                        login_link.to_string()
                     } else {
                         config.browser_url()
                     }
@@ -369,8 +401,9 @@ fn run_dashboard() -> Result<()> {
                         // If we are already in auth state with a valid URL, don't re-spawn connect
                         let mut already_auth_url = String::new();
                         if let Ok(s) = fetch_status(&config, &fast_agent) {
-                            if s.state == "auth" && !s.url.is_empty() {
-                                already_auth_url = s.url;
+                            let login_link = s.login_url();
+                            if s.state == "auth" && !login_link.is_empty() {
+                                already_auth_url = login_link.to_string();
                             }
                         }
 
@@ -386,13 +419,18 @@ fn run_dashboard() -> Result<()> {
                             println!("Resuming Authentication...");
                         }
 
-                        // Fetch status again to get the (potentially new) auth_url
-                        let mut url = config.browser_url();
+                        // Fetch status again to get the (potentially new) auth_url, preserving existing if poll fails
+                        let mut url = if !already_auth_url.is_empty() {
+                            already_auth_url
+                        } else {
+                            config.browser_url()
+                        };
                         let start_poll = Instant::now();
                         while start_poll.elapsed().as_secs() < 3 {
                             if let Ok(s) = fetch_status(&config, &fast_agent) {
-                                if s.state == "auth" && !s.url.is_empty() {
-                                    url = s.url;
+                                let login_link = s.login_url();
+                                if s.state == "auth" && !login_link.is_empty() {
+                                    url = login_link.to_string();
                                     break;
                                 }
                             }

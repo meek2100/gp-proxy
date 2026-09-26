@@ -791,3 +791,42 @@ class TestEdgeCasesAndSecurity:
             result: str = ANSI_ESCAPE.sub("", f"Test{seq}Text")
             assert "\x1b" not in result
             assert "TestText" == result
+
+    def test_clear_sso_cache(self) -> None:
+        """Test clearing the SSO intercept cache."""
+        with server._sso_lock:
+            server._sso_intercept_cache["http://127.0.0.1:32801"] = "https://idp.example.com"
+            assert "http://127.0.0.1:32801" in server._sso_intercept_cache
+
+        server.clear_sso_cache()
+
+        with server._sso_lock:
+            assert len(server._sso_intercept_cache) == 0
+
+    def test_is_local_or_private_url(self) -> None:
+        """Test detection of loopback and RFC 1918 private URLs."""
+        assert server._is_local_or_private_url("http://127.0.0.1:32801/login") is True
+        assert server._is_local_or_private_url("http://localhost:8000/auth") is True
+        assert server._is_local_or_private_url("http://10.200.1.5:8080") is True
+        assert server._is_local_or_private_url("http://172.18.0.2:32801") is True
+        assert server._is_local_or_private_url("http://192.168.1.100") is True
+        assert server._is_local_or_private_url("https://login.microsoftonline.com/common/oauth2") is False
+        assert server._is_local_or_private_url("ftp://127.0.0.1/resource") is False
+        assert server._is_local_or_private_url("not_a_valid_url") is False
+
+    def test_status_payload_includes_auth_url(self) -> None:
+        """Test that get_vpn_state produces auth_url key in status dictionary."""
+        with tempfile.NamedTemporaryFile("w+", delete=False) as f:
+            f.write("Some log content\n")
+            f.flush()
+            log_path = Path(f.name)
+
+        try:
+            with patch("backend.server.SERVICE_LOG", log_path):
+                state = server.get_vpn_state()
+                assert "auth_url" in state
+                assert "url" in state
+                assert state["auth_url"] == state["url"]
+        finally:
+            if log_path.exists():
+                log_path.unlink()
