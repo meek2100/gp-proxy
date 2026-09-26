@@ -300,9 +300,7 @@ fn run_dashboard() -> Result<()> {
                         .next()
                         .unwrap_or("Unknown");
 
-                    if s.vpn_mode.contains("proxy")
-                        && (s.proxy_modes.is_empty() || s.proxy_modes.iter().any(|m| m == "socks5"))
-                    {
+                    if s.vpn_mode.contains("proxy") && s.proxy_modes.iter().any(|m| m == "socks5") {
                         let auth_str = if s.proxy_auth_enabled {
                             "(Auth Enabled)"
                         } else {
