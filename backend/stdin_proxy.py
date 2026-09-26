@@ -1,19 +1,23 @@
 # File: backend/stdin_proxy.py
 """
-Container Agent - Standard Input Proxy.
-
-Bridges the Python HTTP server and the OpenConnect subprocess. It listens on a local
-TCP port for sensitive authentication payloads (like passwords or SAML callbacks) submitted
-via the web UI, and pipes them directly into stdout. The bash entrypoint captures this
-stream and injects it securely into the running VPN client's stdin.
+Stdin Proxy: Receives data from a local TCP socket and forwards it to the
+running VPN client's standard input.
 """
 
+import datetime
 import logging
+import os
 import select
 import socket
 import sys
 
-from utils import IPC_STDIN_PORT, setup_logger
+# Ensure we can import from the parent directory if run as a script
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from backend.utils import IPC_STDIN_PORT, setup_logger
+except ImportError:
+    from utils import IPC_STDIN_PORT, setup_logger  # type: ignore
 
 logger: logging.Logger = setup_logger("stdin_proxy")
 
@@ -35,6 +39,8 @@ def main() -> None:
             s.bind(("127.0.0.1", IPC_STDIN_PORT))
             s.listen(1)
 
+            logger.info(f"Stdin Proxy active on port {IPC_STDIN_PORT}")
+
             while True:
                 try:
                     # Non-blocking wait for 2 seconds to ensure interruptibility
@@ -48,8 +54,14 @@ def main() -> None:
                                 data: bytes = c.recv(4096)
                                 if not data:
                                     break
+                                timestamp = datetime.datetime.now().isoformat()
+                                logger.info(
+                                    f"Stdin Proxy received {len(data)} bytes at {timestamp}, forwarding to stdout"
+                                )
                                 sys.stdout.buffer.write(data)
                                 sys.stdout.buffer.flush()
+                                sys.stdout.flush()
+                                logger.info(f"Stdin Proxy write to stdout complete (PID: {os.getpid()})")
                 except (OSError, TimeoutError):  # fmt: skip
                     # Log transient socket errors and continue the daemon loop
                     logger.exception("Socket error during accept/recv")

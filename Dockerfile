@@ -63,7 +63,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 6. Install Python Dependencies
 # Required for the TOFU Ed25519 pairing architecture
-RUN pip install --no-cache-dir --break-system-packages cryptography==46.0.5
+COPY --from=ghcr.io/astral-sh/uv:0.12.3 /uv /uvx /bin/
+RUN uv pip install --system --no-cache cryptography==46.0.5
 
 # 7. Download GOST and Purge Wget
 RUN apt-get update && apt-get install -y --no-install-recommends wget \
@@ -86,8 +87,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget \
 RUN useradd -m -s /bin/bash gpuser && \
     printf '%s\n' \
     "Cmnd_Alias GP_RUNTIME = /usr/bin/gpclient, /usr/bin/gpservice" \
-    "Cmnd_Alias GP_PROCCTL = /usr/bin/pkill -x gpclient, /usr/bin/pkill -x gpservice, /usr/bin/pkill -9 -x gpclient, /usr/bin/pkill -9 -x gpservice, /usr/bin/pgrep -x gpclient, /usr/bin/pgrep -x gpservice" \
-    "gpuser ALL=(root) NOPASSWD: GP_RUNTIME, GP_PROCCTL" \
+    "Cmnd_Alias GP_PROCCTL = /usr/bin/pkill -x gpclient, /usr/bin/pkill -x gpservice, /usr/bin/pkill -x gost, /usr/bin/pkill -9 -x gpclient, /usr/bin/pkill -9 -x gpservice, /usr/bin/pkill -9 -x gost, /usr/bin/pgrep -x gpclient, /usr/bin/pgrep -x gpservice, /usr/bin/pgrep -x gost, /usr/bin/true" \
+    "gpuser ALL=(root) SETENV: NOPASSWD: GP_RUNTIME" \
+    "gpuser ALL=(root) NOPASSWD: GP_PROCCTL" \
     > /etc/sudoers.d/gpuser && \
     chmod 0440 /etc/sudoers.d/gpuser && \
     visudo -cf /etc/sudoers.d/gpuser

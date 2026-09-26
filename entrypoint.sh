@@ -56,11 +56,11 @@ LOG_LEVEL="${CLEAN_LOG_LEVEL^^}"
 [[ -z "$LOG_LEVEL" ]] && LOG_LEVEL="INFO"
 export LOG_LEVEL
 
-# 2. VPN_MODE
+# 2. VPN_MODE (proxy, gateway, or proxy,gateway)
 RAW_VPN_MODE=$(get_env_value "VPN_MODE" "vpn_mode")
 CLEAN_VPN_MODE=$(clean_val "$RAW_VPN_MODE")
 VPN_MODE="${CLEAN_VPN_MODE,,}"
-[[ -z "$VPN_MODE" ]] && VPN_MODE="standard"
+[[ -z "$VPN_MODE" ]] && VPN_MODE="proxy,gateway"
 export VPN_MODE
 
 # 3. VPN_PORTAL (Required)
@@ -69,17 +69,9 @@ VPN_PORTAL=$(clean_val "$RAW_VPN_PORTAL")
 export VPN_PORTAL
 
 # 4. VPN_GATEWAY (Optional)
-RAW_VPN_GATEWAY=$(get_env_value "VPN_GATEWAY" "vpn_gateway" "gateway")
+RAW_VPN_GATEWAY=$(get_env_value "VPN_GATEWAY" "vpn_gateway")
 VPN_GATEWAY=$(clean_val "$RAW_VPN_GATEWAY")
 export VPN_GATEWAY
-
-# 5. DNS_SERVERS
-RAW_DNS=$(get_env_value "DNS_SERVERS" "dns_servers" "VPN_DNS" "vpn_dns")
-CLEAN_DNS=$(clean_val "$RAW_DNS")
-# Translate commas to spaces natively before stripping edge whitespace
-CLEAN_DNS="${CLEAN_DNS//,/ }"
-DNS_SERVERS=$(echo "$CLEAN_DNS" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-export DNS_SERVERS
 
 # 6. GP_ARGS (Custom)
 RAW_GP_ARGS=$(get_env_value "GP_ARGS" "gp_args")
@@ -87,7 +79,7 @@ GP_ARGS=$(clean_val_preserve_inner "$RAW_GP_ARGS")
 export GP_ARGS
 
 # 7. TIMEZONE
-RAW_TZ=$(get_env_value "TZ" "tz" "timezone")
+RAW_TZ=$(get_env_value "TZ" "tz")
 CLEAN_TZ=$(clean_val "$RAW_TZ")
 TZ="${CLEAN_TZ:-UTC}"
 export TZ
@@ -104,7 +96,7 @@ export PGID
 # --- NEW: Advanced GP Options ---
 
 # 9. HIP Report (--hip)
-RAW_HIP=$(get_env_value "VPN_HIP_REPORT" "hip_report" "HIP")
+RAW_HIP=$(get_env_value "VPN_HIP_REPORT" "vpn_hip_report")
 CLEAN_HIP=$(clean_val "$RAW_HIP")
 if [[ "${CLEAN_HIP,,}" == "true" || "${CLEAN_HIP}" == "1" ]]; then
     VPN_HIP_REPORT="true"
@@ -114,32 +106,32 @@ fi
 export VPN_HIP_REPORT
 
 # 10. Client OS (--os)
-RAW_OS=$(get_env_value "VPN_OS" "os")
+RAW_OS=$(get_env_value "VPN_OS" "vpn_os")
 VPN_OS=$(clean_val "$RAW_OS")
 export VPN_OS
 
 # 11. Client OS Version (--os-version)
-RAW_OS_VER=$(get_env_value "VPN_OS_VERSION" "os_version")
+RAW_OS_VER=$(get_env_value "VPN_OS_VERSION" "vpn_os_version")
 VPN_OS_VERSION=$(clean_val "$RAW_OS_VER")
 export VPN_OS_VERSION
 
 # 12. Client Version (--client-version)
-RAW_CLIENT_VER=$(get_env_value "VPN_CLIENT_VERSION" "client_version")
+RAW_CLIENT_VER=$(get_env_value "VPN_CLIENT_VERSION" "vpn_client_version")
 VPN_CLIENT_VERSION=$(clean_val "$RAW_CLIENT_VER")
 export VPN_CLIENT_VERSION
 
-# 13. No DTLS (--no-dtls)
-RAW_DTLS=$(get_env_value "VPN_NO_DTLS" "no_dtls")
+# 13. Disable DTLS (--no-dtls)
+RAW_DTLS=$(get_env_value "VPN_DISABLE_DTLS" "vpn_disable_dtls")
 CLEAN_DTLS=$(clean_val "$RAW_DTLS")
 if [[ "${CLEAN_DTLS,,}" == "true" || "${CLEAN_DTLS}" == "1" ]]; then
-    VPN_NO_DTLS="true"
+    VPN_DISABLE_DTLS="true"
 else
-    VPN_NO_DTLS="false"
+    VPN_DISABLE_DTLS="false"
 fi
-export VPN_NO_DTLS
+export VPN_DISABLE_DTLS
 
 # 14. Disable IPv6 (--disable-ipv6)
-RAW_IPV6=$(get_env_value "VPN_DISABLE_IPV6" "disable_ipv6")
+RAW_IPV6=$(get_env_value "VPN_DISABLE_IPV6" "vpn_disable_ipv6")
 CLEAN_IPV6=$(clean_val "$RAW_IPV6")
 if [[ "${CLEAN_IPV6,,}" == "true" || "${CLEAN_IPV6}" == "1" ]]; then
     VPN_DISABLE_IPV6="true"
@@ -148,13 +140,13 @@ else
 fi
 export VPN_DISABLE_IPV6
 
-# 15. Allowed Subnets
-RAW_SUBNETS=$(get_env_value "ALLOWED_SUBNETS" "allowed_subnets")
-ALLOWED_SUBNETS=$(clean_val "$RAW_SUBNETS")
-export ALLOWED_SUBNETS
+# 15. Gateway Clients Subnet Restriction
+RAW_GW_CLIENTS=$(get_env_value "GATEWAY_CLIENTS" "gateway_clients")
+GATEWAY_CLIENTS=$(clean_val "$RAW_GW_CLIENTS")
+export GATEWAY_CLIENTS
 
-# 16. Proxy Auth (Accepts GOST_AUTH as legacy fallback)
-RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth" "GOST_AUTH" "gost_auth")
+# 16. Proxy Auth
+RAW_PROXY_AUTH=$(get_env_value "PROXY_AUTH" "proxy_auth")
 PROXY_AUTH=$(clean_val_preserve_inner "$RAW_PROXY_AUTH")
 
 # 17. Shadowsocks Auth
@@ -193,6 +185,10 @@ RAW_LOCAL_DNS=$(get_env_value "LOCAL_DNS" "local_dns")
 LOCAL_DNS=$(clean_val "$RAW_LOCAL_DNS")
 export LOCAL_DNS
 
+RAW_VPN_DNS=$(get_env_value "VPN_DNS" "vpn_dns")
+VPN_DNS=$(clean_val "$RAW_VPN_DNS")
+export VPN_DNS
+
 RAW_VPN_DOMAINS=$(get_env_value "VPN_DOMAINS" "vpn_domains")
 VPN_DOMAINS=$(clean_val "$RAW_VPN_DOMAINS")
 export VPN_DOMAINS
@@ -201,14 +197,30 @@ RAW_VPN_SUBNETS=$(get_env_value "VPN_SUBNETS" "vpn_subnets")
 VPN_SUBNETS=$(clean_val "$RAW_VPN_SUBNETS")
 export VPN_SUBNETS
 
+RAW_LOCAL_SUBNETS=$(get_env_value "LOCAL_SUBNETS" "local_subnets")
+LOCAL_SUBNETS=$(clean_val "$RAW_LOCAL_SUBNETS")
+export LOCAL_SUBNETS
+
+RAW_LOCAL_DOMAINS=$(get_env_value "LOCAL_DOMAINS" "local_domains")
+LOCAL_DOMAINS=$(clean_val "$RAW_LOCAL_DOMAINS")
+export LOCAL_DOMAINS
+
 # ==============================================================================
 # 2. RUNTIME SETUP
 # ==============================================================================
 
-RUNTIME_DIR="/tmp/gp-runtime"
-CLIENT_LOG="/tmp/gp-logs/gp-client.log"
-SERVICE_LOG="/tmp/gp-logs/gp-service.log"
-MODE_FILE="$RUNTIME_DIR/gp-mode"
+# --- RESOLVE & EXPORT RUNTIME PATHS ---
+export RUNTIME_DIR="/tmp/gp-runtime"
+export LOG_DIR="/tmp/gp-logs"
+mkdir -p "$RUNTIME_DIR" "$LOG_DIR"
+chmod 700 "$RUNTIME_DIR" "$LOG_DIR"
+export CLIENT_LOG="$LOG_DIR/gp-client.log"
+export SERVICE_LOG="$LOG_DIR/gp-service.log"
+export MODE_FILE="$RUNTIME_DIR/gp-mode"
+
+# --- RESOLVE & EXPORT IPC PORTS ---
+export IPC_CONTROL_PORT=32801
+export IPC_STDIN_PORT=32802
 
 # Disable ANSI colors in Rust binaries
 export RUST_LOG_STYLE=never
@@ -262,7 +274,7 @@ log "INFO" "=========================================="
 log "INFO" "          GP Proxy Startup               "
 log "INFO" "=========================================="
 log "INFO" "Mode:        $VPN_MODE"
-if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"proxy"* ]]; then
     log "INFO" "Proxy Types: $PROXY_MODE"
 fi
 log "INFO" "Log Level:   $LOG_LEVEL"
@@ -272,8 +284,16 @@ log "INFO" "Split Route: ${SPLIT_TUNNEL} (Smart Auto-Detection)"
 if [[ -n "$VPN_GATEWAY" ]]; then
     log "INFO" "Gateway:     $VPN_GATEWAY"
 fi
-if [[ -n "$DNS_SERVERS" ]]; then
-    log "INFO" "Custom DNS:  $DNS_SERVERS"
+if [[ -n "$LOCAL_DNS" ]]; then
+    log "INFO" "Local DNS:   $LOCAL_DNS"
+fi
+if [[ -n "$VPN_DNS" ]]; then
+    log "INFO" "VPN DNS:     $VPN_DNS"
+fi
+if [[ "$VPN_MODE" == *"gateway"* ]]; then
+    if [[ -n "$GATEWAY_CLIENTS" ]]; then
+        log "INFO" "GW Clients:  $GATEWAY_CLIENTS"
+    fi
 fi
 
 if [[ -n "$API_TOKEN" ]]; then
@@ -321,7 +341,7 @@ check_log_size() {
 
 # --- DYNAMIC PROCESS MANAGEMENT ---
 start_proxies() {
-    if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+    if [[ "$VPN_MODE" == *"proxy"* ]]; then
         if ! pgrep -x gost >/dev/null; then
             log "INFO" "Starting proxy handlers..."
             local -a proxy_args=()
@@ -360,7 +380,7 @@ start_proxies() {
                             SS_DEFAULT_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
 
                             # Save credentials securely inside the container so the user can retrieve them
-                            echo "Cipher: chacha20" >"$RUNTIME_DIR/ss_credentials.txt"
+                            echo "Cipher: chacha20-ietf-poly1305" >"$RUNTIME_DIR/ss_credentials.txt"
                             echo "Password: ${SS_DEFAULT_PASS}" >>"$RUNTIME_DIR/ss_credentials.txt"
                             chown gpuser:gpuser "$RUNTIME_DIR/ss_credentials.txt"
                             chmod 600 "$RUNTIME_DIR/ss_credentials.txt"
@@ -368,7 +388,7 @@ start_proxies() {
                             log "WARN" "Shadowsocks auth missing. Auto-generated credentials saved securely."
                             log "WARN" "-> To view them, run: docker exec -it $(hostname) cat $RUNTIME_DIR/ss_credentials.txt"
 
-                            proxy_args+=("-L=ss://chacha20:${SS_DEFAULT_PASS}@:8388")
+                            proxy_args+=("-L=ss://chacha20-ietf-poly1305:${SS_DEFAULT_PASS}@:8388")
                         else
                             proxy_args+=("-L=ss://${ss_auth_prefix}:8388")
                         fi
@@ -411,7 +431,7 @@ check_services() {
     mode=$(cat "$MODE_FILE" 2>/dev/null || echo "idle")
 
     if [[ "$mode" == "active" ]]; then
-        if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+        if [[ "$VPN_MODE" == *"proxy"* ]]; then
             if ! pgrep -x gost >/dev/null; then
                 log "ERROR" "CRITICAL: proxy engine died while VPN was active. Restarting..."
                 start_proxies
@@ -461,17 +481,26 @@ fi
 
 # --- 2. NETWORK & MODE DETECTION ---
 log "INFO" "Inspecting network environment..."
+
+# Capture the original default gateway before any network modifications
+DOCKER_GATEWAY=$(ip route show default | awk '/default via / {print $3; exit}')
+export DOCKER_GATEWAY
+if [[ -n "$DOCKER_GATEWAY" ]]; then
+    log "INFO" "Captured Original Gateway: $DOCKER_GATEWAY"
+fi
+
 IS_MACVLAN=false
-if ip -d link show eth0 | grep -q "macvlan"; then
+if ip -d link show eth0 2>/dev/null | grep -q "macvlan"; then
     IS_MACVLAN=true
     log "DEBUG" "Network detection: MACVLAN interface detected."
 else
     log "DEBUG" "Network detection: Standard/Bridge interface detected."
 fi
+export IS_MACVLAN
 
-if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"gateway"* ]]; then
     if [[ "$IS_MACVLAN" == false ]]; then
-        log "WARN" "Configuration Mismatch: '$VPN_MODE' mode requested but no Macvlan interface found."
+        log "WARN" "Configuration Mismatch: Gateway mode requested but no Macvlan interface found."
         log "WARN" "Gateway features require a direct routable IP (Macvlan)."
         log "WARN" ">>> REVERTING TO 'proxy' MODE to ensure functionality. <<<"
         VPN_MODE="proxy"
@@ -481,9 +510,7 @@ fi
 # --- 3. BASE DNSMASQ CONFIGURATION ---
 DNS_TO_APPLY=""
 if [[ -n "$LOCAL_DNS" ]]; then
-    DNS_TO_APPLY="$LOCAL_DNS"
-elif [[ -n "$DNS_SERVERS" ]]; then
-    DNS_TO_APPLY="$DNS_SERVERS"
+    DNS_TO_APPLY="${LOCAL_DNS//,/ }"
 elif [[ "$IS_MACVLAN" == true ]]; then
     log "INFO" "Macvlan detected. Applying fallback defaults."
     DNS_TO_APPLY="8.8.8.8 1.1.1.1"
@@ -491,6 +518,7 @@ else
     # Extract the original docker container DNS to use as the local fallback
     DNS_TO_APPLY=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | grep -v "127.0.0.1" | head -n 2 | paste -sd " " || echo "8.8.8.8 1.1.1.1")
 fi
+export DOCKER_DNS="$DNS_TO_APPLY"
 
 log "INFO" "Base Upstream Local DNS identified as: $DNS_TO_APPLY"
 
@@ -499,16 +527,28 @@ cat <<EOF >/etc/dnsmasq.conf
 port=53
 listen-address=0.0.0.0
 bind-interfaces
-keep-in-foreground
+no-resolv
+no-poll
+strict-order
 conf-dir=/etc/dnsmasq.d/,*.conf
 EOF
 
+# 6. Configure Local Upstream DNS (Low Priority)
 if [[ -n "$DNS_TO_APPLY" ]]; then
-    # Using read -ra to safely split by spaces to appease shellcheck SC2086
-    read -ra DNS_ARRAY <<<"$DNS_TO_APPLY"
+    rm -f /etc/dnsmasq.d/90-local.conf
+    # Robustly split both comma and space-separated lists
+    # shellcheck disable=SC2206
+    DNS_ARRAY=(${DNS_TO_APPLY//,/ })
     for ip in "${DNS_ARRAY[@]}"; do
-        echo "server=$ip" >>/etc/dnsmasq.conf
+        echo "server=$ip" >>/etc/dnsmasq.d/90-local.conf
     done
+    log "INFO" "Local DNS upstreams written to 90-local.conf: $DNS_TO_APPLY"
+fi
+
+# Enable query logging for easier troubleshooting if in debug mode
+if [[ "$LOG_LEVEL" == "DEBUG" || "$LOG_LEVEL" == "TRACE" ]]; then
+    echo "log-facility=-" >>/etc/dnsmasq.conf
+    echo "log-queries" >>/etc/dnsmasq.conf
 fi
 
 # Initialize ipset for Dynamic DNS-based Policy Routing
@@ -520,27 +560,26 @@ if ! ipset create vpn_domains hash:ip 2>/dev/null; then
 fi
 
 # Instruct local container apps (like Gost) to use the dnsmasq split-router natively
-echo "options ndots:0" >/etc/resolv.conf
-echo "nameserver 127.0.0.1" >>/etc/resolv.conf
+echo "nameserver 127.0.0.1" >/etc/resolv.conf
 
 # Run dnsmasq as root so it can modify the ipsets dynamically
-dnsmasq --user=root &
+dnsmasq --user=root >>"$SERVICE_LOG" 2>&1 &
 
 # --- 4. NETWORK SETUP ---
 iptables -F
 iptables -t nat -F
 iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
 
-if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"gateway"* ]]; then
     # Dynamically enable IP forwarding for routing functionality
-    if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]]; then
-        echo 1 >/proc/sys/net/ipv4/ip_forward
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
+        echo 1 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || log "WARN" "Could not dynamically enable ip_forward. Ensure container is run with --sysctl net.ipv4.ip_forward=1"
     fi
     iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 
-    if [[ -n "$ALLOWED_SUBNETS" ]]; then
-        log "INFO" "Restricting routing to ALLOWED_SUBNETS: $ALLOWED_SUBNETS"
-        IFS=',' read -ra SUBNETS <<<"$ALLOWED_SUBNETS"
+    if [[ -n "$GATEWAY_CLIENTS" ]]; then
+        log "INFO" "Restricting routing to GATEWAY_CLIENTS: $GATEWAY_CLIENTS"
+        IFS=',' read -ra SUBNETS <<<"$GATEWAY_CLIENTS"
         for subnet_raw in "${SUBNETS[@]}"; do
             # Trim whitespace safely
             subnet="$(echo "$subnet_raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -549,24 +588,38 @@ if [[ "$VPN_MODE" == "gateway" || "$VPN_MODE" == "standard" ]]; then
             # Secure CIDR Validation enforcing 0-255 octets and 0-32 prefix
             if [[ "$subnet" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$ ]]; then
                 iptables -A FORWARD -s "$subnet" -o tun0 -j ACCEPT
+                if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+                    iptables -A FORWARD -s "$subnet" -o eth0 -j ACCEPT
+                    iptables -t nat -A POSTROUTING -s "$subnet" -o eth0 -j MASQUERADE
+                fi
             else
                 log "ERROR" "Invalid subnet CIDR format ignored: $subnet"
             fi
         done
         iptables -A FORWARD -o tun0 -j DROP
+        if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+            iptables -A FORWARD -o eth0 -j DROP
+        fi
     else
+        if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+            iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+        fi
         iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+        if [[ "$SPLIT_TUNNEL" == "true" ]]; then
+            iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT
+        fi
     fi
 
-    iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+    # Accept returning internet/split-tunnel traffic at the top of the chain
+    iptables -I FORWARD 1 -m state --state RELATED,ESTABLISHED -j ACCEPT
 elif [[ "$VPN_MODE" == "proxy" ]]; then
     # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
-    if [[ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]]; then
-        echo 0 >/proc/sys/net/ipv4/ip_forward
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "0" ]]; then
+        echo 0 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
     fi
 fi
 
-if [[ "$VPN_MODE" == "proxy" || "$VPN_MODE" == "standard" ]]; then
+if [[ "$VPN_MODE" == *"proxy"* ]]; then
     setup_proxy_iptables() {
         local p="$1"
         case "$p" in
@@ -627,11 +680,16 @@ elif [[ "$PROXY_MODE" == *"ss"* ]]; then
 fi
 
 # Ensure API_TOKEN and state booleans are definitively passed down to the server context without leaking secrets
-runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" PROXY_AUTH_ENABLED="$PROXY_AUTH_ENABLED" SS_AUTH_ENABLED="$SS_AUTH_ENABLED" \
+runuser -u gpuser -- env VPN_MODE="$VPN_MODE" PROXY_MODE="$PROXY_MODE" LOG_LEVEL="$LOG_LEVEL" API_TOKEN="$API_TOKEN" \
+    PROXY_AUTH_ENABLED="$PROXY_AUTH_ENABLED" SS_AUTH_ENABLED="$SS_AUTH_ENABLED" \
+    RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
+    IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
     python3 -u /opt/gp-proxy/server.py >>"$SERVICE_LOG" 2>&1 &
 
 # Start persistent control listener directly bound to the pipe descriptor
-runuser -u gpuser -- python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
+runuser -u gpuser -- env RUNTIME_DIR="$RUNTIME_DIR" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" MODE_FILE="$MODE_FILE" \
+    IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
+    python3 -u /opt/gp-proxy/control_listener.py >&3 2>>"$SERVICE_LOG" &
 
 tail -F "$SERVICE_LOG" "$CLIENT_LOG" &
 
@@ -646,6 +704,12 @@ while true; do
     CMD=""
     read -r -t 2 CMD <&3 || true
     if [[ "$CMD" == "START" ]]; then
+        # Idempotency Guard: Ignore if already active or processes are spinning up
+        if [[ "$(cat "$MODE_FILE" 2>/dev/null)" == "active" ]] || pgrep -x gpservice >/dev/null || pgrep -x gpclient >/dev/null; then
+            log "WARN" "Received START signal but connection is already active or starting. Ignoring."
+            continue
+        fi
+
         log "INFO" "Signal received. Starting Connection Sequence..."
         echo "active" >"$MODE_FILE"
 
@@ -664,15 +728,17 @@ while true; do
         # 2. Start gpclient using environment variables to avoid outer shell interpolation
         # shellcheck disable=SC2016
         runuser -u gpuser -- env VPN_PORTAL="$VPN_PORTAL" VPN_GATEWAY="$VPN_GATEWAY" \
-            VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_NO_DTLS="$VPN_NO_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
+            VPN_HIP_REPORT="$VPN_HIP_REPORT" VPN_DISABLE_DTLS="$VPN_DISABLE_DTLS" VPN_DISABLE_IPV6="$VPN_DISABLE_IPV6" \
             VPN_OS="$VPN_OS" VPN_OS_VERSION="$VPN_OS_VERSION" VPN_CLIENT_VERSION="$VPN_CLIENT_VERSION" \
             GP_ARGS="$GP_ARGS" GP_VERBOSITY="$GP_VERBOSITY" CLIENT_LOG="$CLIENT_LOG" SERVICE_LOG="$SERVICE_LOG" \
-            BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" \
+            RUNTIME_DIR="$RUNTIME_DIR" MODE_FILE="$MODE_FILE" IPC_CONTROL_PORT="$IPC_CONTROL_PORT" IPC_STDIN_PORT="$IPC_STDIN_PORT" \
+            BASH_NL=$'\n' BASH_CR=$'\r' SPLIT_TUNNEL="$SPLIT_TUNNEL" VPN_SUBNETS="$VPN_SUBNETS" VPN_DOMAINS="$VPN_DOMAINS" VPN_DNS="$VPN_DNS" \
+            LOG_LEVEL="$LOG_LEVEL" VPN_MODE="$VPN_MODE" LOCAL_SUBNETS="$LOCAL_SUBNETS" LOCAL_DOMAINS="$LOCAL_DOMAINS" LOCAL_DNS="$LOCAL_DNS" DOCKER_DNS="$DOCKER_DNS" DOCKER_GATEWAY="$DOCKER_GATEWAY" \
             bash -c '
             set -o pipefail
             > "$CLIENT_LOG"
 
-            declare -a args=(sudo gpclient)
+            declare -a args=(sudo -E gpclient)
 
             [[ -n "$GP_VERBOSITY" ]] && args+=("$GP_VERBOSITY")
             args+=(--fix-openssl connect "$VPN_PORTAL" --browser remote)
@@ -684,7 +750,7 @@ while true; do
             fi
 
             [[ "$VPN_HIP_REPORT" == "true" ]]   && args+=(--hip)
-            [[ "$VPN_NO_DTLS" == "true" ]]      && args+=(--no-dtls)
+            [[ "$VPN_DISABLE_DTLS" == "true" ]] && args+=(--no-dtls)
             [[ "$VPN_DISABLE_IPV6" == "true" ]] && args+=(--disable-ipv6)
 
             [[ -n "$VPN_OS" ]]             && args+=(--os "$VPN_OS")
@@ -711,7 +777,9 @@ while true; do
 
         # 3. Cleanup after disconnect
         log "WARN" "gpclient pipeline resolved. Cleaning up services..."
+        sleep 2
         echo "idle" >"$MODE_FILE"
+
         $SUDO_CMD pkill -x gpservice || true
         $SUDO_CMD pkill -x gost || true
         log "INFO" "Services stopped. System Idle."

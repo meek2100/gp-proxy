@@ -20,10 +20,12 @@ _is_win: bool = sys.platform == "win32"
 _tmp_base: Path = Path(tempfile.gettempdir()) if _is_win else Path("/tmp")
 
 # Fallbacks to user temp directories during local Windows development
-RUNTIME_DIR: Path = Path(os.getenv("GP_RUNTIME_DIR", str(_tmp_base / "gp-runtime")))
-_log_dir: Path = Path(os.getenv("GP_LOG_DIR", str(_tmp_base / "gp-logs")))
-CLIENT_LOG: Path = _log_dir / "gp-client.log"
-SERVICE_LOG: Path = _log_dir / "gp-service.log"
+# Single Source of Truth: Prefer official environment variables, but support dev overrides
+RUNTIME_DIR: Path = Path(os.getenv("RUNTIME_DIR", os.getenv("GP_RUNTIME_DIR", str(_tmp_base / "gp-runtime"))))
+_log_dir: Path = Path(os.getenv("LOG_DIR", os.getenv("GP_LOG_DIR", str(_tmp_base / "gp-logs"))))
+CLIENT_LOG: Path = Path(os.getenv("CLIENT_LOG", str(_log_dir / "gp-client.log")))
+SERVICE_LOG: Path = Path(os.getenv("SERVICE_LOG", str(_log_dir / "gp-service.log")))
+MODE_FILE: Path = Path(os.getenv("MODE_FILE", str(RUNTIME_DIR / "gp-mode")))
 
 _logger_lock: threading.Lock = threading.Lock()
 

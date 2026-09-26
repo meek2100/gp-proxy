@@ -289,6 +289,8 @@ async function restartAuth() {
         }
     } catch (e) {
         console.error("Failed to restart auth:", e);
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         setTimeout(() => {
             if (ssoLink && ssoLink.textContent === "Generating New Link...") {
@@ -321,9 +323,16 @@ function resetSSOButtonState(newUrl) {
  * Triggers a new VPN connection sequence.
  */
 async function triggerConnect() {
-    setBadge("Starting...", "connecting");
+    const btn = document.getElementById("btn-connect");
+    if (btn) {
+        btn.classList.add("btn-disabled");
+        btn.innerText = "Starting...";
+    }
+    setBadge("CONNECTING...", "connecting");
     setView("connecting");
-    window.expectedNextState = "connecting";
+    // Set expectedNextState to 'auth' since gpclient always goes to auth first.
+    // Using 'connecting' caused a 15-second UI deadlock where the auth view never appeared.
+    window.expectedNextState = "auth";
     isRestarting = true;
 
     setTimeout(() => {
@@ -332,9 +341,22 @@ async function triggerConnect() {
     }, 15000);
 
     try {
-        await fetch("/connect", getFetchOptions("POST"));
+        const res = await fetch("/connect", getFetchOptions("POST"));
+        if (!res.ok) {
+            if (res.status === 401) {
+                console.warn("401 Unauthorized on connect - Reloading...");
+                window.location.reload();
+                return;
+            }
+            throw new Error(`Connect failed: ${res.status}`);
+        }
+        window.vpnState = "connecting";
     } catch (e) {
         console.error("Connect fetch failed:", e);
+        setBadge("CONNECT FAILED", "error");
+        setView("error");
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         resetPoll(1000);
     }
@@ -358,6 +380,8 @@ async function triggerDisconnect() {
             await fetch("/disconnect", getFetchOptions("POST"));
         } catch (e) {
             console.error("Disconnect fetch failed:", e);
+            isRestarting = false;
+            window.expectedNextState = null;
         } finally {
             resetPoll(1000);
         }
@@ -386,6 +410,8 @@ async function confirmReset() {
             }
         } catch (e) {
             console.error("Force reset fetch failed:", e);
+            isRestarting = false;
+            window.expectedNextState = null;
         } finally {
             window.vpnState = null;
             resetPoll(1000);
@@ -410,12 +436,24 @@ async function handleFormSubmit(event) {
     }, 15000);
 
     try {
-        await fetch("/submit", getFetchOptions("POST", formData));
+        const res = await fetch("/submit", getFetchOptions("POST", formData));
+        if (!res.ok) {
+            if (res.status === 401) {
+                console.warn("401 Unauthorized on submit - Reloading...");
+                window.location.reload();
+                return;
+            }
+            throw new Error(`Submit failed: ${res.status}`);
+        }
         setView("connecting");
+        window.vpnState = "connecting";
         setBadge("CONNECTING...", "connecting");
         event.target.reset();
     } catch (e) {
         console.error("Form submit failed:", e);
+        setBadge("SUBMIT FAILED", "error");
+        isRestarting = false;
+        window.expectedNextState = null;
     } finally {
         resetPoll(1500);
     }
@@ -485,12 +523,12 @@ async function updateStatus() {
         });
 
         // Smart dynamic proxy tab generation
-        const visibleTabs = [];
-        if (data.vpn_mode === "standard" || data.vpn_mode === "gateway") {
+        const vpnMode = (data.vpn_mode || "proxy,gateway").toLowerCase();
+        if (vpnMode.includes("gateway")) {
             visibleTabs.push("gateway");
         }
 
-        if (data.vpn_mode === "standard" || data.vpn_mode === "proxy") {
+        if (vpnMode.includes("proxy")) {
             if (data.proxy_modes && Array.isArray(data.proxy_modes)) {
                 data.proxy_modes.forEach((pm) => {
                     if (ALL_TABS.includes(pm)) visibleTabs.push(pm);
@@ -551,7 +589,12 @@ async function updateStatus() {
         }
 
         if (isRestarting) {
-            if (data.state === window.expectedNextState || data.state === "error" || data.state === "connected") {
+            if (
+                data.state === window.expectedNextState ||
+                (window.expectedNextState === "auth" && data.state === "input") ||
+                data.state === "error" ||
+                data.state === "connected"
+            ) {
                 isRestarting = false;
                 window.expectedNextState = null;
             } else if (
@@ -572,6 +615,20 @@ async function updateStatus() {
             setView(data.state);
             setBadge(data.state.toUpperCase(), data.state === "auth" || data.state === "input" ? "auth" : data.state);
             window.vpnState = data.state;
+
+            // Re-enable connect button if we return to idle
+            if (data.state === "idle") {
+                const btn = document.getElementById("btn-connect");
+                if (btn) {
+                    btn.classList.remove("btn-disabled");
+                    btn.innerText = "Connect to VPN";
+                }
+            }
+
+            // Clear the cached auth URL when leaving auth state so a reconnect shows a fresh link
+            if (data.state !== "auth" && data.state !== "input") {
+                lastAuthUrl = "";
+            }
         }
 
         if (data.url) {

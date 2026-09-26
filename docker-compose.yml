@@ -10,13 +10,22 @@ services:
       - /dev/net/tun
     environment:
       - VPN_PORTAL=${VPN_PORTAL:-vpn.yourcompany.com}
-      - VPN_MODE=${VPN_MODE:-standard}
+      # - VPN_MODE=proxy # Optional: 'proxy', 'gateway', or 'proxy,gateway' (Default: proxy,gateway)
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - API_TOKEN=${API_TOKEN:-}
       - TZ=${TZ:-UTC}
       # PUID/PGID matching the host user prevents permission issues with mounted volumes
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # --- Split-Tunneling & Routing Overrides (Optional) ---
+      # - SPLIT_TUNNEL=true
+      # - VPN_DOMAINS=vpn.yourcompany.com
+      # - VPN_SUBNETS=10.0.0.0/8
+      # - VPN_DNS=10.0.0.53
+      # - LOCAL_DOMAINS=local
+      # - LOCAL_SUBNETS=192.168.1.0/24
+      # - LOCAL_DNS=192.168.1.1
+      # - GATEWAY_CLIENTS=192.168.1.0/24 # Restricts routed client subnets when gateway is enabled
     networks:
       # If using gateway mode, you must connect this container to a macvlan network
       # to obtain a routable IP on your LAN.

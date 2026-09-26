@@ -542,11 +542,10 @@ select:focus {
 }
 
 .legal-footer {
-    margin-top: 24px;
-    margin-bottom: 24px;
+    margin: 24px auto;
     font-size: 0.7rem;
     color: var(--text-secondary);
-    max-width: 480px;
+    max-width: 900px;
     text-align: center;
     line-height: 1.4;
 }

@@ -24,7 +24,7 @@ repos:
 
   # 2. FILE HEADERS
   - repo: https://github.com/meek2100/pre-commit-context-header
-    rev: v0.1.0
+    rev: v0.1.1
     hooks:
       - id: context-headers
         args: ["--fix"]
@@ -84,12 +84,6 @@ repos:
     hooks:
       - id: actionlint
 
-  - repo: https://github.com/IamTheFij/docker-pre-commit
-    rev: v3.0.1
-    hooks:
-      - id: docker-compose-check
-        files: ^docker-compose\.yml$
-
   # 5. TYPE CHECKERS (Configured for Python 3.14)
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: "v1.19.1"
@@ -102,30 +96,3 @@ repos:
     hooks:
       - id: pyright
         files: '\.py$'
-
-  # --- RUST (System Hooks) ---
-  - repo: local
-    hooks:
-      - id: rustfmt
-        name: rustfmt
-        description: Formats Rust code using rustfmt
-        entry: cargo fmt --manifest-path apps/gp-client-proxy/Cargo.toml --all
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-      - id: cargo-check
-        name: cargo check
-        description: fast check to ensure code compiles
-        entry: cargo check --manifest-path apps/gp-client-proxy/Cargo.toml --all-targets --all-features
-        language: system
-        types_or: [rust, toml]
-        pass_filenames: false
-
-      - id: clippy
-        name: cargo clippy
-        description: Lint Rust code (equivalent to ruff for python)
-        entry: cargo clippy --manifest-path apps/gp-client-proxy/Cargo.toml --all-targets --all-features -- -D warnings
-        language: system
-        types_or: [rust, toml]
-        pass_filenames: false
