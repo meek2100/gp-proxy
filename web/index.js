@@ -523,6 +523,7 @@ async function updateStatus() {
         });
 
         // Smart dynamic proxy tab generation
+        const visibleTabs = [];
         const vpnMode = (data.vpn_mode || "proxy,gateway").toLowerCase();
         if (vpnMode.includes("gateway")) {
             visibleTabs.push("gateway");
@@ -613,7 +614,8 @@ async function updateStatus() {
 
         if (window.vpnState !== data.state) {
             setView(data.state);
-            setBadge(data.state.toUpperCase(), data.state === "auth" || data.state === "input" ? "auth" : data.state);
+            const stateStr = data.state || "idle";
+            setBadge(stateStr.toUpperCase(), stateStr === "auth" || stateStr === "input" ? "auth" : stateStr);
             window.vpnState = data.state;
 
             // Re-enable connect button if we return to idle
