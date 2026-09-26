@@ -573,7 +573,7 @@ iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
 if [[ "$VPN_MODE" == *"gateway"* ]]; then
     # Dynamically enable IP forwarding for routing functionality
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
-        echo 1 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || log "WARN" "Could not dynamically enable ip_forward. Ensure container is run with --sysctl net.ipv4.ip_forward=1"
+        (echo 1 >/proc/sys/net/ipv4/ip_forward) 2>/dev/null || log "WARN" "Could not dynamically enable ip_forward. Ensure container is run with --sysctl net.ipv4.ip_forward=1"
     fi
     iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 
@@ -615,7 +615,7 @@ if [[ "$VPN_MODE" == *"gateway"* ]]; then
 elif [[ "$VPN_MODE" == "proxy" ]]; then
     # Explicitly disable IP forwarding to maintain a locked-down posture on container restart
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "0" ]]; then
-        echo 0 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+        (echo 0 >/proc/sys/net/ipv4/ip_forward) 2>/dev/null || true
     fi
 fi
 
