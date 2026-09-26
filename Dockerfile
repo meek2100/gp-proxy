@@ -122,7 +122,7 @@ RUN chmod +x /opt/gp-proxy/server.py /opt/gp-proxy/control_listener.py /opt/gp-p
 
 # 12. Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD /usr/bin/healthcheck || exit 1
+    CMD ["/usr/bin/healthcheck"]
 
 EXPOSE 1080 1084 1085 8001 8080 8388 8443
 ENTRYPOINT ["/entrypoint.sh"]

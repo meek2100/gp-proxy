@@ -31,26 +31,26 @@ repos:
 
   # 3. FORMATTERS
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.16.8
     hooks:
       - id: ruff-format
 
   - repo: https://github.com/rbubley/mirrors-prettier
-    rev: "v3.8.1"
+    rev: "v3.9.8"
     hooks:
       - id: prettier
         types_or: [css, javascript, html, json, yaml, markdown]
         args: ["--config", ".prettierrc.yaml"]
 
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.12.0-2
+    rev: v3.14.1-1
     hooks:
       - id: shfmt
         args: ["-w", "-i", "4", "-ci"]
 
   # 4. LINTERS
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.16.8
     hooks:
       - id: ruff-check
         args: ["--fix"]
@@ -62,7 +62,7 @@ repos:
         args: ["--format=gcc"]
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         args: ["--ignore-words-list", "gost"]
@@ -74,25 +74,25 @@ repos:
         args: ["--config-file", ".yamllint.yaml"]
 
   - repo: https://github.com/AleksaC/hadolint-py
-    rev: v2.14.0
+    rev: v2.15.1
     hooks:
       - id: hadolint
         args: ["--ignore", "DL3008"]
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.10
+    rev: v1.7.12
     hooks:
       - id: actionlint
 
   # 5. TYPE CHECKERS (Configured for Python 3.14)
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: "v1.19.1"
+    rev: "v2.3.1"
     hooks:
       - id: mypy
         files: '\.py$'
 
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.408
+    rev: v1.1.414
     hooks:
       - id: pyright
         files: '\.py$'

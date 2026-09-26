@@ -1,4 +1,5 @@
 # File: backend/control_listener.py
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 """
 Container Agent - Control IPC Listener.
 
@@ -24,13 +25,13 @@ def _process_connection(c: socket.socket) -> None:
     to ensure complete commands are forwarded to stdout without mangling
     multi-byte UTF-8 characters across network chunk boundaries.
     """
-    buffer = bytearray()
+    buffer: bytes = b""
     while True:
         data: bytes = c.recv(1024)
         if not data:
             break
 
-        buffer.extend(data)
+        buffer += data
 
         while b"\n" in buffer:
             line_bytes, buffer = buffer.split(b"\n", 1)
