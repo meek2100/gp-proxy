@@ -23,7 +23,7 @@ def test_callback_content_verification() -> None:
     r, w = os.pipe()
 
     # Use a real globalprotectcallback string
-    expected_callback = "globalprotectcallback://lehvpn.snapone.com/SAML20/SP/ACS?v=1&t=12345"
+    expected_callback = "globalprotectcallback://vpn.example.com/SAML20/SP/ACS?v=1&t=12345"
     received_content: list[str] = []
 
     def mock_gpclient_consumer() -> None:
