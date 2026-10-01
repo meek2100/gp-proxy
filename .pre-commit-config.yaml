@@ -31,12 +31,12 @@ repos:
 
   # 3. FORMATTERS
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.8
+    rev: v0.16.9
     hooks:
       - id: ruff-format
 
   - repo: https://github.com/rbubley/mirrors-prettier
-    rev: "v3.9.8"
+    rev: "v3.9.9"
     hooks:
       - id: prettier
         types_or: [css, javascript, html, json, yaml, markdown]
@@ -50,7 +50,7 @@ repos:
 
   # 4. LINTERS
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.8
+    rev: v0.16.9
     hooks:
       - id: ruff-check
         args: ["--fix"]
