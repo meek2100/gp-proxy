@@ -40,7 +40,7 @@ RUN echo 'fn main() { if std::net::TcpStream::connect("127.0.0.1:8001").is_ok() 
     strip target/release/gpclient target/release/gpservice target/release/gpauth
 
 # --- Runtime Stage (Final Image) ---
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # ARGs used to pull the correct architecture and version for gost
 ARG TARGETARCH=amd64

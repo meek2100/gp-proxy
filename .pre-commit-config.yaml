@@ -84,15 +84,9 @@ repos:
     hooks:
       - id: actionlint
 
-  # 5. TYPE CHECKERS (Configured for Python 3.14)
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: "v2.4.0"
+  # 5. TYPE CHECKER (basedpyright)
+  - repo: https://github.com/DetachHead/basedpyright-pre-commit-mirror
+    rev: 1.40.2
     hooks:
-      - id: mypy
-        files: '\.py$'
-
-  - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.414
-    hooks:
-      - id: pyright
+      - id: basedpyright
         files: '\.py$'

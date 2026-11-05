@@ -1,9 +1,3 @@
 {
-    "recommendations": [
-        "charliermarsh.ruff",
-        "ms-python.mypy-type-checker",
-        "ms-python.python",
-        "ms-python.vscode-pylance",
-        "eamodio.gitlens"
-    ]
+    "recommendations": ["charliermarsh.ruff", "detachhead.basedpyright", "ms-python.python", "eamodio.gitlens"]
 }
