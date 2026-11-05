@@ -42,11 +42,8 @@ ignore = []
 
 [tool.basedpyright]
 typeCheckingMode = "standard"
-reportMissingImports = false
-reportMissingTypeStubs = false
 pythonVersion = "3.14"
 include = ["backend", "tests"]
-exclude = ["**/node_modules", "**/__pycache__", "build", "dist"]
 extraPaths = ["backend"]
 
 [tool.codespell]
