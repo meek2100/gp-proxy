@@ -11,10 +11,10 @@ See the project root `AGENTS.md` for project-level architecture, the sandbox pro
 
 ## Python Language Rules
 
-- **Formatter:** `ruff` with line length 120. **Linter:** `ruff` + strict `mypy`/`pyright`. Virtual environments and dependencies managed via `uv`. Project uses **Python 3.14**.
+- **Formatter:** `ruff` with line length 120. **Linter:** `ruff` + strict `basedpyright`. Virtual environments and dependencies managed via `uv`. Project uses **Python 3.14**.
 - All module-level files must include descriptive docstrings.
 - Do not use subscripted generics for `socket.socket` — `typeshed` strictness rejects type arguments like `[Any, Any]`.
-- Overriding class attributes must utilize `typing.ClassVar` to satisfy strict Pyright/Mypy checks.
+- Overriding class attributes must utilize `typing.ClassVar` to satisfy strict Basedpyright checks.
 - Discarded process outputs (`stdout=subprocess.DEVNULL`) must be typed strictly as `CompletedProcess[bytes]`. Use `capture_output=True` when polling processes to satisfy strict Mypy without discarding typing.
 - **Exception Syntax:** Multi-target exceptions must strictly use the Python 3 tuple syntax `except (ValueError, KeyError, TypeError):`. If the `ruff format` pre-commit hook strips required parentheses, apply `# fmt: skip` at the end of the line.
 - **Network Resilience:** Socket loops using `.settimeout()` must explicitly catch `(OSError, TimeoutError)` tuples to prevent ungraceful daemon crashes during dead client timeouts.
