@@ -11,9 +11,14 @@ See `backend/AGENTS.md` for production Python conventions, and the project root 
 
 ## Test Runner & Configuration
 
-- Uses `pytest`. Run with `pytest tests/` from the project root.
+- Uses `pytest`. Run with `pytest tests/` (or `.venv/bin/pytest tests/`) from the project root.
 - Test files map 1:1 to backend modules: `test_server.py` → `server.py`, `test_utils.py` → `utils.py`, etc.
-- All test files import backend modules directly (e.g., `from backend import server`), configured via `pyproject.toml` (`pythonpath = ["."]`).
+- All test files import backend modules directly (e.g., `from backend import server`), configured via `pyproject.toml` (`pythonpath = ["backend"]`).
+
+## Artifact Output Rules
+
+- Store the primary QA validation summary at `.agents/reports/<TASK_ID>.md`.
+- Link detailed execution assets, coverage summaries, and raw test logs beneath `.agents/reports/<TASK_ID>/`.
 
 ## Test Structure
 

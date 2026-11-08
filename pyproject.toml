@@ -48,3 +48,4 @@ extraPaths = ["backend"]
 
 [tool.codespell]
 skip = "*.min.js,*.min.css,*.lock,package-lock.json"
+ignore-words-list = "gost"
