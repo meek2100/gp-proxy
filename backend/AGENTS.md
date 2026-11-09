@@ -9,6 +9,26 @@ applyTo: "**"
 Rules in this file apply to all Python source files in `backend/` and its subdirectories.
 See the project root `AGENTS.md` for project-level architecture, the sandbox protocol, and security rules.
 
+## Canonical Shared Helper Registry (`backend/utils.py`)
+
+All background daemons, control handlers, and IPC interfaces must import shared runtime state, logging, and networking facilities from `backend/utils.py` rather than duplicating paths or socket logic:
+
+- `RUNTIME_DIR: pathlib.Path` — Root directory for runtime descriptor files (`/run/gp-proxy` or `./runtime_dev`).
+- `CLIENT_LOG: pathlib.Path` — Canonical path to `gp-client.log`.
+- `SERVICE_LOG: pathlib.Path` — Canonical path to `gp-service.log`.
+- `MODE_FILE: pathlib.Path` — Runtime flag file (`gp-mode`) describing active VPN/proxy modes.
+- `IPC_CONTROL_PORT: int = 32801` — TCP port for process lifecycle control IPC signals (`DISCONNECT`, `RECONNECT`).
+- `IPC_STDIN_PORT: int = 32802` — TCP port for SAML stdin forwarding IPC stream.
+- `_parse_port(env_var: str, default: int) -> int` — Validates environment variable integer port in range 1-65535.
+- `setup_logger(name: str) -> logging.Logger` — Thread-safe logger initialization with mutex locking preventing duplicate handlers.
+- `send_ipc_message(port: int, data: str) -> bool` — Transmits UTF-8 string over local TCP socket with timeout and error handling. (Internal timeout 1.0s).
+
+### Local Verification Command
+
+```bash
+.venv/bin/ruff check backend && .venv/bin/basedpyright backend
+```
+
 ## Python Language Rules
 
 - **Formatter:** `ruff` with line length 120. **Linter:** `ruff` + strict `basedpyright`. Virtual environments and dependencies managed via `uv`. Project uses **Python 3.15**.

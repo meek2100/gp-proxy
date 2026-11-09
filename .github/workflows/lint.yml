@@ -43,7 +43,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          key: >-
+            pre-commit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{
+            hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
             pre-commit-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-
             pre-commit-${{ runner.os }}-
