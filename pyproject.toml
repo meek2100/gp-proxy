@@ -10,7 +10,7 @@ dependencies = ["cryptography>=44.0.0"]
 [project.optional-dependencies]
 dev = [
     "pre-commit==4.7.0",
-    "ruff==0.17.3",
+    "ruff==0.17.4",
     "basedpyright==1.40.2",
     "codespell==2.4.3",
     "yamllint==1.38.0",
