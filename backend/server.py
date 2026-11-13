@@ -206,7 +206,7 @@ class StateManager:
                     self._cached_analysis = analysis
         return analysis, log_content
 
-    def _read_cached_log_analysis(self, log_path: Path) -> tuple[LogAnalysis, str]:
+    def _read_cached_log_analysis(self, log_path: Path) -> tuple[LogAnalysis, str]:  # noqa: C901
         """
         Reads and analyzes the log file safely, only processing it if it has changed since
         the last read operation. Includes TOCTOU file handling.
@@ -270,16 +270,20 @@ class StateManager:
             try:
                 # Validate the file didn't shift beneath us to close the TOCTOU window
                 st_verify = log_path.stat()
-                if (
-                    st_verify.st_mtime_ns == current_mtime_ns
-                    and st_verify.st_size == current_size
-                    and st_verify.st_ino == current_ino
-                ):
-                    self._log_mtime_ns = current_mtime_ns
-                    self._log_size = current_size
-                    self._log_ino = current_ino
-                    self._cached_analysis = analysis
-                    self._cached_log = log_content
+                if st_verify.st_ino == current_ino:
+                    if st_verify.st_mtime_ns == current_mtime_ns and st_verify.st_size == current_size:
+                        self._log_mtime_ns = current_mtime_ns
+                        self._log_size = current_size
+                        self._log_ino = current_ino
+                        self._cached_analysis = analysis
+                        self._cached_log = log_content
+                    elif st_verify.st_size >= current_size:
+                        # File simply grew during read; update cache with st_verify metadata
+                        self._log_mtime_ns = st_verify.st_mtime_ns
+                        self._log_size = st_verify.st_size
+                        self._log_ino = st_verify.st_ino
+                        self._cached_analysis = analysis
+                        self._cached_log = log_content
             except FileNotFoundError:
                 pass
             return self._cached_analysis, self._cached_log
@@ -491,6 +495,17 @@ def _extract_sso_url(full_log_content: str, port: int) -> str:
     return best_url
 
 
+def _is_connected_line(line: str) -> bool:
+    """Checks whether a log line indicates an established tunnel or session."""
+    is_tunnel = ("ESP" in line or "tunnel" in line.lower() or "Session" in line or "Connected as " in line) and not (
+        "failed" in line.lower() or "error" in line.lower()
+    )
+    is_non_portal_connected = (
+        "Connected" in line and "to" in line and not re.search(r":\d+", line) and "portal" not in line.lower()
+    )
+    return is_tunnel or is_non_portal_connected
+
+
 def _evaluate_line_state(line: str, clean_lines: list[str], analysis_acc: LogAnalysis) -> bool:
     """
     Evaluates a single chronological log line to determine if it defines the current VPN connection phase.
@@ -504,7 +519,7 @@ def _evaluate_line_state(line: str, clean_lines: list[str], analysis_acc: LogAna
     Returns:
         bool: True if a definitive state was matched and applied, False otherwise.
     """
-    if "Connected" in line and "to" in line:
+    if _is_connected_line(line):
         analysis_acc["state"] = "connected"
         return True
     if "Login failed" in line or "GP response error" in line:
@@ -557,7 +572,19 @@ def analyze_log_lines(clean_lines: list[str], full_log_content: str) -> LogAnaly
 
     # Overarching full-log context checks
     if "Manual Authentication Required" in full_log_content or "auth server started" in full_log_content:
-        if analysis_acc["state"] not in ["input", "error", "connected", "connecting"]:
+        # Determine whether a tunnel connection was established after the auth request
+        auth_idx = -1
+        conn_idx = -1
+        for idx, line_text in enumerate(clean_lines):
+            if "Manual Authentication Required" in line_text or "auth server started" in line_text:
+                auth_idx = idx
+            if _is_connected_line(line_text):
+                conn_idx = idx
+
+        # If auth occurred without a subsequent tunnel connection, any prior "connected" state
+        # is premature. Transition to "auth" unless currently in an active input or error state.
+        is_post_auth_connected = auth_idx != -1 and conn_idx > auth_idx
+        if not is_post_auth_connected and analysis_acc["state"] not in ["input", "error"]:
             cast(dict[str, Any], analysis_acc)["state"] = "auth"
 
         # Only surface the SSO URL when actively in auth state — not after connecting
@@ -892,11 +919,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         immutable Cache-Control header. Safely handles cases where the request path is unavailable.
         """
         # Safely evaluate path in the event this is called prematurely during an HTTP error
-        raw_path: str = self.path if hasattr(self, "path") else ""
-        base_path: str = urllib.parse.urlparse(raw_path).path
+        raw_path: str = getattr(self, "path", "")
+        base_path: str = urllib.parse.urlparse(raw_path).path.lower()
 
         if base_path in ["/", "/index.html", "/status.json"]:
-            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
         elif base_path.endswith((".css", ".js", ".png", ".ico", ".svg", ".jpg")):
