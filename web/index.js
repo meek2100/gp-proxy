@@ -43,7 +43,7 @@ function getFetchOptions(method = "GET", body = null) {
     if (apiToken) {
         headers["Authorization"] = `Bearer ${apiToken}`;
     }
-    const options = { method, headers };
+    const options = { method, headers, cache: "no-store" };
     if (body !== null && body !== undefined) {
         options.body = body;
     }
@@ -218,23 +218,31 @@ async function copyToClip(el) {
  * @param {string} viewId - The ID of the view to switch to (e.g. 'idle', 'connecting').
  */
 function setView(viewId) {
+    const targetId = viewId === "starting" ? "connecting" : viewId;
     ["idle", "connecting", "auth", "input", "connected", "error"].forEach((id) => {
-        document.getElementById(`view-${id}`).classList.add("hidden");
+        const el = document.getElementById(`view-${id}`);
+        if (el) {
+            el.classList.add("hidden");
+        }
     });
-    const activeView = document.getElementById(`view-${viewId}`);
-    activeView.classList.remove("hidden");
+    const targetView = document.getElementById(`view-${targetId}`);
+    if (targetView) {
+        targetView.classList.remove("hidden");
 
-    // Accessibility focus management
-    const heading = activeView.querySelector("h3, h2");
-    if (heading) {
-        heading.focus();
+        // Accessibility focus management
+        const heading = targetView.querySelector("h3, h2");
+        if (heading) {
+            heading.focus();
+        }
     }
 
     const card = document.getElementById("main-card");
-    if (viewId === "connected") {
-        card.classList.add("expanded");
-    } else {
-        card.classList.remove("expanded");
+    if (card) {
+        if (targetId === "connected") {
+            card.classList.add("expanded");
+        } else {
+            card.classList.remove("expanded");
+        }
     }
 }
 
@@ -368,6 +376,7 @@ async function triggerConnect() {
 async function triggerDisconnect() {
     if (confirm("Disconnect VPN session?")) {
         setBadge("Disconnecting...", "idle");
+        setView("connecting");
         window.expectedNextState = "idle";
         isRestarting = true;
 
@@ -377,7 +386,8 @@ async function triggerDisconnect() {
         }, 15000);
 
         try {
-            await fetch("/disconnect", getFetchOptions("POST"));
+            const res = await fetch("/disconnect", getFetchOptions("POST"));
+            await res.text();
         } catch (e) {
             console.error("Disconnect fetch failed:", e);
             isRestarting = false;
@@ -394,6 +404,7 @@ async function triggerDisconnect() {
 async function confirmReset() {
     if (confirm("Force reset process? This will kill the VPN.")) {
         setBadge("Resetting...", "idle");
+        setView("connecting");
         window.expectedNextState = "idle";
         isRestarting = true;
 
@@ -404,6 +415,7 @@ async function confirmReset() {
 
         try {
             const res = await fetch("/disconnect", getFetchOptions("POST"));
+            await res.text();
             if (res.ok) {
                 window.location.href = window.location.pathname + "?t=" + Date.now();
                 return;
@@ -594,7 +606,7 @@ async function updateStatus() {
                 data.state === window.expectedNextState ||
                 (window.expectedNextState === "auth" && data.state === "input") ||
                 data.state === "error" ||
-                data.state === "connected"
+                (data.state === "connected" && window.expectedNextState !== "idle")
             ) {
                 isRestarting = false;
                 window.expectedNextState = null;
