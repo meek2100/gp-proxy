@@ -568,7 +568,9 @@ dnsmasq --user=root >>"$SERVICE_LOG" 2>&1 &
 # --- 4. NETWORK SETUP ---
 iptables -F
 iptables -t nat -F
-iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
+WEB_PORT="${WEB_PORT:-8001}"
+iptables -A INPUT -p tcp --dport "$WEB_PORT" -j ACCEPT
+iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port "$WEB_PORT"
 
 if [[ "$VPN_MODE" == *"gateway"* ]]; then
     # Dynamically enable IP forwarding for routing functionality
