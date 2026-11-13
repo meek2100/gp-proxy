@@ -51,6 +51,7 @@ services:
             - API_TOKEN=your-api-token
             - LOG_LEVEL=INFO
         ports:
+            - "80:${WEB_PORT:-8001}/tcp" # Web Dashboard (Port 80 redirect)
             - "8001:8001" # Web Dashboard
             - "32800:32800/udp" # UDP Beacon
             - "1080:1080" # SOCKS5

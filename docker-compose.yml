@@ -37,6 +37,7 @@ services:
       - "1080:1080/udp"
       # Web UI & API
       - "8001:8001/tcp"
+      - "80:${WEB_PORT:-8001}/tcp"
       # UDP Beacon (Auto-Discovery)
       - "32800:32800/udp"
     volumes:
